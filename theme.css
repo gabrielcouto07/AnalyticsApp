@@ -1,0 +1,123 @@
+/* Importa fonte Inter do Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Reset e fonte global */
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+/* Cabeçalho principal */
+.dash-header {
+    padding: 0.5rem 0 1rem 0;
+    border-bottom: 1px solid #334155;
+    margin-bottom: 1.2rem;
+}
+.dash-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    margin: 0;
+}
+.dash-subtitle {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin: 0.2rem 0 0 0;
+}
+
+/* Separador */
+.dash-separator {
+    border: none;
+    border-top: 1px solid #334155;
+    margin: 1.2rem 0;
+}
+
+/* Row de KPI cards */
+.kpi-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+/* Card individual de KPI */
+.kpi-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    flex: 1;
+    min-width: 180px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    transition: border-color 0.2s;
+}
+.kpi-card:hover {
+    border-color: #4f8ef7;
+}
+.kpi-icon {
+    font-size: 1.75rem;
+    line-height: 1;
+}
+.kpi-title {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.kpi-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    line-height: 1.2;
+}
+.kpi-subtitle {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background-color: #0f172a;
+    border-right: 1px solid #334155;
+}
+[data-testid="stSidebar"] * {
+    color: #cbd5e1 !important;
+}
+
+/* Tabs */
+[data-baseweb="tab-list"] {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 4px;
+    gap: 4px;
+}
+[data-baseweb="tab"] {
+    border-radius: 6px;
+    font-weight: 500;
+}
+[aria-selected="true"] {
+    background: #4f8ef7 !important;
+    color: #fff !important;
+}
+
+/* Dataframe */
+[data-testid="stDataFrame"] {
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+
+/* Botões de download */
+[data-testid="stDownloadButton"] button {
+    background: #1e293b;
+    border: 1px solid #4f8ef7;
+    color: #4f8ef7;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+[data-testid="stDownloadButton"] button:hover {
+    background: #4f8ef7;
+    color: #fff;
+}

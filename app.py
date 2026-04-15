@@ -1,6 +1,6 @@
 import io
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -11,23 +11,16 @@ import streamlit as st
 
 warnings.filterwarnings("ignore")
 
-# ════════════════════════════════════════════════════════════════════════════
-# INJEÇÃO DE CSS — DEVE SER A PRIMEIRA COISA DO APP
-# ════════════════════════════════════════════════════════════════════════════
 
+# Injeta CSS antes de qualquer elemento Streamlit renderizar
 def _inject_css():
-    """Injeta theme.css no início da renderização — antes de qualquer elemento."""
     css_path = Path(__file__).parent / "theme.css"
     if css_path.exists():
         with open(css_path, encoding="utf-8") as f:
-            css_content = f.read()
-        st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 _inject_css()
 
-# ════════════════════════════════════════════════════════════════════════════
-# IMPORTS: Configuração + UI
-# ════════════════════════════════════════════════════════════════════════════
 
 try:
     from config.colors import PALETTE, CHART_COLORS
@@ -37,20 +30,16 @@ try:
         render_kpi_row,
         apply_chart_style,
         render_header,
-        render_period_filter,
         render_separator,
         detect_time_granularity,
     )
 except ImportError as e:
-    st.error(f"❌ Erro ao carregar módulos: {e}\n\nCertifique-se de que config/ e templates/ existem.")
+    st.error(f"❌ Erro ao carregar módulos: {e}")
     st.stop()
 
-# ════════════════════════════════════════════════════════════════════════════
-# CONFIGURAÇÃO DA APLICAÇÃO
-# ════════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="📊 Analytics Dashboard",
+    page_title="Analytics Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -58,227 +47,419 @@ st.set_page_config(
 
 load_theme()
 
-# ════════════════════════════════════════════════════════════════════════════
-# STATE MANAGEMENT
-# ════════════════════════════════════════════════════════════════════════════
 
-if "df_loaded" not in st.session_state:
-    st.session_state.df_loaded = None
-if "df_filtered" not in st.session_state:
-    st.session_state.df_filtered = None
+# Inicializa session state
+for _key in ["df_loaded", "df_filtered"]:
+    if _key not in st.session_state:
+        st.session_state[_key] = None
 if "selected_columns" not in st.session_state:
     st.session_state.selected_columns = []
 
-# ════════════════════════════════════════════════════════════════════════════
-# FUNÇÕES AUXILIARES
-# ════════════════════════════════════════════════════════════════════════════
 
-def load_file(uploaded_file) -> pd.DataFrame | None:
-    """Carrega arquivo Excel ou CSV."""
+# --- CARREGAMENTO E DETECÇÃO DE TIPOS ---
+
+@st.cache_data(show_spinner="🔍 Detectando tipos de colunas...")
+def detect_and_parse(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Tenta converter colunas object para datetime ou numérico automaticamente.
+    Limpa caracteres monetários (R$, %, ,) antes de tentar numérico.
+    """
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype != object:
+            continue
+
+        # Tenta datetime primeiro
+        try:
+            parsed = pd.to_datetime(df[col], infer_datetime_format=True, errors="coerce")
+            if parsed.notna().sum() / len(df) > 0.7:
+                df[col] = parsed
+                continue
+        except Exception:
+            pass
+
+        # Tenta numérico após limpar símbolos comuns
+        cleaned = (
+            df[col].astype(str)
+            .str.replace(r"[R$%\s]", "", regex=True)
+            .str.replace(".", "", regex=False)
+            .str.replace(",", ".", regex=False)
+        )
+        numeric = pd.to_numeric(cleaned, errors="coerce")
+        if numeric.notna().sum() / len(df) > 0.7:
+            df[col] = numeric
+
+    return df
+
+
+@st.cache_data(show_spinner="📂 Carregando arquivo...")
+def load_file(file_bytes: bytes, filename: str) -> pd.DataFrame | None:
+    """
+    Carrega Excel (.xlsx/.xls), CSV, TXT delimitado ou JSON.
+    Detecta separador automaticamente em CSV/TXT.
+    Normaliza JSON aninhado com json_normalize.
+    """
+    import io, json
+
+    name = filename.lower()
+    buf = io.BytesIO(file_bytes)
+
     try:
-        if uploaded_file.name.endswith('.xlsx') or uploaded_file.name.endswith('.xls'):
-            df = pd.read_excel(uploaded_file)
-        elif uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, encoding='utf-8')
+        if name.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(buf)
+
+        elif name.endswith(".csv"):
+            sample = buf.read(2048).decode("utf-8", errors="ignore")
+            buf.seek(0)
+            sep = ";" if sample.count(";") > sample.count(",") else ","
+            df = pd.read_csv(buf, sep=sep, encoding="utf-8", on_bad_lines="skip")
+
+        elif name.endswith(".txt"):
+            sample = buf.read(2048).decode("utf-8", errors="ignore")
+            buf.seek(0)
+            sep = "\t" if "\t" in sample else ("|" if "|" in sample else ",")
+            df = pd.read_csv(buf, sep=sep, encoding="utf-8", on_bad_lines="skip")
+
+        elif name.endswith(".json"):
+            raw = json.load(buf)
+            # Suporte a lista de objetos, dict com lista, ou DataFrame direto
+            if isinstance(raw, list):
+                df = pd.json_normalize(raw)
+            elif isinstance(raw, dict):
+                # Tenta encontrar a primeira chave que seja lista
+                for v in raw.values():
+                    if isinstance(v, list):
+                        df = pd.json_normalize(v)
+                        break
+                else:
+                    df = pd.DataFrame([raw])
+            else:
+                st.error("❌ Estrutura JSON não reconhecida.")
+                return None
+
         else:
-            st.error("❌ Formato não suportado. Use .xlsx, .xls ou .csv")
+            st.error("❌ Formato não suportado. Use .xlsx, .xls, .csv, .txt ou .json")
             return None
-        return df
+
+        return detect_and_parse(df)
+
     except Exception as e:
         st.error(f"❌ Erro ao carregar arquivo: {e}")
         return None
 
-def export_to_excel(df: pd.DataFrame, filename: str = "export.xlsx"):
-    """Retorna arquivo Excel em memory."""
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+
+def get_col_types(df: pd.DataFrame) -> dict:
+    """Retorna dicionário com listas de colunas por tipo detectado."""
+    return {
+        "date": df.select_dtypes(include=["datetime64"]).columns.tolist(),
+        "numeric": df.select_dtypes(include=[np.number]).columns.tolist(),
+        "categorical": df.select_dtypes(include=["object", "category"]).columns.tolist(),
+    }
+
+
+# --- EXPORTAÇÃO ---
+
+def to_excel(df: pd.DataFrame) -> bytes:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Dados")
-    return output.getvalue()
+    return buf.getvalue()
 
-def export_to_csv(df: pd.DataFrame) -> str:
-    """Retorna CSV em string."""
-    return df.to_csv(index=False, encoding='utf-8-sig')
 
-# ════════════════════════════════════════════════════════════════════════════
-# LAYOUT PRINCIPAL
-# ════════════════════════════════════════════════════════════════════════════
+def to_csv(df: pd.DataFrame) -> str:
+    return df.to_csv(index=False, encoding="utf-8-sig")
 
-st.title("📊 Analytics Dashboard — Análise Genérica")
-st.markdown("**Sistema generalista para análise e visualização de qualquer base de dados**")
 
-# ── SIDEBAR: UPLOAD E FILTROS ──────────────────────────────────────────────
+# --- SIDEBAR ---
+
 st.sidebar.markdown("### 📁 Carregar Dados")
 
-uploaded_file = st.sidebar.file_uploader(
+uploaded = st.sidebar.file_uploader(
     "Escolha um arquivo",
-    type=["xlsx", "xls", "csv"],
-    key="file_upload",
-    help="Suporta Excel (.xlsx, .xls) e CSV"
+    type=["xlsx", "xls", "csv", "txt", "json"],
+    help="Suporta Excel, CSV, TXT delimitado e JSON",
 )
 
-if uploaded_file:
-    df = load_file(uploaded_file)
-    
-    if df is not None:
-        st.session_state.df_loaded = df
-        
-        st.sidebar.success(f"✅ Arquivo carregado: {uploaded_file.name}")
-        st.sidebar.caption(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
-        
-        # ── SELEÇÃO DE COLUNAS ─────────────────────────────────────────
+if uploaded:
+    df_raw = load_file(uploaded.read(), uploaded.name)
+
+    if df_raw is not None:
+        st.session_state.df_loaded = df_raw
+        col_types_raw = get_col_types(df_raw)
+
+        st.sidebar.success(f"✅ {uploaded.name}")
+        st.sidebar.caption(f"{len(df_raw):,} linhas · {len(df_raw.columns)} colunas")
+
+        # Resumo dos tipos detectados na sidebar
+        with st.sidebar.expander("🔍 Tipos detectados", expanded=False):
+            for label, icon, key in [("Datas", "📅", "date"), ("Numéricas", "🔢", "numeric"), ("Categóricas", "🏷️", "categorical")]:
+                if col_types_raw[key]:
+                    st.caption(f"{icon} {label}: {', '.join(col_types_raw[key])}")
+
+        # Seleção de colunas
         st.sidebar.markdown("---")
-        st.sidebar.markdown("### 🔍 Seleção de Colunas")
-        
-        all_columns = df.columns.tolist()
-        
-        # Opção "Selecionar Todos"
-        select_all = st.sidebar.checkbox("Selecionar todas as colunas", value=True)
-        
+        st.sidebar.markdown("### 🗂️ Colunas para análise")
+        select_all = st.sidebar.checkbox("Todas as colunas", value=True)
+
         if select_all:
-            st.session_state.selected_columns = all_columns
+            selected = df_raw.columns.tolist()
         else:
-            st.session_state.selected_columns = st.sidebar.multiselect(
-                "Escolha colunas para análise",
-                all_columns,
-                default=all_columns[:5] if len(all_columns) > 5 else all_columns
+            selected = st.sidebar.multiselect(
+                "Selecione colunas",
+                df_raw.columns.tolist(),
+                default=df_raw.columns[:6].tolist(),
             )
-        
-        # Aplicar seleção
-        if st.session_state.selected_columns:
-            st.session_state.df_filtered = df[st.session_state.selected_columns].copy()
-        
-        # ── ABAS PRINCIPAIS ────────────────────────────────────────────
-        tab_overview, tab_explore, tab_stats, tab_export = st.tabs(
-            ["📊 Visão Geral", "🔎 Explorador", "📈 Estatísticas", "💾 Exportar"]
+
+        df_view = df_raw[selected].copy() if selected else df_raw.copy()
+        col_types = get_col_types(df_view)
+
+        # Filtros dinâmicos — data
+        if col_types["date"] or col_types["categorical"] or col_types["numeric"]:
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("### 🎛️ Filtros")
+
+        if col_types["date"]:
+            date_col = st.sidebar.selectbox("Coluna de data", col_types["date"], key="sb_date")
+            min_d = df_view[date_col].min().date()
+            max_d = df_view[date_col].max().date()
+            date_range = st.sidebar.date_input("Intervalo de datas", [min_d, max_d], min_value=min_d, max_value=max_d)
+            if len(date_range) == 2:
+                df_view = df_view[
+                    (df_view[date_col].dt.date >= date_range[0]) &
+                    (df_view[date_col].dt.date <= date_range[1])
+                ]
+        else:
+            date_col = None
+
+        # Filtros numéricos por range (até 2 colunas)
+        for num_col in col_types["numeric"][:2]:
+            _min = float(df_view[num_col].min())
+            _max = float(df_view[num_col].max())
+            if _min < _max:
+                rng = st.sidebar.slider(
+                    f"Range: {num_col}",
+                    min_value=_min, max_value=_max,
+                    value=(_min, _max),
+                    key=f"rng_{num_col}",
+                )
+                df_view = df_view[df_view[num_col].between(*rng)]
+
+        # Filtros categóricos (até 3 colunas com ≤ 30 valores únicos)
+        for cat_col in col_types["categorical"][:3]:
+            uniq = df_view[cat_col].dropna().unique().tolist()
+            if 1 < len(uniq) <= 30:
+                chosen = st.sidebar.multiselect(f"{cat_col}", uniq, default=uniq, key=f"cat_{cat_col}")
+                if chosen:
+                    df_view = df_view[df_view[cat_col].isin(chosen)]
+
+        st.session_state.df_filtered = df_view
+        col_types = get_col_types(df_view)  # recalcula após filtros
+
+        # --- HEADER ---
+        render_header(
+            "📊 Analytics Dashboard",
+            f"{uploaded.name} · {len(df_view):,} registros · {len(df_view.columns)} colunas",
         )
-        
-        # ── TAB 1: VISÃO GERAL ────────────────────────────────────────
+
+        # KPIs automáticos com base nas colunas numéricas
+        if col_types["numeric"]:
+            kpis = []
+            for col in col_types["numeric"][:4]:
+                total = df_view[col].sum()
+                media = df_view[col].mean()
+                kpis.append({
+                    "title": col,
+                    "value": f"{total:,.2f}",
+                    "subtitle": f"Média: {media:,.2f}",
+                    "icon": "📊",
+                })
+            render_kpi_row(kpis)
+
+        render_separator()
+
+        # --- ABAS ---
+        tab_overview, tab_temporal, tab_explore, tab_stats, tab_export = st.tabs([
+            "📋 Visão Geral", "📅 Temporal", "🔎 Explorador", "📈 Estatísticas", "💾 Exportar",
+        ])
+
+        # TAB 1 — visão geral: primeiras linhas + qualidade dos dados
         with tab_overview:
-            st.markdown("### 📊 Primeiras Linhas dos Dados")
-            st.dataframe(
-                st.session_state.df_filtered.head(10),
-                use_container_width=True
-            )
-            
-            st.markdown("---")
-            st.markdown("### 📋 Informações do DataFrame")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("📊 Total de Linhas", len(st.session_state.df_filtered))
-            with col2:
-                st.metric("🏷️ Total de Colunas", len(st.session_state.df_filtered.columns))
-            with col3:
-                st.metric("💾 Tamanho (MB)", round(st.session_state.df_filtered.memory_usage().sum() / 1024**2, 2))
-        
-        # ── TAB 2: EXPLORADOR (Gráficos) ───────────────────────────────
-        with tab_explore:
-            st.markdown("### 🔎 Explorador de Dados")
-            
-            # Detectar tipos de colunas
-            numeric_cols = st.session_state.df_filtered.select_dtypes(include=[np.number]).columns.tolist()
-            text_cols = st.session_state.df_filtered.select_dtypes(include=['object']).columns.tolist()
-            date_cols = st.session_state.df_filtered.select_dtypes(include=['datetime64']).columns.tolist()
-            
-            if numeric_cols:
-                st.markdown("**📊 Distribuição de Variáveis Numéricas**")
-                col_numeric = st.selectbox("Escolha coluna numérica", numeric_cols, key="numeric_col")
-                
-                fig = px.histogram(
-                    st.session_state.df_filtered,
-                    x=col_numeric,
-                    nbins=50,
-                    title=f"Distribuição: {col_numeric}",
-                    color_discrete_sequence=[PALETTE.get("primary", "#4f8ef7")]
-                )
-                fig = apply_chart_style(fig, title=f"Distribuição: {col_numeric}")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            if text_cols:
-                st.markdown("---")
-                st.markdown("**📢 Contagem de Valores Categóricos**")
-                col_text = st.selectbox("Escolha coluna categórica", text_cols, key="text_col")
-                
-                top_n = st.slider("Top N categorias", 5, 50, 10, key="top_n")
-                
-                value_counts = st.session_state.df_filtered[col_text].value_counts().head(top_n)
-                fig = px.bar(
-                    x=value_counts.values,
-                    y=value_counts.index,
-                    orientation='h',
-                    title=f"Top {top_n} valores: {col_text}",
-                    color_discrete_sequence=[PALETTE.get("success", "#34c97e")]
-                )
-                fig = apply_chart_style(fig)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            if numeric_cols and text_cols:
-                st.markdown("---")
-                st.markdown("**📊 Análise Cruzada**")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    col_cat = st.selectbox("Coluna categórica", text_cols, key="cross_cat")
-                with col2:
-                    col_num = st.selectbox("Coluna numérica", numeric_cols, key="cross_num")
-                
-                fig = px.box(
-                    st.session_state.df_filtered,
-                    x=col_cat,
-                    y=col_num,
-                    title=f"{col_num} por {col_cat}",
-                    color_discrete_sequence=[PALETTE.get("warning", "#f5a623")]
-                )
-                fig = apply_chart_style(fig)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # ── TAB 3: ESTATÍSTICAS ────────────────────────────────────────
-        with tab_stats:
-            st.markdown("### 📈 Estatísticas Descritivas")
-            
-            numeric_cols = st.session_state.df_filtered.select_dtypes(include=[np.number]).columns.tolist()
-            
-            if numeric_cols:
-                stats_df = st.session_state.df_filtered[numeric_cols].describe().T
-                st.dataframe(stats_df, use_container_width=True)
-                
-                st.markdown("---")
-                st.markdown("### 🔗 Correlação Entre Variáveis")
-                
-                corr_matrix = st.session_state.df_filtered[numeric_cols].corr()
-                fig = px.imshow(
-                    corr_matrix,
-                    color_continuous_scale="RdBu",
-                    zmin=-1, zmax=1,
-                    title="Matriz de Correlação"
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            st.markdown("### Primeiras linhas")
+            st.dataframe(df_view.head(15), use_container_width=True)
+
+            render_separator()
+            st.markdown("### Qualidade dos dados")
+            quality = pd.DataFrame({
+                "Coluna": df_view.columns,
+                "Tipo": df_view.dtypes.astype(str).values,
+                "Nulos": df_view.isnull().sum().values,
+                "% Nulos": (df_view.isnull().mean() * 100).round(1).values,
+                "Únicos": df_view.nunique().values,
+                "Exemplo": [str(df_view[c].dropna().iloc[0]) if df_view[c].dropna().shape[0] > 0 else "—" for c in df_view.columns],
+            })
+            st.dataframe(quality, use_container_width=True, hide_index=True)
+
+        # TAB 2 — série temporal quando há coluna de data
+        with tab_temporal:
+            if not col_types["date"]:
+                st.info("ℹ️ Nenhuma coluna de data detectada. Verifique a seleção de colunas.")
+            elif not col_types["numeric"]:
+                st.info("ℹ️ Nenhuma coluna numérica detectada para plotar.")
             else:
-                st.info("ℹ️ Nenhuma coluna numérica encontrada para análise estatística.")
-        
-        # ── TAB 4: EXPORTAR ────────────────────────────────────────────
-        with tab_export:
-            st.markdown("### 💾 Exportar Dados")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                excel_data = export_to_excel(st.session_state.df_filtered, "analytics_export.xlsx")
-                st.download_button(
-                    label="📥 Baixar como Excel (.xlsx)",
-                    data=excel_data,
-                    file_name=f"analytics_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            
-            with col2:
-                csv_data = export_to_csv(st.session_state.df_filtered)
-                st.download_button(
-                    label="📥 Baixar como CSV",
-                    data=csv_data,
-                    file_name=f"analytics_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
+                t_date = st.selectbox("Coluna de data", col_types["date"], key="t_date")
+                t_num = st.selectbox("Métrica", col_types["numeric"], key="t_num")
+
+                gran_sugerida = detect_time_granularity(df_view, t_date)
+                agg_map = {"Dia": "D", "Semana": "W", "Mês": "ME", "Trimestre": "QE", "Ano": "YE"}
+                gran = st.radio("Granularidade", list(agg_map.keys()),
+                                index=list(agg_map.keys()).index(gran_sugerida) if gran_sugerida in agg_map else 2,
+                                horizontal=True)
+
+                ts = (
+                    df_view.set_index(t_date)[t_num]
+                    .resample(agg_map[gran])
+                    .sum()
+                    .reset_index()
                 )
 
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig = px.line(ts, x=t_date, y=t_num, markers=True,
+                                  title=f"{t_num} — Linha ({gran})",
+                                  color_discrete_sequence=[PALETTE["primary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+                with c2:
+                    fig = px.bar(ts, x=t_date, y=t_num,
+                                 title=f"{t_num} — Barras ({gran})",
+                                 color_discrete_sequence=[PALETTE["secondary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+                # Linha de tendência acumulada
+                ts["acumulado"] = ts[t_num].cumsum()
+                fig = px.area(ts, x=t_date, y="acumulado",
+                              title=f"{t_num} — Acumulado ({gran})",
+                              color_discrete_sequence=[PALETTE["accent"]])
+                st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+        # TAB 3 — explorador interativo de variáveis
+        with tab_explore:
+            if col_types["numeric"]:
+                st.markdown("### Distribuição numérica")
+                col_n = st.selectbox("Coluna", col_types["numeric"], key="exp_num")
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig = px.histogram(df_view, x=col_n, nbins=40, title=f"Histograma: {col_n}",
+                                       color_discrete_sequence=[PALETTE["primary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+                with c2:
+                    fig = px.box(df_view, y=col_n, title=f"Box Plot: {col_n}",
+                                 color_discrete_sequence=[PALETTE["secondary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+            if col_types["categorical"]:
+                render_separator()
+                st.markdown("### Distribuição categórica")
+                col_c = st.selectbox("Coluna", col_types["categorical"], key="exp_cat")
+                top_n = st.slider("Top N", 5, 30, 10)
+                vc = df_view[col_c].value_counts().head(top_n).reset_index()
+                vc.columns = [col_c, "contagem"]
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig = px.bar(vc, x="contagem", y=col_c, orientation="h",
+                                 title=f"Top {top_n}: {col_c}",
+                                 color_discrete_sequence=[PALETTE["success"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+                with c2:
+                    fig = px.pie(vc, names=col_c, values="contagem",
+                                 title=f"Participação: {col_c}",
+                                 color_discrete_sequence=CHART_COLORS)
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+            if col_types["numeric"] and col_types["categorical"]:
+                render_separator()
+                st.markdown("### Análise cruzada")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    cross_cat = st.selectbox("Categórica", col_types["categorical"], key="xcat")
+                with c2:
+                    cross_num = st.selectbox("Numérica", col_types["numeric"], key="xnum")
+                with c3:
+                    agg_fn = st.selectbox("Agregação", ["Soma", "Média", "Contagem", "Máximo", "Mínimo"])
+
+                fn_map = {"Soma": "sum", "Média": "mean", "Contagem": "count", "Máximo": "max", "Mínimo": "min"}
+                grp = (
+                    df_view.groupby(cross_cat)[cross_num]
+                    .agg(fn_map[agg_fn])
+                    .reset_index()
+                    .rename(columns={cross_num: agg_fn})
+                    .sort_values(agg_fn, ascending=False)
+                    .head(20)
+                )
+
+                fig = px.bar(grp, x=cross_cat, y=agg_fn,
+                             title=f"{agg_fn} de {cross_num} por {cross_cat}",
+                             color=agg_fn, color_continuous_scale="Blues")
+                st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+        # TAB 4 — estatísticas descritivas e correlações
+        with tab_stats:
+            if not col_types["numeric"]:
+                st.info("ℹ️ Nenhuma coluna numérica encontrada.")
+            else:
+                st.markdown("### Estatísticas descritivas")
+                st.dataframe(df_view[col_types["numeric"]].describe().T.round(4), use_container_width=True)
+
+                if len(col_types["numeric"]) >= 2:
+                    render_separator()
+                    st.markdown("### Matriz de correlação")
+                    corr = df_view[col_types["numeric"]].corr()
+                    fig = px.imshow(corr, color_continuous_scale="RdBu_r",
+                                    zmin=-1, zmax=1, text_auto=".2f",
+                                    title="Correlação entre variáveis numéricas")
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+                    render_separator()
+                    st.markdown("### Dispersão entre variáveis")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        sc_x = st.selectbox("Eixo X", col_types["numeric"], key="sc_x")
+                    with c2:
+                        sc_y = st.selectbox("Eixo Y", col_types["numeric"],
+                                            index=min(1, len(col_types["numeric"]) - 1), key="sc_y")
+
+                    color_by = None
+                    if col_types["categorical"]:
+                        color_opt = st.selectbox("Cor por (opcional)", ["—"] + col_types["categorical"])
+                        color_by = None if color_opt == "—" else color_opt
+
+                    fig = px.scatter(df_view, x=sc_x, y=sc_y, color=color_by,
+                                     trendline="ols", opacity=0.7,
+                                     title=f"Dispersão: {sc_x} vs {sc_y}",
+                                     color_discrete_sequence=CHART_COLORS)
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+        # TAB 5 — exportação dos dados filtrados
+        with tab_export:
+            st.markdown("### Exportar dados filtrados")
+            st.caption(f"{len(df_view):,} linhas · {len(df_view.columns)} colunas")
+
+            ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button("📥 Excel (.xlsx)", data=to_excel(df_view),
+                                   file_name=f"analytics_{ts_str}.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   use_container_width=True)
+            with c2:
+                st.download_button("📥 CSV", data=to_csv(df_view),
+                                   file_name=f"analytics_{ts_str}.csv",
+                                   mime="text/csv",
+                                   use_container_width=True)
+
 else:
-    st.info("👈 Carregue um arquivo na barra lateral para começar.")
+    # Tela de boas-vindas quando não há arquivo carregado
+    st.markdown("## 👋 Bem-vindo ao Analytics Dashboard")
+    st.markdown("Carregue um arquivo na barra lateral para começar.")
+    st.markdown("**Formatos suportados:** `.xlsx` · `.xls` · `.csv` · `.txt` · `.json`")
+    st.image("https://i.imgur.com/placeholder.png", width=1, caption="")  # placeholder visual
