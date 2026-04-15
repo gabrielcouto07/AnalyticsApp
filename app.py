@@ -11,19 +11,37 @@ import streamlit as st
 
 warnings.filterwarnings("ignore")
 
+# OBRIGATÓRIO: set_page_config DEVE ser a primeira chamada antes de qualquer st.xxx
+st.set_page_config(
+    page_title="Analytics Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # Injeta CSS antes de qualquer elemento Streamlit renderizar
 def _inject_css():
     css_path = Path(__file__).parent / "theme.css"
     if css_path.exists():
         with open(css_path, encoding="utf-8") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+            css_content = f.read()
+            st.markdown(f"""
+            <style>
+            {css_content}
+            </style>
+            """, unsafe_allow_html=True)
 
 _inject_css()
 
 
 try:
     from config.colors import PALETTE, CHART_COLORS
+    from config.analytics import (
+        calculate_trend,
+        detect_outliers_iqr,
+        categorize_dataset,
+        identify_anomalies,
+    )
     from templates.ui import (
         load_theme,
         kpi_card,
@@ -33,17 +51,19 @@ try:
         render_separator,
         detect_time_granularity,
     )
+    from templates.smart_kpi import (
+        smart_kpi_card,
+        render_smart_kpi_row,
+        mini_metric_chart,
+        metric_comparison_badge,
+        insight_card,
+        render_insights_section,
+        gauge_chart,
+    )
 except ImportError as e:
     st.error(f"❌ Erro ao carregar módulos: {e}")
     st.stop()
 
-
-st.set_page_config(
-    page_title="Analytics Dashboard",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 load_theme()
 
@@ -260,20 +280,52 @@ if uploaded:
             "📊 Analytics Dashboard",
             f"{uploaded.name} · {len(df_view):,} registros · {len(df_view.columns)} colunas",
         )
+        
+        # Detecção de schema do dataset
+        dataset_info = categorize_dataset(df_raw)
+        st.info(f"ℹ️ Dataset identificado: {dataset_info['description']}", icon="🔍")
 
-        # KPIs automáticos com base nas colunas numéricas
+        # KPIs automáticos com base nas colunas numéricas (SMART v1.5)
         if col_types["numeric"]:
-            kpis = []
-            for col in col_types["numeric"][:4]:
-                total = df_view[col].sum()
-                media = df_view[col].mean()
-                kpis.append({
-                    "title": col,
-                    "value": f"{total:,.2f}",
-                    "subtitle": f"Média: {media:,.2f}",
-                    "icon": "📊",
-                })
-            render_kpi_row(kpis)
+            with st.spinner("🔍 Analisando trends e anomalias..."):
+                kpis = []
+                insights = []
+                
+                for idx, col in enumerate(col_types["numeric"][:4]):
+                    total = df_view[col].sum()
+                    media = df_view[col].mean()
+                    
+                    # Calcula trend entre início e fim do período
+                    trend_info = calculate_trend(df_view[col].reset_index(drop=True), periods=max(2, len(df_view) // 4))
+                    
+                    # Ícones alternados por tipo de métrica
+                    icons = ["💰", "📊", "🎯", "⚡"]
+                    colors = ["primary", "secondary", "accent", "success"]
+                    
+                    kpis.append({
+                        "title": col,
+                        "value": f"{total:,.2f}" if total < 1_000_000 else f"{total/1_000_000:.1f}M",
+                        "trend_pct": trend_info.get("change_pct", 0),
+                        "subtitle": f"Média: {media:,.0f}",
+                        "icon": icons[idx % len(icons)],
+                        "color": colors[idx % len(colors)],
+                    })
+                    
+                    # Detecta outliers
+                    outlier_indices, outlier_pct = detect_outliers_iqr(df_view[col])
+                    if outlier_pct > 2:
+                        insights.append({
+                            "title": f"⚠️ Anomalias em {col}",
+                            "description": f"{len(outlier_indices)} outliers ({outlier_pct:.1f}%) detectados",
+                            "icon": "🔔",
+                            "color": "warning",
+                        })
+                
+                render_smart_kpi_row(kpis)
+                
+                # Mostra insights se houver
+                if insights:
+                    render_insights_section(insights)
 
         render_separator()
 
@@ -298,6 +350,22 @@ if uploaded:
                 "Exemplo": [str(df_view[c].dropna().iloc[0]) if df_view[c].dropna().shape[0] > 0 else "—" for c in df_view.columns],
             })
             st.dataframe(quality, use_container_width=True, hide_index=True)
+            
+            # Análise de anomalias
+            if col_types["numeric"]:
+                render_separator()
+                st.markdown("### 🔍 Verificação de Anomalias")
+                anomalies = identify_anomalies(df_view, col_types["numeric"], threshold_z=2.5)
+                
+                anomaly_summary = []
+                for col, indices in anomalies.items():
+                    if indices:
+                        anomaly_summary.append(f"• **{col}**: {len(indices)} valores anômalos ({len(indices)/len(df_view)*100:.1f}%)")
+                
+                if anomaly_summary:
+                    st.warning("⚠️ Anomalias detectadas:\n" + "\n".join(anomaly_summary))
+                else:
+                    st.success("✅ Nenhuma anomalia detectada")
 
         # TAB 2 — série temporal quando há coluna de data
         with tab_temporal:
@@ -321,6 +389,18 @@ if uploaded:
                     .sum()
                     .reset_index()
                 )
+                
+                # Mini cards com estatísticas por período
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total", f"{ts[t_num].sum():,.0f}", 
+                              delta=f"{(ts[t_num].iloc[-1] - ts[t_num].iloc[-2]):.0f}" if len(ts) > 1 else None)
+                with col2:
+                    st.metric("Média", f"{ts[t_num].mean():,.0f}")
+                with col3:
+                    st.metric("Máximo", f"{ts[t_num].max():,.0f}")
+                with col4:
+                    st.metric("Mínimo", f"{ts[t_num].min():,.0f}")
 
                 c1, c2 = st.columns(2)
                 with c1:
@@ -346,6 +426,18 @@ if uploaded:
             if col_types["numeric"]:
                 st.markdown("### Distribuição numérica")
                 col_n = st.selectbox("Coluna", col_types["numeric"], key="exp_num")
+                
+                # Mini stats
+                col_a, col_b, col_c, col_d = st.columns(4)
+                with col_a:
+                    st.metric("Q1", f"{df_view[col_n].quantile(0.25):,.0f}")
+                with col_b:
+                    st.metric("Mediana", f"{df_view[col_n].median():,.0f}")
+                with col_c:
+                    st.metric("Q3", f"{df_view[col_n].quantile(0.75):,.0f}")
+                with col_d:
+                    st.metric("Desvio Padrão", f"{df_view[col_n].std():,.0f}")
+                
                 c1, c2 = st.columns(2)
                 with c1:
                     fig = px.histogram(df_view, x=col_n, nbins=40, title=f"Histograma: {col_n}",
@@ -368,7 +460,8 @@ if uploaded:
                 with c1:
                     fig = px.bar(vc, x="contagem", y=col_c, orientation="h",
                                  title=f"Top {top_n}: {col_c}",
-                                 color_discrete_sequence=[PALETTE["success"]])
+                                 color="contagem",
+                                 color_continuous_scale="Viridis")
                     st.plotly_chart(apply_chart_style(fig), use_container_width=True)
                 with c2:
                     fig = px.pie(vc, names=col_c, values="contagem",
@@ -399,7 +492,7 @@ if uploaded:
 
                 fig = px.bar(grp, x=cross_cat, y=agg_fn,
                              title=f"{agg_fn} de {cross_num} por {cross_cat}",
-                             color=agg_fn, color_continuous_scale="Blues")
+                             color=agg_fn, color_continuous_scale="Purples")
                 st.plotly_chart(apply_chart_style(fig), use_container_width=True)
 
         # TAB 4 — estatísticas descritivas e correlações
@@ -408,7 +501,16 @@ if uploaded:
                 st.info("ℹ️ Nenhuma coluna numérica encontrada.")
             else:
                 st.markdown("### Estatísticas descritivas")
-                st.dataframe(df_view[col_types["numeric"]].describe().T.round(4), use_container_width=True)
+                stats_df = df_view[col_types["numeric"]].describe().T.round(4)
+                st.dataframe(stats_df, use_container_width=True)
+                
+                # Resumo visual das distribuições
+                st.markdown("### Distribuição das colunas numéricas")
+                for col in col_types["numeric"][:3]:  # Primeiras 3
+                    fig = px.histogram(df_view, x=col, nbins=30,
+                                      title=f"Distribuição: {col}",
+                                      color_discrete_sequence=[PALETTE["primary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True, height=250)
 
                 if len(col_types["numeric"]) >= 2:
                     render_separator()
@@ -433,10 +535,18 @@ if uploaded:
                         color_opt = st.selectbox("Cor por (opcional)", ["—"] + col_types["categorical"])
                         color_by = None if color_opt == "—" else color_opt
 
-                    fig = px.scatter(df_view, x=sc_x, y=sc_y, color=color_by,
-                                     trendline="ols", opacity=0.7,
-                                     title=f"Dispersão: {sc_x} vs {sc_y}",
-                                     color_discrete_sequence=CHART_COLORS)
+                    try:
+                        fig = px.scatter(df_view, x=sc_x, y=sc_y, color=color_by,
+                                         trendline="ols", opacity=0.7,
+                                         title=f"Dispersão: {sc_x} vs {sc_y}",
+                                         color_discrete_sequence=CHART_COLORS)
+                    except Exception:
+                        # Fallback sem trendline se statsmodels não estiver disponível
+                        fig = px.scatter(df_view, x=sc_x, y=sc_y, color=color_by,
+                                         opacity=0.7,
+                                         title=f"Dispersão: {sc_x} vs {sc_y}",
+                                         color_discrete_sequence=CHART_COLORS)
+                    
                     st.plotly_chart(apply_chart_style(fig), use_container_width=True)
 
         # TAB 5 — exportação dos dados filtrados
@@ -458,8 +568,5 @@ if uploaded:
                                    use_container_width=True)
 
 else:
-    # Tela de boas-vindas quando não há arquivo carregado
-    st.markdown("## 👋 Bem-vindo ao Analytics Dashboard")
-    st.markdown("Carregue um arquivo na barra lateral para começar.")
-    st.markdown("**Formatos suportados:** `.xlsx` · `.xls` · `.csv` · `.txt` · `.json`")
-    st.image("https://i.imgur.com/placeholder.png", width=1, caption="")  # placeholder visual
+    from templates.ui import render_welcome
+    render_welcome()

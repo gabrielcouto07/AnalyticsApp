@@ -121,3 +121,8 @@ def detect_time_granularity(df, date_col: str) -> str:
             return "Ano"
     except Exception:
         return "Mês"
+
+def render_welcome():
+    """
+    Tela de boas vindas exibida de começo, antes de qualquer açao do usuario.
+    """

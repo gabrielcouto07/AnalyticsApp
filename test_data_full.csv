@@ -1,0 +1,16 @@
+data,vendas,categoria,regiao
+2024-01-01,1000,Produto A,Norte
+2024-01-02,1500,Produto B,Sul
+2024-01-03,1200,Produto A,Leste
+2024-01-04,2000,Produto C,Oeste
+2024-01-05,1800,Produto B,Norte
+2024-01-06,2200,Produto A,Sul
+2024-01-07,1900,Produto C,Leste
+2024-01-08,2100,Produto B,Oeste
+2024-01-09,2300,Produto A,Norte
+2024-01-10,1700,Produto C,Sul
+2024-01-11,2400,Produto B,Leste
+2024-01-12,2000,Produto A,Oeste
+2024-01-13,1900,Produto B,Norte
+2024-01-14,2200,Produto C,Sul
+2024-01-15,2100,Produto A,Leste
