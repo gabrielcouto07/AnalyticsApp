@@ -63,14 +63,15 @@ export function CrossChart({
       .finally(() => setLoading(false))
   }, [sessionId, catCol, numCol, aggFn, topN])
 
-  if (loading) return <div className="text-center py-8 text-muted">Carregando gráfico...</div>
-  if (error) return <div className="text-danger text-center py-8">{error}</div>
-  if (!data.length) return <div className="text-center py-8 text-muted">Sem dados</div>
+  if (loading) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8" }}>⏳ Loading chart...</div>
+  if (error) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#ef4444" }}>❌ {error}</div>
+  if (!data.length) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8" }}>No data</div>
 
   const categories = data.map(d => d[catCol])
   const values = data.map(d => d[aggFn])
 
   return (
+    // @ts-ignore - Plotly type definitions issue-ignore - Plotly type definitions issue
     <Plot
       data={[
         {

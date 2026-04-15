@@ -44,11 +44,12 @@ export function CorrelationChart({ sessionId }: CorrelationChartProps) {
       .finally(() => setLoading(false))
   }, [sessionId])
 
-  if (loading) return <div className="text-center py-8 text-muted">Carregando correlação...</div>
-  if (error) return <div className="text-danger text-center py-8">{error}</div>
-  if (!columns.length) return <div className="text-center py-8 text-muted">Sem dados de correlação</div>
+  if (loading) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8" }}>⏳ Loading correlation...</div>
+  if (error) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#ef4444" }}>❌ {error}</div>
+  if (!columns.length) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8" }}>No correlation data</div>
 
   return (
+    // @ts-ignore - Plotly type definitions issue
     <Plot
       data={[
         {

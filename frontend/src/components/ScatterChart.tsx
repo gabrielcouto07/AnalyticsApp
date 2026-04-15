@@ -37,7 +37,7 @@ export function ScatterChart({ sessionId, xCol, yCol, colorCol }: ScatterChartPr
     setError(null)
 
     // Mock data for scatter
-    const mockData = Array.from({ length: 50 }, (_, i) => ({
+    const mockData = Array.from({ length: 50 }, () => ({
       x: Math.random() * 100,
       y: Math.random() * 100,
       color: Math.random() * 50,
@@ -47,15 +47,16 @@ export function ScatterChart({ sessionId, xCol, yCol, colorCol }: ScatterChartPr
     setLoading(false)
   }, [sessionId, xCol, yCol, colorCol])
 
-  if (loading) return <div className="text-center py-8 text-muted">Carregando scatter...</div>
-  if (error) return <div className="text-danger text-center py-8">{error}</div>
-  if (!data.length) return <div className="text-center py-8 text-muted">Sem dados</div>
+  if (loading) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8" }}>⏳ Loading scatter...</div>
+  if (error) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#ef4444" }}>❌ {error}</div>
+  if (!data.length) return <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8" }}>No data</div>
 
   const xValues = data.map((d) => d.x)
   const yValues = data.map((d) => d.y)
   const colors = data.map((d) => d.color)
 
   return (
+    // @ts-ignore - Plotly type definitions issue-ignore - Plotly type definitions issue
     <Plot
       data={[
         {
@@ -72,7 +73,7 @@ export function ScatterChart({ sessionId, xCol, yCol, colorCol }: ScatterChartPr
             line: { color: '#94a3b8', width: 0.5 },
           },
           text: data.map(
-            (d, i) => `${xCol}: ${d.x.toFixed(2)}<br>${yCol}: ${d.y.toFixed(2)}<br>Cor: ${d.color.toFixed(2)}`
+            (d) => `${xCol}: ${d.x.toFixed(2)}<br>${yCol}: ${d.y.toFixed(2)}<br>Cor: ${d.color.toFixed(2)}`
           ),
           hovertemplate: '%{text}<extra></extra>',
         },

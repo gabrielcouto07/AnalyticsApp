@@ -14,7 +14,7 @@ interface FilterSidebarProps {
 }
 
 export function FilterSidebar({ onFiltersChange, isOpen, onClose }: FilterSidebarProps) {
-  const { colTypes, stats } = useSession()
+  const { colTypes } = useSession()
   const [filters, setFilters] = useState<Filters>({
     dateRange: null,
     selectedCategories: [],

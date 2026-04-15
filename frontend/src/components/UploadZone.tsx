@@ -12,7 +12,6 @@ export function UploadZone() {
     setLoading(true)
     setError(null)
     try {
-      // 1. Upload do arquivo
       const upload = await uploadFile(file)
       setSession({
         sessionId: upload.session_id,
@@ -23,7 +22,6 @@ export function UploadZone() {
         isLoading: true,
       })
 
-      // 2. Busca tudo em paralelo — Promise.all garante que só renderiza quando tudo chegou
       const [kpisData, qualityData, statsData] = await Promise.all([
         getKpis(upload.session_id),
         getQuality(upload.session_id),
@@ -38,8 +36,10 @@ export function UploadZone() {
         isLoading: false,
       })
     } catch (e: any) {
-      setError(e?.response?.data?.detail ?? "Erro ao processar arquivo")
+      setError(e?.response?.data?.detail || "Erro ao processar arquivo")
       setSession({ isLoading: false })
+    } finally {
+      setLoading(false)
     }
   }, [setSession])
 
@@ -55,27 +55,127 @@ export function UploadZone() {
       onDragOver={e => { e.preventDefault(); setDragging(true) }}
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
-      className={`flex flex-col items-center justify-center w-full h-64 rounded-2xl
-        border-2 border-dashed cursor-pointer transition-all duration-300
-        ${dragging ? "border-primary bg-primary/10 scale-105" : "border-border hover:border-primary/60 hover:bg-primary/5"}
-        ${loading ? "opacity-60 pointer-events-none" : ""}`}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "100%",
+        minHeight: "240px",
+        borderRadius: "16px",
+        border: `2px dashed ${dragging ? "#4f8ef7" : "#334155"}`,
+        backgroundColor: dragging ? "rgba(79, 142, 247, 0.1)" : "rgba(30, 41, 59, 0.4)",
+        cursor: "pointer",
+        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        opacity: loading ? 0.7 : 1,
+        pointerEvents: loading ? "none" : "auto",
+        padding: "40px 20px",
+        backdropFilter: "blur(10px)"
+      }}
     >
       <input
         type="file"
-        className="hidden"
+        style={{ display: "none" }}
         accept=".xlsx,.xls,.csv,.txt,.json"
         onChange={e => e.target.files?.[0] && handle(e.target.files[0])}
       />
-      <div className={`text-6xl mb-4 transition-all duration-300 ${loading ? 'animate-spin' : 'animate-bounce'}`}>
-        {loading ? '⚙️' : '📂'}
+      
+      {/* Icon with pulsing effect */}
+      <div style={{
+        fontSize: "56px",
+        marginBottom: "16px",
+        animation: loading ? "spin 1.5s linear infinite" : "float 3s ease-in-out infinite",
+        display: "inline-block"
+      }}>
+        {loading ? "⚙️" : "📤"}
       </div>
-      <p className="text-text font-bold text-lg text-center">
-        {loading ? 'Processando seu arquivo...' : 'Arraste ou clique para carregar'}
+
+      {/* Main text */}
+      <p style={{
+        fontSize: "18px",
+        fontWeight: "700",
+        color: "#f1f5f9",
+        margin: "0 0 8px 0",
+        letterSpacing: "-0.3px"
+      }}>
+        {loading ? "Processing your data..." : "Drop your file here"}
       </p>
-      <p className="text-muted text-sm mt-2 text-center">
-        {loading ? 'Por favor, aguarde' : 'Excel, CSV, TXT ou JSON • Até 100MB'}
+
+      {/* Subtitle */}
+      <p style={{
+        fontSize: "14px",
+        color: "#cbd5e1",
+        margin: "0 0 16px 0",
+        fontWeight: "400"
+      }}>
+        {loading ? "Uploading and analyzing..." : "or click to select from your computer"}
       </p>
-      {error && <p className="text-danger text-sm mt-4 font-medium text-center max-w-xs">{error}</p>}
+
+      {/* Supported formats */}
+      <div style={{
+        display: "flex",
+        gap: "8px",
+        justifyContent: "center",
+        flexWrap: "wrap",
+        marginBottom: "8px"
+      }}>
+        {["Excel", "CSV", "JSON"].map(fmt => (
+          <span
+            key={fmt}
+            style={{
+              fontSize: "11px",
+              fontWeight: "600",
+              padding: "4px 10px",
+              backgroundColor: "rgba(79, 142, 247, 0.15)",
+              color: "#94a3b8",
+              borderRadius: "12px",
+              textTransform: "uppercase",
+              letterSpacing: "0.5px"
+            }}
+          >
+            {fmt}
+          </span>
+        ))}
+      </div>
+
+      {/* File size hint */}
+      <p style={{
+        fontSize: "12px",
+        color: "#64748b",
+        margin: 0
+      }}>
+        Max 100MB
+      </p>
+
+      {/* Error message */}
+      {error && (
+        <div style={{
+          marginTop: "16px",
+          padding: "10px 14px",
+          backgroundColor: "rgba(248, 113, 113, 0.1)",
+          border: "1px solid rgba(248, 113, 113, 0.3)",
+          borderRadius: "8px",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px"
+        }}>
+          <span style={{ fontSize: "16px" }}>⚠️</span>
+          <p style={{ fontSize: "12px", color: "#fca5a5", margin: 0 }}>
+            {error}
+          </p>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes float {
+          0%, 100% { transform: translateY(0px) }
+          50% { transform: translateY(-12px) }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg) }
+          to { transform: rotate(360deg) }
+        }
+      `}</style>
     </label>
   )
 }

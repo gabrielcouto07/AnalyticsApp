@@ -1,5 +1,4 @@
-/* App CSS */
-/* Tailwind handles all styling */
+/* App CSS - Pure CSS */
 
 /* Custom animations */
 @keyframes fadeIn {
@@ -13,21 +12,26 @@
   }
 }
 
-@layer utilities {
-  .animate-fadeIn {
-    animation: fadeIn 0.3s ease-out;
-  }
-  
-  .scrollbar-hide {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
-  }
-  
-  .drop-shadow-2xl {
-    filter: drop-shadow(0 25px 25px rgba(0, 0, 0, 0.15));
-  }
+@keyframes bounce {
+  0%, 100% { transform: translateY(0) }
+  50% { transform: translateY(-8px) }
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg) }
+  to { transform: rotate(360deg) }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+

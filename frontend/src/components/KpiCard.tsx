@@ -1,4 +1,9 @@
-interface KpiCardProps {
+import { fmt } from "../lib/format"
+
+const COLORS = ["#4f8ef7", "#a78bfa", "#34c97e", "#f59e0b"]
+const ICONS = ["💰", "📦", "📈", "🔢"]
+
+interface Props {
   title: string
   total: number
   mean: number
@@ -6,66 +11,51 @@ interface KpiCardProps {
   index?: number
 }
 
-const ACCENT_COLORS = ["#4f8ef7", "#a78bfa", "#34c97e", "#f59e0b"]
-
-const fmt = (n: number) =>
-  new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(n)
-
-export function KpiCard({ title, total, mean, trend, index = 0 }: KpiCardProps) {
-  const color = ACCENT_COLORS[index % ACCENT_COLORS.length]
-  const hasPositiveTrend = typeof trend === "number" && trend > 0
-  const hasNegativeTrend = typeof trend === "number" && trend < 0
+export function KpiCard({ title, total, mean, trend, index = 0 }: Props) {
+  const color = COLORS[index % COLORS.length]
+  const icon  = ICONS[index % ICONS.length]
+  const up    = typeof trend === "number" && trend > 0
+  const down  = typeof trend === "number" && trend < 0
 
   return (
     <div
-      className="relative bg-gradient-to-br from-card via-card/80 to-card/60 rounded-2xl p-6 border border-primary/20
-                 hover:border-primary/60 transition-all duration-300 overflow-hidden group
-                 shadow-xl hover:shadow-2xl hover:scale-105 cursor-pointer"
-      style={{ borderLeft: `4px solid ${color}`, borderTopLeftRadius: '16px' }}
+      className="bg-card border border-border rounded-xl p-4 flex flex-col gap-3
+                 hover:border-primary/40 transition-all duration-200 min-w-0"
+      style={{ borderTop: `2px solid ${color}` }}
     >
-      {/* Premium Gradient Background */}
-      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-all duration-300 rounded-2xl"
-        style={{ 
-          background: `linear-gradient(135deg, ${color}15 0%, ${color}05 50%, transparent 100%)`
-        }}
-      />
-
-      {/* Animated Accent */}
-      <div
-        className="absolute -top-1/2 -right-1/2 w-full h-full rounded-full opacity-0 group-hover:opacity-20 group-hover:blur-3xl transition-all duration-500"
-        style={{ background: color }}
-      />
-
-      <div className="relative z-10">
-        <div className="flex items-start justify-between mb-4">
-          <p className="text-xs font-bold text-muted/70 uppercase tracking-widest truncate flex-1">
-            {title}
-          </p>
-          <div className="text-xl opacity-60 group-hover:opacity-100 transition-opacity">{['📊', '📈', '✓', '⭐'][index % 4]}</div>
-        </div>
-
-        <p className="text-4xl font-black bg-gradient-to-r from-text to-text/70 bg-clip-text text-transparent group-hover:from-primary group-hover:to-secondary transition-all duration-300">
-          {fmt(total)}
+      {/* Linha 1: ícone + label */}
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-base shrink-0">{icon}</span>
+        <p className="text-xs font-semibold text-muted uppercase tracking-wide truncate">
+          {title}
         </p>
-
-        <div className="flex items-center justify-between mt-4 pt-4 border-t border-primary/10">
-          <span className="text-xs text-muted/80 font-medium">Média: <span className="text-primary font-bold">{fmt(mean)}</span></span>
-
-          {typeof trend === "number" && (
-            <span
-              className={`text-xs font-bold px-3 py-1.5 rounded-full transition-all duration-300
-              ${hasPositiveTrend ? "bg-success/20 text-success shadow-lg shadow-success/20" : ""}
-              ${hasNegativeTrend ? "bg-danger/20 text-danger shadow-lg shadow-danger/20" : ""}
-              ${trend === 0 ? "bg-muted/20 text-muted/80" : ""}`}
-            >
-              {hasPositiveTrend ? "📈" : hasNegativeTrend ? "📉" : "→"} {Math.abs(trend).toFixed(1)}%
-            </span>
-          )}
-        </div>
       </div>
 
-      {/* Border Glow */}
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+      {/* Linha 2: valor principal — grande e bold */}
+      <div className="min-w-0">
+        <p className="text-2xl font-bold text-text leading-none truncate">
+          {fmt.compact(total)}
+        </p>
+        <p className="text-[11px] text-faint mt-1">
+          Total: {fmt.number(total)}
+        </p>
+      </div>
+
+      {/* Linha 3: média + trend badge — sempre na base */}
+      <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/60 min-w-0">
+        <span className="text-xs text-muted truncate">
+          Média: <span className="text-text font-medium">{fmt.compact(mean)}</span>
+        </span>
+
+        {typeof trend === "number" && (
+          <span className={`shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap
+            ${up   ? "bg-success/15 text-success" : ""}
+            ${down ? "bg-danger/15  text-danger"  : ""}
+            ${!up && !down ? "bg-muted/15 text-muted" : ""}`}>
+            {up ? "↑" : down ? "↓" : "→"} {Math.abs(trend).toFixed(1)}%
+          </span>
+        )}
+      </div>
     </div>
   )
 }

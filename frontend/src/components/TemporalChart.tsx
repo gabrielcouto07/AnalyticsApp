@@ -74,6 +74,7 @@ export function TemporalChart({
   const cumulative = data.map(d => d.cumulative || 0)
 
   return (
+    // @ts-ignore - Plotly type definitions issue
     <Plot
       data={[
         {
