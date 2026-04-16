@@ -10,6 +10,7 @@ import { ExplorerPage } from "./pages/ExplorerPage"
 import { CorrelationPage } from "./pages/CorrelationPage"
 import { QualityPage } from "./pages/QualityPage"
 import { ExportPage } from "./pages/ExportPage"
+import { ConverterPage } from "./pages/ConverterPage"
 import "./App.css"
 
 const PAGES: Record<PageId, React.ReactNode> = {
@@ -21,6 +22,7 @@ const PAGES: Record<PageId, React.ReactNode> = {
   correlation: <CorrelationPage />,
   quality: <QualityPage />,
   export: <ExportPage />,
+  converter: <ConverterPage />,
 }
 
 export default function App() {
