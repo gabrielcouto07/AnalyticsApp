@@ -32,7 +32,7 @@ export function UploadZone() {
         kpis: kpisData.kpis || [],
         quality: qualityData.quality || [],
         stats: statsData.stats || {},
-        datasetType: kpisData.dataset_type || null,
+        datasetType: kpisData.dataset_type?.description ?? kpisData.dataset_type ?? null,
         isLoading: false,
       })
     } catch (e: any) {
