@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import upload, data, charts, export, filters
+from .routers import upload, data, charts, export, filters, advanced
 
 app = FastAPI(title="Analytics Dashboard API", version="2.0.0")
 
@@ -19,6 +19,7 @@ app.include_router(data.router)
 app.include_router(charts.router)
 app.include_router(export.router)
 app.include_router(filters.router)
+app.include_router(advanced.router)
 
 
 @app.get("/")

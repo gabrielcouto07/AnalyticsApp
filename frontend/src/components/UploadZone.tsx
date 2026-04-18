@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react"
-import { uploadFile, getKpis, getQuality, getStats } from "../api/analytics"
+import { uploadFile, getKpis, getQuality, getStats, getSemantic } from "../api/analytics"
 import { useSession } from "../store/session"
 
 export function UploadZone() {
@@ -7,6 +7,7 @@ export function UploadZone() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const setSession = useSession(s => s.setSession)
+  const setSemanticData = useSession(s => s.setSemanticData)
   const setKpis = useSession(s => s.setKpis)
   const setQuality = useSession(s => s.setQuality)
   const setStats = useSession(s => s.setStats)
@@ -24,21 +25,23 @@ export function UploadZone() {
         col_types: upload.col_types,
       })
 
-      const [kpisData, qualityData, statsData] = await Promise.all([
+      const [kpisData, qualityData, statsData, semanticData] = await Promise.all([
         getKpis(upload.session_id),
         getQuality(upload.session_id),
         getStats(upload.session_id),
+        getSemantic(upload.session_id),
       ])
 
       setKpis(kpisData.kpis || [])
       setQuality(qualityData.quality || [])
       setStats((statsData as any).stats || {})
+      setSemanticData(semanticData || null)
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Erro ao processar arquivo")
     } finally {
       setLoading(false)
     }
-  }, [setSession, setKpis, setQuality, setStats])
+  }, [setSession, setSemanticData, setKpis, setQuality, setStats])
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()
