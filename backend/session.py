@@ -1,13 +1,25 @@
 import uuid
 from typing import Optional
 import pandas as pd
+from dataclasses import dataclass, field
+from typing import Any
 
-_sessions: dict[str, pd.DataFrame] = {}
+@dataclass
+class Session:
+    """Representa uma sessão de análise com filtros"""
+    df: pd.DataFrame  # DataFrame original (nunca modificar)
+    df_filtered: Optional[pd.DataFrame] = None  # DataFrame com filtros aplicados
+    active_filters: dict[str, Any] = field(default_factory=dict)  # Filtros ativos
+    cache_invalidated: bool = False  # Flag para invalidar cache de charts
+    template_type: Optional[str] = None  # e.g. "efetivo" for custom-parsed files
 
 
-def create_session(df: pd.DataFrame) -> str:
+_sessions: dict[str, Session] = {}
+
+
+def create_session(df: pd.DataFrame, template_type: Optional[str] = None) -> str:
     session_id = str(uuid.uuid4())
-    _sessions[session_id] = df
+    _sessions[session_id] = Session(df=df.copy(), template_type=template_type)
     return session_id
 
 
