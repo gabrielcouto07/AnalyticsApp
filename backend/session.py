@@ -10,14 +10,15 @@ class Session:
     df_filtered: Optional[pd.DataFrame] = None  # DataFrame com filtros aplicados
     active_filters: dict[str, Any] = field(default_factory=dict)  # Filtros ativos
     cache_invalidated: bool = False  # Flag para invalidar cache de charts
+    template_type: Optional[str] = None  # e.g. "efetivo" for custom-parsed files
 
 
 _sessions: dict[str, Session] = {}
 
 
-def create_session(df: pd.DataFrame) -> str:
+def create_session(df: pd.DataFrame, template_type: Optional[str] = None) -> str:
     session_id = str(uuid.uuid4())
-    _sessions[session_id] = Session(df=df.copy())
+    _sessions[session_id] = Session(df=df.copy(), template_type=template_type)
     return session_id
 
 
@@ -42,29 +43,25 @@ def list_sessions() -> list[str]:
 
 
 def invalidate_chart_cache(session_id: str):
-    """Marca o cache dos gráficos como inválido"""
     session = get_session(session_id)
     if session:
         session.cache_invalidated = True
 
 
 def reset_cache_flag(session_id: str):
-    """Reseta a flag de cache invalidado"""
     session = get_session(session_id)
     if session:
         session.cache_invalidated = False
 
 
 def get_session_info(session_id: str) -> Optional[dict]:
-    """Retorna info completa sobre a sessão"""
     session = get_session(session_id)
     if session is None:
         return None
-    
+
     total_rows = len(session.df)
     filtered_rows = len(session.df_filtered) if session.df_filtered is not None else total_rows
-    
-    # Contar filtros ativos corretamente
+
     filter_count = 0
     if "date_range" in session.active_filters and session.active_filters["date_range"]:
         filter_count += 1
@@ -72,7 +69,7 @@ def get_session_info(session_id: str) -> Optional[dict]:
         filter_count += len(session.active_filters["categorical"])
     if "numeric" in session.active_filters and session.active_filters["numeric"]:
         filter_count += len(session.active_filters["numeric"])
-    
+
     return {
         "total_rows": total_rows,
         "filtered_rows": filtered_rows,
