@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Plot from 'react-plotly.js'
-import { getTemporalChart } from '../api/analytics'
+import { getTemporalData } from '../api/analytics'
 
 interface TemporalChartProps {
   sessionId: string
@@ -50,7 +50,7 @@ export function TemporalChart({
   useEffect(() => {
     setLoading(true)
     setError(null)
-    getTemporalChart(sessionId, {
+    getTemporalData(sessionId, {
       date_col: dateCol,
       metric_col: metricCol,
       granularity,

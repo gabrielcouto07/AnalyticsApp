@@ -7,6 +7,9 @@ export function UploadZone() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const setSession = useSession(s => s.setSession)
+  const setKpis = useSession(s => s.setKpis)
+  const setQuality = useSession(s => s.setQuality)
+  const setStats = useSession(s => s.setStats)
 
   const handle = useCallback(async (file: File) => {
     setLoading(true)
@@ -14,12 +17,11 @@ export function UploadZone() {
     try {
       const upload = await uploadFile(file)
       setSession({
-        sessionId: upload.session_id,
+        session_id: upload.session_id,
         filename: upload.filename,
         rows: upload.rows,
         columns: upload.columns,
-        colTypes: upload.col_types,
-        isLoading: true,
+        col_types: upload.col_types,
       })
 
       const [kpisData, qualityData, statsData] = await Promise.all([
@@ -28,20 +30,15 @@ export function UploadZone() {
         getStats(upload.session_id),
       ])
 
-      setSession({
-        kpis: kpisData.kpis || [],
-        quality: qualityData.quality || [],
-        stats: statsData.stats || {},
-        datasetType: kpisData.dataset_type || null,
-        isLoading: false,
-      })
+      setKpis(kpisData.kpis || [])
+      setQuality(qualityData.quality || [])
+      setStats((statsData as any).stats || {})
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Erro ao processar arquivo")
-      setSession({ isLoading: false })
     } finally {
       setLoading(false)
     }
-  }, [setSession])
+  }, [setSession, setKpis, setQuality, setStats])
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()

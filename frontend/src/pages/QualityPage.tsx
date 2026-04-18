@@ -3,7 +3,7 @@ import { useSession } from "../store/session"
 
 // Data quality metrics and null analysis
 export function QualityPage() {
-  const { quality, colTypes, rows } = useSession()
+  const { quality } = useSession()
 
   const stats = useMemo(() => {
     if (!quality.length) return { totalNulls: 0, nullColumns: 0, avgNullPct: 0 }
@@ -62,7 +62,7 @@ export function QualityPage() {
                   </td>
                   <td style={{ padding: "12px 16px", color: "#94a3b8" }}>
                     <span style={{ display: "inline-block", fontSize: "11px", backgroundColor: "rgba(79, 142, 247, 0.1)", color: "#4f8ef7", padding: "2px 8px", borderRadius: "4px" }}>
-                      {item.type}
+                      {item.dtype}
                     </span>
                   </td>
                   <td style={{ padding: "12px 16px", color: item.null_count > 0 ? "#f59e0b" : "#10b981", fontWeight: "600" }}>
@@ -83,7 +83,7 @@ export function QualityPage() {
                     </div>
                   </td>
                   <td style={{ padding: "12px 16px", color: "#94a3b8" }}>
-                    {item.unique || "—"}
+                    {item.unique_count || "—"}
                   </td>
                   <td style={{ padding: "12px 16px", color: "#cbd5e1", fontSize: "12px", maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.sample || ""}>
                     {item.sample || "—"}

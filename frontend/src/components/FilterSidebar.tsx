@@ -1,192 +1,76 @@
-import { useState } from 'react'
-import { useSession } from '../store/session'
+﻿import { useState } from "react"
+import { useSession } from "../store/session"
 
-interface Filters {
-  dateRange: [string, string] | null
-  selectedCategories: string[]
-  numericRange: [number, number] | null
-}
+export function FilterSidebar() {
+  const activeFilters = useSession(s => s.activeFilters)
+  const clearSession = useSession(s => s.clearSession)
+  const [isOpen, setIsOpen] = useState(false)
 
-interface FilterSidebarProps {
-  onFiltersChange: (filters: Filters) => void
-  isOpen: boolean
-  onClose: () => void
-}
-
-export function FilterSidebar({ onFiltersChange, isOpen, onClose }: FilterSidebarProps) {
-  const { colTypes } = useSession()
-  const [filters, setFilters] = useState<Filters>({
-    dateRange: null,
-    selectedCategories: [],
-    numericRange: null,
-  })
-
-  const handleDateFromChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newRange: [string, string] = [e.target.value, filters.dateRange?.[1] || '']
-    setFilters({ ...filters, dateRange: newRange })
-    onFiltersChange({ ...filters, dateRange: newRange })
+  const getActiveFilterCount = () => {
+    let count = 0
+    if (activeFilters.date_range) count++
+    if (activeFilters.categorical?.length > 0) count++
+    if (activeFilters.numeric_range?.length > 0) count++
+    return count
   }
 
-  const handleDateToChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newRange: [string, string] = [filters.dateRange?.[0] || '', e.target.value]
-    setFilters({ ...filters, dateRange: newRange })
-    onFiltersChange({ ...filters, dateRange: newRange })
-  }
+  const activeFilterCount = getActiveFilterCount()
 
-  const toggleCategory = (cat: string) => {
-    const newCats = filters.selectedCategories.includes(cat)
-      ? filters.selectedCategories.filter((c) => c !== cat)
-      : [...filters.selectedCategories, cat]
-    setFilters({ ...filters, selectedCategories: newCats })
-    onFiltersChange({ ...filters, selectedCategories: newCats })
-  }
-
-  const handleNumericMinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newRange: [number, number] = [
-      parseFloat(e.target.value) || 0,
-      filters.numericRange?.[1] || 0,
-    ]
-    setFilters({ ...filters, numericRange: newRange })
-    onFiltersChange({ ...filters, numericRange: newRange })
-  }
-
-  const handleNumericMaxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newRange: [number, number] = [
-      filters.numericRange?.[0] || 0,
-      parseFloat(e.target.value) || 0,
-    ]
-    setFilters({ ...filters, numericRange: newRange })
-    onFiltersChange({ ...filters, numericRange: newRange })
-  }
-
-  const resetFilters = () => {
-    const cleared: Filters = {
-      dateRange: null,
-      selectedCategories: [],
-      numericRange: null,
-    }
-    setFilters(cleared)
-    onFiltersChange(cleared)
+  const handleClear = () => {
+    clearSession()
+    setIsOpen(false)
   }
 
   return (
     <>
-      {/* Overlay Mobile */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-30 md:hidden"
-          onClick={onClose}
-        />
-      )}
-
-      {/* Sidebar */}
-      <div
-        className={`fixed md:relative top-20 left-0 right-0 bottom-0 bg-card border-r border-border z-40
-          md:z-0 md:top-0 w-full md:w-64 transform transition-transform duration-300
-          ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0
-          overflow-y-auto`}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          position: "fixed",
+          bottom: "24px",
+          right: "24px",
+          backgroundColor: activeFilterCount > 0 ? "#3b82f6" : "#475569",
+          color: "white",
+          padding: "12px 16px",
+          borderRadius: "8px",
+          fontSize: "14px",
+          fontWeight: "600",
+          border: "none",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          zIndex: 45,
+          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+        }}
       >
-        <div className="p-6 space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between md:hidden">
-            <h3 className="font-semibold text-text">Filtros</h3>
-            <button
-              onClick={onClose}
-              className="text-muted hover:text-text transition-colors"
-            >
-              ✕
-            </button>
+        <span>Filter</span>
+        {activeFilterCount > 0 && (
+          <span style={{ fontSize: "12px", fontWeight: "700" }}>
+            {activeFilterCount}
+          </span>
+        )}
+      </button>
+
+      {isOpen && (
+        <>
+          <div onClick={() => setIsOpen(false)} style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0, 0, 0, 0.5)", zIndex: 40 }} />
+          <div style={{ position: "fixed", right: 0, top: 0, bottom: 0, width: "100%", maxWidth: "380px", backgroundColor: "#0f172a", borderLeft: "1px solid #334155", zIndex: 50, overflow: "auto", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #334155", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2 style={{ margin: 0, fontSize: "18px", fontWeight: "700", color: "#f1f5f9" }}>Filtros</h2>
+              <button onClick={() => setIsOpen(false)} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: "20px", cursor: "pointer" }}>X</button>
+            </div>
+            <div style={{ flex: 1, overflow: "auto", padding: "20px 24px" }}>
+              <p style={{ color: "#cbd5e1", margin: 0 }}>Sistema em desenvolvimento.</p>
+            </div>
+            {activeFilterCount > 0 && (
+              <div style={{ padding: "16px 24px", borderTop: "1px solid #334155" }}>
+                <button onClick={handleClear} style={{ width: "100%", padding: "10px 16px", backgroundColor: "rgba(248, 113, 113, 0.1)", color: "#f87171", border: "1px solid rgba(248, 113, 113, 0.2)", borderRadius: "6px", fontSize: "13px", fontWeight: "600", cursor: "pointer" }}>Limpar</button>
+              </div>
+            )}
           </div>
-
-          {/* Date Filter */}
-          {colTypes?.date && colTypes.date.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-text uppercase tracking-wider">
-                {colTypes.date[0]}
-              </h4>
-              <div className="space-y-2">
-                <input
-                  type="date"
-                  placeholder="De"
-                  value={filters.dateRange?.[0] || ''}
-                  onChange={handleDateFromChange}
-                  className="w-full px-3 py-2 bg-surface rounded-lg border border-border text-text text-sm
-                    hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
-                />
-                <input
-                  type="date"
-                  placeholder="Até"
-                  value={filters.dateRange?.[1] || ''}
-                  onChange={handleDateToChange}
-                  className="w-full px-3 py-2 bg-surface rounded-lg border border-border text-text text-sm
-                    hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Category Filter */}
-          {colTypes?.categorical && colTypes.categorical.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-text uppercase tracking-wider">
-                {colTypes.categorical[0]}
-              </h4>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {/* Mock categories - in real app, would come from data */}
-                {['Categoria A', 'Categoria B', 'Categoria C', 'Categoria D'].map((cat) => (
-                  <label key={cat} className="flex items-center gap-2 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={filters.selectedCategories.includes(cat)}
-                      onChange={() => toggleCategory(cat)}
-                      className="w-4 h-4 rounded border-border bg-surface accent-primary cursor-pointer"
-                    />
-                    <span className="text-sm text-muted group-hover:text-text transition-colors">
-                      {cat}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Numeric Filter */}
-          {colTypes?.numeric && colTypes.numeric.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-text uppercase tracking-wider">
-                {colTypes.numeric[0]} (Intervalo)
-              </h4>
-              <div className="space-y-2">
-                <input
-                  type="number"
-                  placeholder="Mín."
-                  value={filters.numericRange?.[0] || ''}
-                  onChange={handleNumericMinChange}
-                  className="w-full px-3 py-2 bg-surface rounded-lg border border-border text-text text-sm
-                    hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
-                />
-                <input
-                  type="number"
-                  placeholder="Máx."
-                  value={filters.numericRange?.[1] || ''}
-                  onChange={handleNumericMaxChange}
-                  className="w-full px-3 py-2 bg-surface rounded-lg border border-border text-text text-sm
-                    hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Reset Button */}
-          <button
-            onClick={resetFilters}
-            className="w-full px-4 py-2 rounded-lg bg-muted/10 text-muted hover:bg-muted/20
-              transition-colors font-medium text-sm"
-          >
-            Limpar Filtros
-          </button>
-        </div>
-      </div>
+        </>
+      )}
     </>
   )
 }

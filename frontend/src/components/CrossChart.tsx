@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Plot from 'react-plotly.js'
-import { getCrossChart } from '../api/analytics'
+import { getCrossData } from '../api/analytics'
 
 interface CrossChartProps {
   sessionId: string
@@ -47,7 +47,7 @@ export function CrossChart({
   useEffect(() => {
     setLoading(true)
     setError(null)
-    getCrossChart(sessionId, {
+    getCrossData(sessionId, {
       cat_col: catCol,
       num_col: numCol,
       agg_fn: aggFn,

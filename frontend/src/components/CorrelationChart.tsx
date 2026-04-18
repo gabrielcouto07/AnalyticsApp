@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Plot from 'react-plotly.js'
-import { getCorrelation } from '../api/analytics'
+import { getCorrelationData } from '../api/analytics'
 
 interface CorrelationChartProps {
   sessionId: string
@@ -32,7 +32,7 @@ export function CorrelationChart({ sessionId }: CorrelationChartProps) {
   useEffect(() => {
     setLoading(true)
     setError(null)
-    getCorrelation(sessionId)
+    getCorrelationData(sessionId)
       .then(result => {
         setColumns(result.columns || [])
         setCorrelations(result.data || [])

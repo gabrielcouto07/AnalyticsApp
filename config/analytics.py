@@ -186,20 +186,3 @@ def calculate_percentile_rank(value: float, series: pd.Series) -> float:
         return (series < value).sum() / len(series) * 100
     except Exception:
         return 50.0
-
-
-def identify_anomalies(df: pd.DataFrame, numeric_cols: List[str], threshold_z: float = 2.5) -> Dict[str, List]:
-    """
-    Identifica anomalias usando Z-score em colunas numéricas.
-    Retorna dicionário com índices anômalos por coluna.
-    """
-    anomalies = {}
-    for col in numeric_cols:
-        try:
-            z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
-            anomaly_indices = z_scores[z_scores > threshold_z].index.tolist()
-            anomalies[col] = anomaly_indices
-        except Exception:
-            anomalies[col] = []
-    
-    return anomalies

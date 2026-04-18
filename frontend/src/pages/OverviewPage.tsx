@@ -5,12 +5,17 @@ import { fmt } from "../lib/format"
 
 // Overview dashboard with KPIs and health score
 export function OverviewPage() {
-  const { kpis, quality, colTypes, rows, columns, datasetType, sessionId } = useSession()
+  const { kpis, quality, colTypes, rowCount, colCount, sessionId } = useSession()
 
   useEffect(() => {
     console.log("[OverviewPage] kpis:", kpis)
     console.log("[OverviewPage] sessionId:", sessionId)
   }, [kpis, sessionId])
+
+  // Count column types from colTypes object
+  const dateCols = Object.entries(colTypes || {}).filter(([, type]) => type === 'date').map(([name]) => name)
+  const numericCols = Object.entries(colTypes || {}).filter(([, type]) => type === 'numeric').map(([name]) => name)
+  const categoricalCols = Object.entries(colTypes || {}).filter(([, type]) => type === 'categorical').map(([name]) => name)
 
   const nullPct     = quality.length > 0 ? quality.reduce((a, b) => a + b.null_pct, 0) / quality.length : 0
   const health      = Math.max(0, Math.round(100 - nullPct))
@@ -24,11 +29,6 @@ export function OverviewPage() {
           <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "700", color: "#f1f5f9" }}>Overview</h2>
           <p style={{ margin: "8px 0 0 0", fontSize: "14px", color: "#cbd5e1" }}>Dataset summary and key metrics</p>
         </div>
-        {datasetType && (
-          <span style={{ fontSize: "12px", backgroundColor: "rgba(79, 142, 247, 0.15)", color: "#4f8ef7", padding: "6px 12px", borderRadius: "999px", border: "1px solid rgba(79, 142, 247, 0.3)", fontWeight: "600" }}>
-            {datasetType}
-          </span>
-        )}
       </div>
 
       {/* KPI Cards */}
@@ -68,11 +68,11 @@ export function OverviewPage() {
           <p style={{ margin: 0, fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>Summary</p>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {[
-              ["Rows", fmt.number(rows ?? 0)],
-              ["Columns", String(columns ?? 0)],
-              ["Dates", String(colTypes?.date?.length ?? 0)],
-              ["Numeric", String(colTypes?.numeric?.length ?? 0)],
-              ["Categorical", String(colTypes?.categorical?.length ?? 0)],
+              ["Rows", fmt.number(rowCount ?? 0)],
+              ["Columns", String(colCount ?? 0)],
+              ["Dates", String(dateCols.length)],
+              ["Numeric", String(numericCols.length)],
+              ["Categorical", String(categoricalCols.length)],
             ].map(([label, value]) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: "11px", color: "#94a3b8" }}>{label}</span>
@@ -107,9 +107,9 @@ export function OverviewPage() {
       {/* Column Types */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
         {[
-          { label: "Dates", cols: colTypes?.date ?? [], color: "#06b6d4" },
-          { label: "Numeric", cols: colTypes?.numeric ?? [], color: "#4f8ef7" },
-          { label: "Categorical", cols: colTypes?.categorical ?? [], color: "#a78bfa" },
+          { label: "Dates", cols: dateCols, color: "#06b6d4" },
+          { label: "Numeric", cols: numericCols, color: "#4f8ef7" },
+          { label: "Categorical", cols: categoricalCols, color: "#a78bfa" },
         ].map(({ label, cols, color }) => (
           <div key={label} style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", borderLeft: `3px solid ${color}`, padding: "20px", display: "flex", flexDirection: "column", gap: "12px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>

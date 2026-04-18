@@ -3,7 +3,7 @@ import { useSession } from "../store/session"
 
 // Export data in multiple formats
 export function ExportPage() {
-  const { filename, rows, columns } = useSession()
+  const { filename, rowCount, colCount } = useSession()
   const [loading, setLoading] = useState<"excel" | "csv" | null>(null)
 
   const handleExport = async (format: "excel" | "csv") => {
@@ -47,19 +47,19 @@ export function ExportPage() {
           <div>
             <p style={{ margin: 0, fontSize: "13px", fontWeight: "600", color: "#f1f5f9" }}>{filename || "dataset.xlsx"}</p>
             <p style={{ margin: "4px 0 0 0", fontSize: "11px", color: "#94a3b8" }}>
-              {rows?.toLocaleString()} rows × {columns} columns
+              {rowCount?.toLocaleString()} rows × {colCount || 0} columns
             </p>
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "8px", paddingTop: "12px", borderTop: "1px solid #1e293b" }}>
           {[
-            { name: "Excel", format: "excel", icon: "📊", color: "#10b981" },
+            { name: "Excel", format: "excel" as const, icon: "📊", color: "#10b981" },
             { name: "CSV", format: "csv" as const, icon: "📋", color: "#4f8ef7" },
           ].map(({ name, format, icon, color }) => (
             <button
               key={format}
-              onClick={() => handleExport(format)}
+              onClick={() => handleExport(format as "excel" | "csv")}
               disabled={loading !== null}
               style={{
                 padding: "12px 16px",

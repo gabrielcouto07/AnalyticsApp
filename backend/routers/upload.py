@@ -1,13 +1,13 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from backend.session import create_session
-from backend.services.parser import load_dataframe, get_col_types
+from ..session import create_session
+from ..services.parser import load_dataframe, get_col_types
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    allowed = {".xlsx", ".xls", ".csv", ".txt", ".json"}
+    allowed = {".xlsx", ".xls", ".csv", ".txt", ".json", ".pdf", ".sql", ".docx"}
     ext = "." + file.filename.split(".")[-1].lower()
 
     if ext not in allowed:
@@ -15,7 +15,7 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         content = await file.read()
-        df = load_dataframe(content, file.filename)
+        df, available_sheets = load_dataframe(content, file.filename)
     except Exception as e:
         raise HTTPException(422, f"Erro ao processar arquivo: {e}")
 
@@ -28,6 +28,7 @@ async def upload_file(file: UploadFile = File(...)):
         "rows": len(df),
         "columns": len(df.columns),
         "col_types": col_types,
+        "available_sheets": available_sheets or {},
         # Preview das primeiras 10 linhas (datas convertidas para string)
         "preview": df.head(10).astype(str).to_dict(orient="records"),
     }

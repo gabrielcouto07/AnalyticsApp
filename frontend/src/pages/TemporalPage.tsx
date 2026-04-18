@@ -1,139 +1,172 @@
-import { useState } from "react"
-import { useSession } from "../store/session"
+import { useState, useEffect, useCallback } from 'react';
+import { useSessionStore } from '../store/session';
+import { getTemporalData, type TemporalResponse } from '../api/analytics';
 
-// Temporal analysis with time series data and trends
+function StatCard({ label, value }: { label: string; value: string }) {
+return (
+    <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+      <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">{label}</p>
+      <p className="text-lg font-semibold text-slate-100">{value || '—'}</p>
+    </div>
+  );
+}
+
 export function TemporalPage() {
-  const { quality, colTypes } = useSession()
-  const [selectedDate, setSelectedDate] = useState<string>(colTypes?.date?.[0] ?? "")
-  const [granularity, setGranularity] = useState<"day" | "month" | "year">("day")
+const { sessionId, dateCols, numericCols } = useSessionStore();
 
-  const dateColumns = colTypes?.date ?? []
-  const numericColumns = colTypes?.numeric ?? []
+const [dateCol,     setDateCol]     = useState('');
+const [metricCol,   setMetricCol]   = useState('');
+const [granularity, setGranularity] = useState<'day' | 'month' | 'year'>('month');
+const [response,    setResponse]    = useState<TemporalResponse | null>(null);
+const [loading,     setLoading]     = useState(false);
+const [error,       setError]       = useState<string | null>(null);
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      {/* Header */}
+// Pre-select first available columns on mount
+useEffect(() => {
+  if (dateCols.length > 0 && !dateCol)   setDateCol(dateCols[0]);
+  if (numericCols.length > 0 && !metricCol) setMetricCol(numericCols[0]);
+}, [dateCols, numericCols, dateCol, metricCol]);
+
+const fetchData = useCallback(async () => {
+  if (!sessionId || !dateCol || !metricCol) return;
+  setLoading(true);
+  setError(null);
+  try {
+    const res = await getTemporalData(sessionId, { date_col: dateCol, metric_col: metricCol, granularity });
+    setResponse(res);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Erro ao carregar dados temporais';
+    setError(msg);
+  } finally {
+    setLoading(false);
+  }
+}, [sessionId, dateCol, metricCol, granularity]);
+
+useEffect(() => { 
+  fetchData(); 
+}, [fetchData]);
+
+const fmtNumber = (n: number) =>
+  new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(n);
+
+return (
+  <div className="p-6 space-y-6">
+    {/* Header */}
+    <div>
+      <h1 className="text-2xl font-bold text-slate-100">Temporal Analysis</h1>
+      <p className="text-slate-400 text-sm mt-1">Séries temporais e tendências</p>
+    </div>
+
+    {/* Controls */}
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div>
-        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "700", color: "#f1f5f9" }}>Temporal Analysis</h2>
-        <p style={{ margin: "8px 0 0 0", fontSize: "14px", color: "#cbd5e1" }}>Time series trends and patterns</p>
+        <label className="text-xs text-slate-400 uppercase tracking-wider block mb-2">
+          Coluna de Data
+        </label>
+        <select
+          className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={dateCol}
+          onChange={(e) => setDateCol(e.target.value)}
+        >
+          <option value="">Selecione...</option>
+          {dateCols.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
 
-      {/* Controls */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
-        {/* Date Column Selector */}
-        <div>
-          <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>
-            Date Column
-          </label>
-          <select
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              backgroundColor: "#1e293b",
-              color: "#f1f5f9",
-              border: "1px solid #334155",
-              borderRadius: "8px",
-              fontSize: "13px",
-              fontFamily: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            <option value="">Select date column...</option>
-            {dateColumns.map((col) => (
-              <option key={col} value={col}>
-                {col}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Granularity Selector */}
-        <div>
-          <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>
-            Granularity
-          </label>
-          <div style={{ display: "flex", gap: "8px" }}>
-            {(["day", "month", "year"] as const).map((g) => (
-              <button
-                key={g}
-                onClick={() => setGranularity(g)}
-                style={{
-                  flex: 1,
-                  padding: "8px 12px",
-                  backgroundColor: granularity === g ? "#4f8ef7" : "#1e293b",
-                  color: granularity === g ? "#f1f5f9" : "#94a3b8",
-                  border: `1px solid ${granularity === g ? "#4f8ef7" : "#334155"}`,
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                {g.charAt(0).toUpperCase() + g.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Stats Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px" }}>
-        {[
-          { label: "Time Range", value: "—" },
-          { label: "Total Records", value: "—" },
-          { label: "Avg per Period", value: "—" },
-          { label: "Data Gaps", value: "—" },
-        ].map(({ label, value }) => (
-          <div key={label} style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-            <p style={{ margin: 0, fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase" }}>{label}</p>
-            <p style={{ margin: 0, fontSize: "18px", fontWeight: "700", color: "#f1f5f9" }}>{value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Placeholder for Charts */}
-      <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "40px", textAlign: "center", minHeight: "300px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ margin: 0, fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>📅 Time series charts coming soon</p>
-        <p style={{ margin: 0, fontSize: "11px", color: "#64748b" }}>
-          {selectedDate ? `Selected column: ${selectedDate}` : "Select a date column to get started"}
-        </p>
-      </div>
-
-      {/* Data Columns Info */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
-        <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-          <p style={{ margin: 0, fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase" }}>Available Dates</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            {dateColumns.length === 0 ? (
-              <p style={{ margin: 0, fontSize: "11px", color: "#64748b", fontStyle: "italic" }}>None detected</p>
-            ) : (
-              dateColumns.slice(0, 5).map((col) => (
-                <p key={col} style={{ margin: 0, fontSize: "11px", color: "#f1f5f9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={col}>
-                  • {col}
-                </p>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-          <p style={{ margin: 0, fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase" }}>Available Metrics</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            {numericColumns.length === 0 ? (
-              <p style={{ margin: 0, fontSize: "11px", color: "#64748b", fontStyle: "italic" }}>None detected</p>
-            ) : (
-              numericColumns.slice(0, 5).map((col) => (
-                <p key={col} style={{ margin: 0, fontSize: "11px", color: "#f1f5f9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={col}>
-                  • {col}
-                </p>
-              ))
-            )}
-          </div>
-        </div>
+      <div>
+        <label className="text-xs text-slate-400 uppercase tracking-wider block mb-2">
+          Métrica
+        </label>
+        <select
+          className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={metricCol}
+          onChange={(e) => setMetricCol(e.target.value)}
+        >
+          <option value="">Selecione...</option>
+          {numericCols.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
     </div>
-  )
+
+    {/* Granularity */}
+    <div>
+      <label className="text-xs text-slate-400 uppercase tracking-wider block mb-2">
+        Granularidade
+      </label>
+      <div className="flex rounded-lg overflow-hidden border border-slate-700 w-fit">
+        {(['day', 'month', 'year'] as const).map((g) => (
+          <button
+            key={g}
+            onClick={() => setGranularity(g)}
+            className={`px-6 py-2 text-sm font-medium transition-colors capitalize ${
+              granularity === g
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+            }`}
+          >
+            {g === 'day' ? 'Dia' : g === 'month' ? 'Mês' : 'Ano'}
+          </button>
+        ))}
+      </div>
+    </div>
+
+    {/* Summary Cards */}
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <StatCard label="Período"        value={response?.summary.time_range ?? ''} />
+      <StatCard label="Total Registros" value={response ? String(response.summary.total_records) : ''} />
+      <StatCard label="Média / Período" value={response ? fmtNumber(response.summary.avg_per_period) : ''} />
+      <StatCard label="Períodos vazios" value={response ? String(response.summary.data_gaps) : ''} />
+    </div>
+
+    {/* Chart */}
+    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4" style={{ minHeight: 420 }}>
+      {loading && (
+        <div className="flex items-center justify-center h-80">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="flex items-center justify-center h-80">
+          <p className="text-red-400 text-sm">⚠ {error}</p>
+        </div>
+      )}
+
+      {!loading && !error && (!dateCol || !metricCol) && (
+        <div className="flex flex-col items-center justify-center h-80 text-slate-500">
+          <p className="text-lg">Selecione a coluna de data e a métrica para visualizar</p>
+        </div>
+      )}
+
+      {!loading && !error && response && response.data.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-slate-400 border-b border-slate-700 text-left">
+                <th className="pb-2 pr-4">Data</th>
+                <th className="pb-2 pr-4 text-right">Valor</th>
+                <th className="pb-2 text-right">Acumulado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {response.data.map((row, i) => (
+                <tr key={i} className="border-b border-slate-700/50 hover:bg-slate-700/30">
+                  <td className="py-2 pr-4 text-slate-200">{row.date}</td>
+                  <td className="py-2 pr-4 text-right font-mono text-slate-100">{fmtNumber(row.value)}</td>
+                  <td className="py-2 text-right font-mono text-green-400">{fmtNumber(row.cumulative)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && !error && response && response.data.length === 0 && (
+        <div className="flex items-center justify-center h-80 text-slate-500">
+          <p>Nenhum dado encontrado para o período selecionado</p>
+        </div>
+      )}
+    </div>
+  </div>
+);
 }

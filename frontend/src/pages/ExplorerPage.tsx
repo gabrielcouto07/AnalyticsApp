@@ -1,135 +1,225 @@
-import { useState } from "react"
-import { useSession } from "../store/session"
+import { useState, useEffect, useCallback } from 'react';
+import { useSessionStore } from '../store/session';
+import { getScatterData, type ScatterResponse } from '../api/analytics';
 
-// Free-form data exploration with scatter plots
+function CorrCard({ label, value, desc }: { label: string; value: number; desc: string }) {
+const abs = Math.abs(value);
+const color = abs >= 0.7 ? 'text-green-400' : abs >= 0.3 ? 'text-yellow-400' : 'text-slate-400';
+return (
+  <div className="bg-slate-900 rounded-lg p-3 text-center">
+    <p className="text-xs text-slate-500 mb-1">{label}</p>
+    <p className={`text-xl font-bold font-mono ${color}`}>{value.toFixed(3)}</p>
+    <p className="text-xs text-slate-500 mt-1">{desc}</p>
+  </div>
+);
+}
+
 export function ExplorerPage() {
-  const { colTypes } = useSession()
-  const [xColumn, setXColumn] = useState<string>(colTypes?.numeric?.[0] ?? "")
-  const [yColumn, setYColumn] = useState<string>(colTypes?.numeric?.[1] ?? "")
+const { sessionId, numericCols, categoricalCols } = useSessionStore();
 
-  const numericColumns = colTypes?.numeric ?? []
+const [xCol,       setXCol]       = useState('');
+const [yCol,       setYCol]       = useState('');
+const [colorCol,   setColorCol]   = useState('');
+const [showReg,    setShowReg]     = useState(true);
+const [result,     setResult]     = useState<ScatterResponse | null>(null);
+const [loading,    setLoading]    = useState(false);
+const [error,      setError]      = useState<string | null>(null);
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      {/* Header */}
+useEffect(() => {
+  if (numericCols.length >= 2) {
+    if (!xCol) setXCol(numericCols[0]);
+    if (!yCol) setYCol(numericCols[1]);
+  }
+}, [numericCols, xCol, yCol]);
+
+const fetchData = useCallback(async () => {
+  if (!sessionId || !xCol || !yCol || xCol === yCol) return;
+  setLoading(true);
+  setError(null);
+  try {
+    const res = await getScatterData(sessionId, {
+      x_col: xCol,
+      y_col: yCol,
+      color_col: colorCol || undefined,
+      sample_n: 5000,
+    });
+    setResult(res);
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { detail?: string } }; message?: string })
+      ?.response?.data?.detail ?? (e as Error).message ?? 'Erro ao carregar scatter';
+    setError(msg);
+  } finally {
+    setLoading(false);
+  }
+}, [sessionId, xCol, yCol, colorCol]);
+
+useEffect(() => { fetchData(); }, [fetchData]);
+
+// Build summary stats instead of Plotly traces
+const summary = result ? {
+  total_points: result.data.length,
+  x_min: Math.min(...result.data.map(p => p.x)),
+  x_max: Math.max(...result.data.map(p => p.x)),
+  y_min: Math.min(...result.data.map(p => p.y)),
+  y_max: Math.max(...result.data.map(p => p.y)),
+} : null;
+
+const corrDesc = (r: number) => {
+  const a = Math.abs(r);
+  if (a >= 0.9) return 'Muito forte';
+  if (a >= 0.7) return 'Forte';
+  if (a >= 0.5) return 'Moderada';
+  if (a >= 0.3) return 'Fraca';
+  return 'Muito fraca';
+};
+
+return (
+  <div className="p-6 space-y-6">
+    <div>
+      <h1 className="text-2xl font-bold text-slate-100">Data Explorer</h1>
+      <p className="text-slate-400 text-sm mt-1">Análise bivariada e scatter plots</p>
+    </div>
+
+    {/* Controls */}
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div>
-        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "700", color: "#f1f5f9" }}>Data Explorer</h2>
-        <p style={{ margin: "8px 0 0 0", fontSize: "14px", color: "#cbd5e1" }}>Scatter plots and variable relationships</p>
+        <label className="text-xs text-slate-400 uppercase tracking-wider block mb-2">Eixo X</label>
+        <select
+          className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={xCol} onChange={(e) => setXCol(e.target.value)}
+        >
+          {numericCols.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
-
-      {/* Axis Selectors */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
-        {/* X Axis */}
-        <div>
-          <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>
-            X-Axis
-          </label>
-          <select
-            value={xColumn}
-            onChange={(e) => setXColumn(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              backgroundColor: "#1e293b",
-              color: "#f1f5f9",
-              border: "1px solid #334155",
-              borderRadius: "8px",
-              fontSize: "13px",
-              fontFamily: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            <option value="">Select X-axis...</option>
-            {numericColumns.map((col) => (
-              <option key={col} value={col}>
-                {col}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Y Axis */}
-        <div>
-          <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>
-            Y-Axis
-          </label>
-          <select
-            value={yColumn}
-            onChange={(e) => setYColumn(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              backgroundColor: "#1e293b",
-              color: "#f1f5f9",
-              border: "1px solid #334155",
-              borderRadius: "8px",
-              fontSize: "13px",
-              fontFamily: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            <option value="">Select Y-axis...</option>
-            {numericColumns.map((col) => (
-              <option key={col} value={col}>
-                {col}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label className="text-xs text-slate-400 uppercase tracking-wider block mb-2">Eixo Y</label>
+        <select
+          className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={yCol} onChange={(e) => setYCol(e.target.value)}
+        >
+          {numericCols.filter((c) => c !== xCol).map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
-
-      {/* Statistics */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" }}>
-        {[
-          { label: "Correlation", value: "—" },
-          { label: "R² Value", value: "—" },
-          { label: "Outliers", value: "—" },
-          { label: "Trend", value: "—" },
-        ].map(({ label, value }) => (
-          <div key={label} style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "12px", display: "flex", flexDirection: "column", gap: "6px" }}>
-            <p style={{ margin: 0, fontSize: "10px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase" }}>{label}</p>
-            <p style={{ margin: 0, fontSize: "14px", fontWeight: "700", color: "#f1f5f9" }}>{value}</p>
-          </div>
-        ))}
+      <div>
+        <label className="text-xs text-slate-400 uppercase tracking-wider block mb-2">
+          Cor (opcional)
+        </label>
+        <select
+          className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={colorCol} onChange={(e) => setColorCol(e.target.value)}
+        >
+          <option value="">Nenhum</option>
+          {categoricalCols.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
-
-      {/* Main Scatter Plot */}
-      <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "400px" }}>
-        <span style={{ fontSize: "48px", marginBottom: "12px" }}>📍</span>
-        <p style={{ margin: 0, fontSize: "14px", fontWeight: "600", color: "#f1f5f9", marginBottom: "4px" }}>Scatter Plot</p>
-        <p style={{ margin: 0, fontSize: "11px", color: "#94a3b8" }}>
-          {xColumn && yColumn ? `${xColumn} vs ${yColumn}` : "Select both X and Y axes"}
-        </p>
-      </div>
-
-      {/* Additional Analysis */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
-        {[
-          { title: "Correlation Matrix", icon: "🔗", color: "#06b6d4" },
-          { title: "Pair Plot", icon: "📊", color: "#4f8ef7" },
-          { title: "Residual Plot", icon: "📈", color: "#a78bfa" },
-        ].map(({ title, icon, color }) => (
-          <div
-            key={title}
-            style={{
-              backgroundColor: "rgba(30, 41, 59, 0.6)",
-              border: "1px solid #334155",
-              borderRadius: "12px",
-              borderLeft: `3px solid ${color}`,
-              padding: "16px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontSize: "20px" }}>{icon}</span>
-              <p style={{ margin: 0, fontSize: "12px", fontWeight: "600", color: "#f1f5f9" }}>{title}</p>
-            </div>
-            <p style={{ margin: 0, fontSize: "11px", color: "#94a3b8" }}>Coming soon</p>
-          </div>
-        ))}
+      <div className="flex items-end">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showReg}
+            onChange={(e) => setShowReg(e.target.checked)}
+            className="w-4 h-4 rounded accent-blue-500"
+          />
+          <span className="text-sm text-slate-300">Linha de regressão</span>
+        </label>
       </div>
     </div>
-  )
+
+    {loading && (
+      <div className="flex items-center justify-center h-64 bg-slate-800 rounded-xl border border-slate-700">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+      </div>
+    )}
+    {error && !loading && (
+      <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-red-400 text-sm">⚠ {error}</div>
+    )}
+
+    {!loading && !error && result && (
+      <div className="space-y-4">
+        {/* Summary Stats */}
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">
+            Resumo dos Dados
+          </h3>
+          <div className="grid grid-cols-4 gap-4 text-sm">
+            <div>
+              <p className="text-xs text-slate-500">Total de Pontos</p>
+              <p className="text-lg font-bold text-slate-100">{summary?.total_points}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">{xCol} (Min-Max)</p>
+              <p className="text-lg font-bold text-slate-100 font-mono">{summary?.x_min.toFixed(2)} - {summary?.x_max.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">{yCol} (Min-Max)</p>
+              <p className="text-lg font-bold text-slate-100 font-mono">{summary?.y_min.toFixed(2)} - {summary?.y_max.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Equação</p>
+              <p className="text-sm font-mono text-slate-300">y = {result.regression.slope.toFixed(4)}x + {result.regression.intercept.toFixed(2)}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Sample Data Table */}
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 overflow-x-auto">
+          <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">
+            Amostra dos Dados (primeiros 20)
+          </h3>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-slate-400 border-b border-slate-700">
+                <th className="text-left pb-2 pr-4">{xCol}</th>
+                <th className="text-left pb-2 pr-4">{yCol}</th>
+                {colorCol && <th className="text-left pb-2 pr-4">{colorCol}</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {result.data.slice(0, 20).map((row, i) => (
+                <tr key={i} className="border-b border-slate-700/50 hover:bg-slate-700/30">
+                  <td className="py-2 pr-4 font-mono text-slate-200">{row.x.toFixed(4)}</td>
+                  <td className="py-2 pr-4 font-mono text-slate-200">{row.y.toFixed(4)}</td>
+                  {colorCol && <td className="py-2 pr-4 text-slate-300">{row.color ?? 'N/A'}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Correlation Panel */}
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">
+            Coeficientes de Correlação
+          </h3>
+          <div className="grid grid-cols-3 gap-4">
+            <CorrCard
+              label="Pearson"
+              value={result.correlation.pearson}
+              desc={corrDesc(result.correlation.pearson)}
+            />
+            <CorrCard
+              label="Spearman"
+              value={result.correlation.spearman}
+              desc={corrDesc(result.correlation.spearman)}
+            />
+            <CorrCard
+              label="Kendall"
+              value={result.correlation.kendall}
+              desc={corrDesc(result.correlation.kendall)}
+            />
+          </div>
+          {result.regression.p_value < 0.05 ? (
+            <p className="text-xs text-green-400 mt-3">
+              ✓ Regressão estatisticamente significativa (p = {result.regression.p_value.toFixed(4)})
+            </p>
+          ) : (
+            <p className="text-xs text-yellow-400 mt-3">
+              ⚠ Relação não significativa (p = {result.regression.p_value.toFixed(4)})
+            </p>
+          )}
+        </div>
+      </div>
+    )}
+  </div>
+);
 }

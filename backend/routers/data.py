@@ -1,16 +1,19 @@
-from fastapi import APIRouter, HTTPException
+﻿import logging
 import numpy as np
-from backend.session import get_session
-from backend.services.parser import get_col_types
-from backend.services.analytics import calculate_trend, categorize_dataset, detect_outliers_iqr
+import pandas as pd
+from fastapi import APIRouter, HTTPException
+from ..session import get_active_df, get_session
+from ..services.analytics import calculate_kpis, calculate_stats, calculate_quality
+from ..services.semantic import SemanticAnalyzer
 
 router = APIRouter(prefix="/api/data", tags=["data"])
+logger = logging.getLogger(__name__)
 
 
 def _get_df(session_id: str):
-    df = get_session(session_id)
+    df = get_active_df(session_id)
     if df is None:
-        raise HTTPException(404, "Sessão não encontrada. Faça o upload novamente.")
+        raise HTTPException(404, "Session not found")
     return df
 
 
@@ -21,51 +24,29 @@ def get_stats(session_id: str):
     if not num_cols:
         return {"stats": {}}
     stats = df[num_cols].describe().round(4).to_dict()
-    return {"stats": stats}
+    # Remover NaN e inf
+    clean_stats = {}
+    for col, col_stats in stats.items():
+        clean_stats[col] = {}
+        for key, val in col_stats.items():
+            if pd.isna(val) or np.isinf(val):
+                clean_stats[col][key] = None
+            else:
+                clean_stats[col][key] = float(val)
+    return {"stats": clean_stats}
 
 
 @router.get("/{session_id}/kpis")
 def get_kpis(session_id: str):
     df = _get_df(session_id)
-    col_types = get_col_types(df)
-    kpis = []
-
-    for col in col_types["numeric"][:4]:
-        total = float(df[col].sum())
-        mean = float(df[col].mean())
-        trend = None
-
-        # Calcula trend se houver coluna de data
-        if col_types["date"]:
-            try:
-                trend = calculate_trend(df, col_types["date"][0], col)
-            except Exception:
-                pass
-
-        kpis.append({
-            "title": col,
-            "total": total,
-            "mean": mean,
-            "trend": trend,
-        })
-
-    dataset_type = categorize_dataset(df)
-    return {"kpis": kpis, "dataset_type": dataset_type}
+    kpis = calculate_kpis(df)
+    return {"kpis": kpis}
 
 
 @router.get("/{session_id}/quality")
 def get_quality(session_id: str):
     df = _get_df(session_id)
-    quality = []
-    for col in df.columns:
-        quality.append({
-            "column": col,
-            "type": str(df[col].dtype),
-            "nulls": int(df[col].isnull().sum()),
-            "null_pct": round(df[col].isnull().mean() * 100, 1),
-            "unique": int(df[col].nunique()),
-            "sample": str(df[col].dropna().iloc[0]) if df[col].dropna().shape[0] > 0 else "—",
-        })
+    quality = calculate_quality(df)
     return {"quality": quality}
 
 
@@ -73,6 +54,36 @@ def get_quality(session_id: str):
 def get_outliers(session_id: str, column: str):
     df = _get_df(session_id)
     if column not in df.columns:
-        raise HTTPException(404, f"Coluna '{column}' não encontrada.")
-    result = detect_outliers_iqr(df, column)
-    return {"outliers": result}
+        raise HTTPException(404, "Column not found")
+    try:
+        series = pd.to_numeric(df[column], errors="coerce").dropna()
+        q1, q3 = series.quantile(0.25), series.quantile(0.75)
+        iqr = q3 - q1
+        mask = (series < q1 - 1.5 * iqr) | (series > q3 + 1.5 * iqr)
+        return {"outliers": series[mask].tolist()}
+    except Exception as e:
+        logger.error(f"Outlier error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/{session_id}/semantic")
+def get_semantic(session_id: str):
+    df = _get_df(session_id)
+    analyzer = SemanticAnalyzer()
+    result = analyzer.build_dataset_profile(df)
+    return {"dataset_profile": result}
+
+
+@router.get("/{session_id}/insights")
+async def get_insights(session_id: str):
+    from ..services.insights import generate_insights
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=422, detail="Session not found")
+    df = getattr(session, "df_filtered", None) or session.df
+    try:
+        insights = generate_insights(df)
+        return {"insights": insights}
+    except Exception as e:
+        logger.error(f"Insights error: {e}")
+        raise HTTPException(500, str(e))

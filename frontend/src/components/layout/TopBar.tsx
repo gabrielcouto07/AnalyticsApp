@@ -1,9 +1,32 @@
 // Top navigation bar that displays dashboard title, file info, and API status
 
 import { useSession } from "../../store/session"
+import { useEffect, useState } from "react"
+// import { getFilterStatus } from "../../api/analytics" // TODO: Implement filter status endpoint
 
 export function TopBar() {
-  const { filename, rows } = useSession()
+  const sessionId = useSession(s => s.sessionId)
+  const filename = useSession(s => s.filename)
+  const rowCount = useSession(s => s.rowCount)
+  const activeFilters = useSession(s => s.activeFilters)
+
+  const [filterStatus, setFilterStatus] = useState<any>(null)
+  const [lastFilterCount, setLastFilterCount] = useState(0)
+
+  useEffect(() => {
+    const filterCount = (activeFilters.categorical?.length || 0) + (activeFilters.numeric_range?.length || 0) + (activeFilters.date_range ? 1 : 0)
+    if (sessionId && filterCount > 0 && filterCount !== lastFilterCount) {
+      setLastFilterCount(filterCount)
+      // TODO: Implement getFilterStatus
+      // getFilterStatus(sessionId).then(setFilterStatus).catch(console.error)
+    }
+    if (filterCount === 0) {
+      setFilterStatus(null)
+      setLastFilterCount(0)
+    }
+  }, [sessionId, activeFilters])
+
+  const filteredRows = filterStatus?.filtered_rows ?? rowCount
 
   return (
     <header style={{
@@ -67,7 +90,7 @@ export function TopBar() {
             }}>
               {filename}
             </span>
-            {rows && (
+            {rowCount && (
               <>
                 <span style={{ color: "#64748b" }}>•</span>
                 <span style={{
@@ -75,7 +98,15 @@ export function TopBar() {
                   color: "#94a3b8",
                   fontWeight: "500"
                 }}>
-                  {rows.toLocaleString("pt-BR")} rows
+                  {filteredRows !== rowCount && (activeFilters.categorical?.length || 0) + (activeFilters.numeric_range?.length || 0) > 0 ? (
+                    <>
+                      Mostrando {filteredRows.toLocaleString("pt-BR")} de {rowCount.toLocaleString("pt-BR")} rows
+                    </>
+                  ) : (
+                    <>
+                      {rowCount.toLocaleString("pt-BR")} rows
+                    </>
+                  )}
                 </span>
               </>
             )}
@@ -90,6 +121,27 @@ export function TopBar() {
         gap: "12px",
         marginLeft: "auto"
       }}>
+        {/* Filter badge */}
+        {((activeFilters.categorical?.length || 0) + (activeFilters.numeric_range?.length || 0) + (activeFilters.date_range ? 1 : 0)) > 0 && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontSize: "12px",
+            color: "#3b82f6",
+            fontWeight: "600",
+            padding: "6px 12px",
+            backgroundColor: "rgba(59, 130, 246, 0.1)",
+            borderRadius: "8px",
+            border: "1px solid rgba(59, 130, 246, 0.2)"
+          }}>
+            {(() => {
+              const count = (activeFilters.categorical?.length || 0) + (activeFilters.numeric_range?.length || 0) + (activeFilters.date_range ? 1 : 0)
+              return <span>🔍 {count} filtro{count > 1 ? 's' : ''}</span>
+            })()}
+          </div>
+        )}
+
         {/* Status indicator */}
         <div style={{
           display: "flex",

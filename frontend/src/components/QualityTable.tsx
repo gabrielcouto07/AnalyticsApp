@@ -38,10 +38,10 @@ export function QualityTable() {
               <td className="py-4 px-5 font-semibold text-text group-hover:text-primary transition-colors">{item.column}</td>
               <td className="py-4 px-5">
                 <span className="inline-block px-3 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-primary/20 to-primary/10 text-primary border border-primary/20">
-                  {item.type}
+                  {item.dtype}
                 </span>
               </td>
-              <td className="py-4 px-5 text-muted font-bold">{item.nulls}</td>
+              <td className="py-4 px-5 text-muted font-bold">{item.null_count}</td>
               <td className="py-4 px-5">
                 <span
                   className={`inline-block px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -55,7 +55,7 @@ export function QualityTable() {
                   {item.null_pct}%
                 </span>
               </td>
-              <td className="py-4 px-5 text-muted font-bold">{item.unique}</td>
+              <td className="py-4 px-5 text-muted font-bold">{item.unique_count}</td>
               <td className="py-4 px-5 text-muted truncate max-w-xs text-xs font-mono bg-muted/5 px-3 py-1 rounded">
                 {item.sample}
               </td>

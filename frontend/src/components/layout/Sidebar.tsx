@@ -8,6 +8,7 @@ const NAV = [
   { id: "distribution", icon: "📉", label: "Distribution" },
   { id: "ranking", icon: "🏅", label: "Ranking" },
   { id: "explorer", icon: "🔍", label: "Explorer" },
+  { id: "insights", icon: "💡", label: "Insights" },
   { id: "correlation", icon: "🔗", label: "Correlation" },
   { id: "quality", icon: "✅", label: "Quality" },
   { id: "export", icon: "📥", label: "Export" },
@@ -21,7 +22,10 @@ interface SidebarProps {
 }
 
 export function Sidebar({ active, onChange }: SidebarProps) {
-  const { filename, rows, columns, clear } = useSession()
+  const filename = useSession((state) => state.filename)
+  const rowCount = useSession((state) => state.rowCount)
+  const colCount = useSession((state) => state.colCount)
+  const clearSession = useSession((state) => state.clearSession)
 
   return (
     <div style={{
@@ -153,11 +157,11 @@ export function Sidebar({ active, onChange }: SidebarProps) {
           color: "#94a3b8",
           fontWeight: "500"
         }}>
-          {rows?.toLocaleString("pt-BR") || 0} rows · {columns || 0} columns
+          {rowCount?.toLocaleString("pt-BR") || 0} rows · {colCount || 0} columns
         </p>
         
         <button
-          onClick={clear}
+          onClick={clearSession}
           style={{
             width: "100%",
             padding: "8px 12px",

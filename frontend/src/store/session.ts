@@ -1,68 +1,147 @@
-import { create } from "zustand"
+import { create } from 'zustand';
+import type { KpiData, QualityData, InsightData } from '../api/analytics';
 
-interface ColTypes {
-  date: string[]
-  numeric: string[]
-  categorical: string[]
-}
-
-interface KpiItem {
-  title: string
-  total: number
-  mean: number
-  trend?: number | null
-}
-
-interface QualityItem {
-  column: string
-  type: string
-  nulls: number
-  null_pct: number
-  unique: number
-  sample: string
+interface ActiveFilters {
+date_range: { col: string; start: string; end: string } | null;
+categorical: { col: string; values: string[] }[];
+numeric_range: { col: string; min: number; max: number }[];
 }
 
 interface SessionState {
-  sessionId: string | null
-  filename: string | null
-  rows: number
-  columns: number
-  colTypes: ColTypes | null
-  // Cache — preenchido uma vez após upload, lido por todas as abas
-  kpis: KpiItem[]
-  quality: QualityItem[]
-  stats: Record<string, any>
-  datasetType: string | null
-  isLoading: boolean
-  error: string | null
-  setSession: (data: Partial<SessionState>) => void
-  clear: () => void
+// Session
+sessionId: string | null;
+filename: string | null;
+rowCount: number;
+colCount: number;
+
+// Column classification (derived from colTypes on upload)
+colTypes: Record<string, string>;
+numericCols: string[];
+dateCols: string[];
+categoricalCols: string[];
+
+// Data
+kpis: KpiData[];
+quality: QualityData[];
+stats: Record<string, unknown>;
+insights: InsightData[];
+
+// Filters
+activeFilters: ActiveFilters;
+filteredRowCount: number | null;
+
+// Actions
+setSession: (payload: {
+  session_id: string;
+  filename: string;
+  rows: number;
+  columns: number;
+  col_types: Record<string, string>;
+}) => void;
+setKpis: (kpis: KpiData[]) => void;
+setQuality: (quality: QualityData[]) => void;
+setStats: (stats: Record<string, unknown>) => void;
+setInsights: (insights: InsightData[]) => void;
+setActiveFilters: (filters: Partial<ActiveFilters>) => void;
+setFilteredRowCount: (n: number | null) => void;
+clearSession: () => void;
 }
 
-export const useSession = create<SessionState>(set => ({
-  sessionId: null,
-  filename: null,
-  rows: 0,
-  columns: 0,
-  colTypes: null,
-  kpis: [],
-  quality: [],
-  stats: {},
-  datasetType: null,
-  isLoading: false,
-  error: null,
-  setSession: data => set(data),
-  clear: () => set({
-    sessionId: null,
-    filename: null,
-    rows: 0,
-    columns: 0,
-    colTypes: null,
-    kpis: [],
-    quality: [],
-    stats: {},
-    datasetType: null,
-    isLoading: false,
-    error: null,
+const initialFilters: ActiveFilters = {
+date_range: null,
+categorical: [],
+numeric_range: [],
+};
+
+function classifyCols(colTypes: Record<string, string>) {
+const numeric: string[] = [];
+const date: string[] = [];
+const categorical: string[] = [];
+
+for (const [col, type] of Object.entries(colTypes)) {
+  const t = type.toLowerCase();
+  if (t.includes('date') || t.includes('time')) {
+    date.push(col);
+  } else if (
+    t.includes('int') ||
+    t.includes('float') ||
+    t.includes('numeric') ||
+    t === 'number'
+  ) {
+    numeric.push(col);
+  } else {
+    categorical.push(col);
+  }
+}
+
+return { numeric, date, categorical };
+}
+
+export const useSessionStore = create<SessionState>((set) => ({
+sessionId:        null,
+filename:         null,
+rowCount:         0,
+colCount:         0,
+colTypes:         {},
+numericCols:      [],
+dateCols:         [],
+categoricalCols:  [],
+kpis:             [],
+quality:          [],
+stats:            {},
+insights:         [],
+activeFilters:    initialFilters,
+filteredRowCount: null,
+
+setSession: (payload) => {
+  const { numeric, date, categorical } = classifyCols(payload.col_types);
+  set({
+    sessionId:       payload.session_id,
+    filename:        payload.filename,
+    rowCount:        payload.rows,
+    colCount:        payload.columns,
+    colTypes:        payload.col_types,
+    numericCols:     numeric,
+    dateCols:        date,
+    categoricalCols: categorical,
+    // Reset dependent state
+    kpis:            [],
+    quality:         [],
+    stats:           {},
+    insights:        [],
+    activeFilters:   initialFilters,
+    filteredRowCount: null,
+  });
+},
+
+setKpis:             (kpis) => set({ kpis }),
+setQuality:          (quality) => set({ quality }),
+setStats:            (stats) => set({ stats }),
+setInsights:         (insights) => set({ insights }),
+setFilteredRowCount: (n) => set({ filteredRowCount: n }),
+
+setActiveFilters: (filters) =>
+  set((state) => ({
+    activeFilters: { ...state.activeFilters, ...filters },
+  })),
+
+clearSession: () =>
+  set({
+    sessionId:        null,
+    filename:         null,
+    rowCount:         0,
+    colCount:         0,
+    colTypes:         {},
+    numericCols:      [],
+    dateCols:         [],
+    categoricalCols:  [],
+    kpis:             [],
+    quality:          [],
+    stats:            {},
+    insights:         [],
+    activeFilters:    initialFilters,
+    filteredRowCount: null,
   }),
-}))
+}));
+
+export const useSession = useSessionStore;

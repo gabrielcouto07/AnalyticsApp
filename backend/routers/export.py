@@ -1,15 +1,15 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 import io
-from backend.session import get_session
-from backend.services.export import to_excel_bytes, to_csv_string
+from ..session import get_active_df
+from ..services.export import to_excel_bytes, to_csv_string
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
 
 @router.get("/{session_id}/excel")
 def export_excel(session_id: str):
-    df = get_session(session_id)
+    df = get_active_df(session_id)
     if df is None:
         raise HTTPException(404, "Sessão não encontrada.")
     
@@ -26,7 +26,7 @@ def export_excel(session_id: str):
 
 @router.get("/{session_id}/csv")
 def export_csv(session_id: str):
-    df = get_session(session_id)
+    df = get_active_df(session_id)
     if df is None:
         raise HTTPException(404, "Sessão não encontrada.")
     
