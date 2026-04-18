@@ -23,10 +23,17 @@ def detect_encoding(file_bytes: bytes) -> str:
 
 def detect_and_parse(df: pd.DataFrame) -> pd.DataFrame:
     """Converte tipos de colunas detectando automaticamente."""
+    if not isinstance(df, pd.DataFrame):
+        return df
+    
     df = df.copy()
     for col in df.columns:
-        if df[col].dtype != object:
+        try:
+            if not hasattr(df[col], 'dtype') or df[col].dtype != object:
+                continue
+        except Exception:
             continue
+            
         try:
             parsed = pd.to_datetime(df[col], errors="coerce")
             if parsed.notna().sum() / len(df) > 0.7:
@@ -35,15 +42,18 @@ def detect_and_parse(df: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             pass
 
-        cleaned = (
-            df[col].astype(str)
-            .str.replace(r"[R$%\s]", "", regex=True)
-            .str.replace(".", "", regex=False)
-            .str.replace(",", ".", regex=False)
-        )
-        numeric = pd.to_numeric(cleaned, errors="coerce")
-        if numeric.notna().sum() / len(df) > 0.7:
-            df[col] = numeric
+        try:
+            cleaned = (
+                df[col].astype(str)
+                .str.replace(r"[R$%\s]", "", regex=True)
+                .str.replace(".", "", regex=False)
+                .str.replace(",", ".", regex=False)
+            )
+            numeric = pd.to_numeric(cleaned, errors="coerce")
+            if numeric.notna().sum() / len(df) > 0.7:
+                df[col] = numeric
+        except Exception:
+            pass
     return df
 
 
@@ -77,6 +87,56 @@ def _load_csv(file_bytes: bytes, filename: str) -> pd.DataFrame:
     
     buf.seek(0)
     df = pd.read_csv(buf, sep=sep, on_bad_lines="skip", encoding=encoding)
+    
+    # Detecta e remove múltiplos cabeçalhos
+    df = _skip_header_rows(df)
+    
+    return df
+
+
+def _skip_header_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove linhas de cabeçalho múltiplas detectando quando há grande aumento 
+    na proporção de células preenchidas (indicando início dos dados reais).
+    
+    Exemplo:
+    - Linhas 0-5: Metadados/headers com muitos NaN
+    - Linha 6: Header real com ~87% colunas preenchidas
+    - Linhas 7+: Dados reais
+    
+    Função detecta o salto da linha 5 para 6 e usa linha 6 como headers.
+    """
+    if df.empty or len(df) <= 1:
+        return df
+    
+    # Calcula proporção de células preenchidas por linha
+    filled_ratios = []
+    for idx in range(len(df)):
+        row = df.iloc[idx]
+        # Conta células não-nulas e não-string vazia
+        filled = sum(1 for val in row if pd.notna(val) and str(val).strip())
+        ratio = filled / len(df.columns) if len(df.columns) > 0 else 0
+        filled_ratios.append(ratio)
+    
+    # Encontra o maior salto na proporção (indicador de header → dados)
+    max_jump = 0
+    header_row_idx = 0
+    
+    for i in range(1, len(filled_ratios)):
+        jump = filled_ratios[i] - filled_ratios[i-1]
+        # Queremos o ponto onde muitas mais colunas ficam preenchidas
+        if jump > max_jump and filled_ratios[i] > 0.6:
+            max_jump = jump
+            header_row_idx = i
+    
+    # Se houver detecção clara de headers múltiplos (grande salto), remove as linhas anteriores
+    if header_row_idx > 0 and max_jump > 0.25:
+        # A linha header_row_idx contém os nomes das colunas
+        new_headers = df.iloc[header_row_idx].astype(str).tolist()
+        # Descarta as linhas 0 até header_row_idx, e usa a próxima como primeiro dado
+        df = df.iloc[header_row_idx + 1:].reset_index(drop=True)
+        df.columns = new_headers
+    
     return df
 
 

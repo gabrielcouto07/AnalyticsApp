@@ -3,6 +3,7 @@
 import { useSession } from "../../store/session"
 
 const NAV = [
+  { id: "dashboard", icon: "🎯", label: "Dashboard" },
   { id: "overview", icon: "📊", label: "Overview" },
   { id: "temporal", icon: "📈", label: "Temporal" },
   { id: "distribution", icon: "📉", label: "Distribution" },
@@ -11,6 +12,8 @@ const NAV = [
   { id: "insights", icon: "💡", label: "Insights" },
   { id: "correlation", icon: "🔗", label: "Correlation" },
   { id: "quality", icon: "✅", label: "Quality" },
+  { id: "advanced", icon: "🚀", label: "Advanced" },
+  { id: "profile", icon: "📋", label: "Profile" },
   { id: "export", icon: "📥", label: "Export" },
 ] as const
 

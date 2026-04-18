@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSessionStore } from '../store/session';
 
 export function DistributionPage() {
-  const { sessionId, numericCols } = useSessionStore();
+  const { numericCols } = useSessionStore();
   const [col, setCol] = useState('');
 
   useEffect(() => {

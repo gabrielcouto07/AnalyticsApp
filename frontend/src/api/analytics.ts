@@ -212,6 +212,89 @@ const { data } = await api.post<ScatterResponse>(
 return data;
 }
 
+// ─── Advanced Analytics ────────────────────────────────────────────────────────
+
+export async function getAnomalies(
+  sessionId: string,
+  column: string,
+  methods?: string[]
+): Promise<any> {
+  const { data } = await api.post(`/api/advanced/${sessionId}/anomalies`, {
+    column,
+    methods: methods || ["iqr", "zscore"]
+  });
+  return data;
+}
+
+export async function getTrends(
+  sessionId: string,
+  column: string,
+  window?: number
+): Promise<any> {
+  const { data } = await api.post(`/api/advanced/${sessionId}/trends`, {
+    column,
+    window: window || 5
+  });
+  return data;
+}
+
+export async function getClustering(
+  sessionId: string,
+  n_clusters?: number
+): Promise<any> {
+  const { data } = await api.post(`/api/advanced/${sessionId}/clustering`, {
+    n_clusters: n_clusters || 3
+  });
+  return data;
+}
+
+export async function getSegmentation(
+  sessionId: string,
+  column: string,
+  method?: string
+): Promise<any> {
+  const { data } = await api.post(`/api/advanced/${sessionId}/segmentation`, {
+    column,
+    method: method || "quartiles"
+  });
+  return data;
+}
+
+export async function compareAnomalies(
+  sessionId: string,
+  column: string
+): Promise<any> {
+  const { data } = await api.get(`/api/advanced/${sessionId}/anomalies/compare/${column}`);
+  return data;
+}
+
+// ─── Profiler ─────────────────────────────────────────────────────────────────
+
+export async function getDataProfile(sessionId: string): Promise<any> {
+  const { data } = await api.get(`/api/profiler/${sessionId}/profile`);
+  return data;
+}
+
+export async function getDataSummary(sessionId: string): Promise<any> {
+  const { data } = await api.get(`/api/profiler/${sessionId}/summary`);
+  return data;
+}
+
+export async function getDataIssues(sessionId: string): Promise<any> {
+  const { data } = await api.get(`/api/profiler/${sessionId}/issues`);
+  return data;
+}
+
+export async function getColumnProfile(sessionId: string, columnName: string): Promise<any> {
+  const { data } = await api.get(`/api/profiler/${sessionId}/column/${columnName}`);
+  return data;
+}
+
+export async function getRecommendations(sessionId: string): Promise<any> {
+  const { data } = await api.get(`/api/profiler/${sessionId}/recommendations`);
+  return data;
+}
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export async function exportExcel(sessionId: string, filename: string): Promise<void> {

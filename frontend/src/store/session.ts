@@ -53,6 +53,10 @@ insights: InsightData[];
 activeFilters: ActiveFilters;
 filteredRowCount: number | null;
 
+// Template
+selectedTemplate: string | null;
+suggestedTemplates: string[];
+
 // Actions
 setSession: (payload: {
   session_id: string;
@@ -68,6 +72,8 @@ setStats: (stats: Record<string, unknown>) => void;
 setInsights: (insights: InsightData[]) => void;
 setActiveFilters: (filters: Partial<ActiveFilters>) => void;
 setFilteredRowCount: (n: number | null) => void;
+setSelectedTemplate: (templateId: string | null) => void;
+setSuggestedTemplates: (templates: string[]) => void;
 clearSession: () => void;
 }
 
@@ -102,21 +108,23 @@ return { numeric, date, categorical };
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
-sessionId:        null,
-filename:         null,
-rowCount:         0,
-colCount:         0,
-colTypes:         {},
-numericCols:      [],
-dateCols:         [],
-categoricalCols:  [],
-semanticData:     null,
-kpis:             [],
-quality:          [],
-stats:            {},
-insights:         [],
-activeFilters:    initialFilters,
-filteredRowCount: null,
+sessionId:          null,
+filename:           null,
+rowCount:           0,
+colCount:           0,
+colTypes:           {},
+numericCols:        [],
+dateCols:           [],
+categoricalCols:    [],
+semanticData:       null,
+kpis:               [],
+quality:            [],
+stats:              {},
+insights:           [],
+activeFilters:      initialFilters,
+filteredRowCount:   null,
+selectedTemplate:   null,
+suggestedTemplates: [],
 
 setSession: (payload) => {
   const { numeric, date, categorical } = classifyCols(payload.col_types);
@@ -139,12 +147,14 @@ setSession: (payload) => {
   });
 },
 
-setSemanticData:     (semanticData) => set({ semanticData }),
-setKpis:             (kpis) => set({ kpis }),
-setQuality:          (quality) => set({ quality }),
-setStats:            (stats) => set({ stats }),
-setInsights:         (insights) => set({ insights }),
-setFilteredRowCount: (n) => set({ filteredRowCount: n }),
+setSemanticData:      (semanticData) => set({ semanticData }),
+setKpis:              (kpis) => set({ kpis }),
+setQuality:           (quality) => set({ quality }),
+setStats:             (stats) => set({ stats }),
+setInsights:          (insights) => set({ insights }),
+setFilteredRowCount:  (n) => set({ filteredRowCount: n }),
+setSelectedTemplate:  (templateId) => set({ selectedTemplate: templateId }),
+setSuggestedTemplates: (templates) => set({ suggestedTemplates: templates }),
 
 setActiveFilters: (filters) =>
   set((state) => ({
@@ -153,21 +163,23 @@ setActiveFilters: (filters) =>
 
 clearSession: () =>
   set({
-    sessionId:        null,
-    filename:         null,
-    rowCount:         0,
-    colCount:         0,
-    colTypes:         {},
-    numericCols:      [],
-    dateCols:         [],
-    categoricalCols:  [],
-    semanticData:     null,
-    kpis:             [],
-    quality:          [],
-    stats:            {},
-    insights:         [],
-    activeFilters:    initialFilters,
-    filteredRowCount: null,
+    sessionId:          null,
+    filename:           null,
+    rowCount:           0,
+    colCount:           0,
+    colTypes:           {},
+    numericCols:        [],
+    dateCols:           [],
+    categoricalCols:    [],
+    semanticData:       null,
+    kpis:               [],
+    quality:            [],
+    stats:              {},
+    insights:           [],
+    activeFilters:      initialFilters,
+    filteredRowCount:   null,
+    selectedTemplate:   null,
+    suggestedTemplates: [],
   }),
 }));
 
