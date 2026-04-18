@@ -7,6 +7,26 @@ categorical: { col: string; values: string[] }[];
 numeric_range: { col: string; min: number; max: number }[];
 }
 
+interface SemanticColumnProfile {
+name: string;
+dtype: string;
+semantic_type: string;
+confidence: number;
+null_count: number;
+null_pct: number;
+unique_count: number;
+sample_values: string[];
+scores?: Record<string, number>;
+}
+
+interface SemanticData {
+columns: SemanticColumnProfile[];
+column_groups: Record<string, string[]>;
+primary_temporal_col?: string;
+primary_category_cols?: string[];
+primary_numeric_cols?: string[];
+}
+
 interface SessionState {
 // Session
 sessionId: string | null;
@@ -19,6 +39,9 @@ colTypes: Record<string, string>;
 numericCols: string[];
 dateCols: string[];
 categoricalCols: string[];
+
+// Semantic classification
+semanticData: SemanticData | null;
 
 // Data
 kpis: KpiData[];
@@ -38,6 +61,7 @@ setSession: (payload: {
   columns: number;
   col_types: Record<string, string>;
 }) => void;
+setSemanticData: (semanticData: SemanticData | null) => void;
 setKpis: (kpis: KpiData[]) => void;
 setQuality: (quality: QualityData[]) => void;
 setStats: (stats: Record<string, unknown>) => void;
@@ -86,6 +110,7 @@ colTypes:         {},
 numericCols:      [],
 dateCols:         [],
 categoricalCols:  [],
+semanticData:     null,
 kpis:             [],
 quality:          [],
 stats:            {},
@@ -114,6 +139,7 @@ setSession: (payload) => {
   });
 },
 
+setSemanticData:     (semanticData) => set({ semanticData }),
 setKpis:             (kpis) => set({ kpis }),
 setQuality:          (quality) => set({ quality }),
 setStats:            (stats) => set({ stats }),
@@ -135,6 +161,7 @@ clearSession: () =>
     numericCols:      [],
     dateCols:         [],
     categoricalCols:  [],
+    semanticData:     null,
     kpis:             [],
     quality:          [],
     stats:            {},

@@ -150,6 +150,11 @@ const { data } = await api.get(`/api/data/${sessionId}/insights`);
 return data;
 }
 
+export async function getSemantic(sessionId: string): Promise<any> {
+const { data } = await api.get(`/api/data/${sessionId}/semantic`);
+return data;
+}
+
 // ─── Charts ───────────────────────────────────────────────────────────────────
 
 export async function getTemporalData(
