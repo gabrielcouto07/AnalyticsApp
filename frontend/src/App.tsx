@@ -12,6 +12,7 @@ import {
   InsightsPage,
   CorrelationPage,
   QualityPage,
+  DataAuditPage,
   ExportPage,
   AdvancedAnalyticsPage,
   ProfilePage,
@@ -28,7 +29,7 @@ export default function App() {
       <div style={{ width: "100%", minHeight: "100vh", backgroundColor: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px" }}>
         <div style={{ textAlign: "center", maxWidth: "600px" }}>
           <div style={{ fontSize: "64px", marginBottom: "24px" }}>📊</div>
-          <h1 style={{ color: "#4f8ef7", fontSize: "40px", fontWeight: "bold", marginBottom: "16px", letterSpacing: "-1px" }}>
+          <h1 style={{ color: "#3b82f6", fontSize: "40px", fontWeight: "bold", marginBottom: "16px", letterSpacing: "-1px" }}>
             Analytics Dashboard
           </h1>
           <p style={{ color: "#cbd5e1", fontSize: "18px", lineHeight: "1.6", marginBottom: "40px" }}>
@@ -37,8 +38,8 @@ export default function App() {
           
           <UploadZone />
 
-          <div style={{ marginTop: "40px", padding: "24px", backgroundColor: "rgba(79, 142, 247, 0.1)", borderRadius: "12px", border: "1px solid rgba(79, 142, 247, 0.2)" }}>
-            <p style={{ color: "#4f8ef7", fontSize: "13px", margin: 0, fontWeight: "600" }}>Supported formats:</p>
+          <div style={{ marginTop: "40px", padding: "24px", backgroundColor: "rgba(59, 130, 246, 0.1)", borderRadius: "12px", border: "1px solid rgba(59, 130, 246, 0.3)" }}>
+            <p style={{ color: "#3b82f6", fontSize: "13px", margin: 0, fontWeight: "600" }}>Supported formats:</p>
             <p style={{ color: "#cbd5e1", fontSize: "13px", margin: "8px 0 0 0" }}>Excel (.xlsx, .xls) • CSV • Text files • JSON</p>
           </div>
         </div>
@@ -58,7 +59,7 @@ export default function App() {
   return (
     <div style={{ backgroundColor: "#0f172a", color: "#f1f5f9", minHeight: "100vh", display: "flex", flexDirection: "row" }}>
       {/* Left Sidebar */}
-      <div style={{ width: "280px", height: "100vh", borderRight: "1px solid #334155", overflowY: "auto" }}>
+      <div style={{ width: "280px", height: "100vh", borderRight: "1px solid #334155", overflowY: "auto", backgroundColor: "#1e293b" }}>
         <Sidebar active={page} onChange={setPage} />
       </div>
 
@@ -77,7 +78,7 @@ export default function App() {
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflow: "auto", padding: "24px" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: "24px", backgroundColor: "#0f172a" }}>
           {page === "dashboard" && <DashboardPage />}
           {page === "overview" && <OverviewPage />}
           {page === "temporal" && <TemporalPage />}
@@ -87,6 +88,7 @@ export default function App() {
           {page === "insights" && <InsightsPage />}
           {page === "correlation" && <CorrelationPage />}
           {page === "quality" && <QualityPage />}
+          {page === "audit" && <DataAuditPage />}
           {page === "advanced" && <AdvancedAnalyticsPage />}
           {page === "profile" && <ProfilePage />}
           {page === "export" && <ExportPage />}

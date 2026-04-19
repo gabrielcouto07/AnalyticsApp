@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSessionStore } from '../store/session';
 import { getTemporalData, type TemporalResponse } from '../api/analytics';
+import { TemporalAnalytics } from '../components/TemporalAnalytics';
+import '../components/Analytics.css';
 
 function StatCard({ label, value }: { label: string; value: string }) {
 return (
@@ -164,6 +166,13 @@ return (
       {!loading && !error && response && response.data.length === 0 && (
         <div className="flex items-center justify-center h-80 text-slate-500">
           <p>Nenhum dado encontrado para o período selecionado</p>
+        </div>
+      )}
+
+      {/* NF Analytics - if template is NF */}
+      {sessionId && (
+        <div style={{ marginTop: '32px' }}>
+          <TemporalAnalytics sessionId={sessionId} />
         </div>
       )}
     </div>

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from ..session import create_session
+from ..session import create_session, get_session
 from ..services.parser import load_dataframe, get_col_types
+from ..services.analytics import calculate_kpis
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -15,11 +16,15 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         content = await file.read()
-        df, available_sheets = load_dataframe(content, file.filename)
+        df, available_sheets, audit = load_dataframe(content, file.filename)
     except Exception as e:
         raise HTTPException(422, f"Erro ao processar arquivo: {e}")
 
     session_id = create_session(df)
+    session = get_session(session_id)
+    if session is not None:
+        session.audit = audit
+        calculate_kpis(df, audit=audit)
     col_types = get_col_types(df)
 
     return {

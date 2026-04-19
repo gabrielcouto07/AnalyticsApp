@@ -10,6 +10,7 @@ class Session:
     df_filtered: Optional[pd.DataFrame] = None  # DataFrame com filtros aplicados
     active_filters: dict[str, Any] = field(default_factory=dict)  # Filtros ativos
     cache_invalidated: bool = False  # Flag para invalidar cache de charts
+    audit: Any = None  # AuditTrail opcional associado à sessão
 
 
 _sessions: dict[str, Session] = {}

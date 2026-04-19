@@ -2,15 +2,28 @@ import re
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-from AnalyticsApp.config.keywords import (
-    SEMANTIC_KEYWORDS,
-    MIN_CONFIDENCE_SCORE,
-    KEYWORD_MATCH_WEIGHT,
-    PATTERN_MATCH_WEIGHT,
-    VALUE_SAMPLE_WEIGHT,
-    SAMPLE_SIZE,
-    MIN_PATTERN_MATCHES,
-)
+
+try:
+    from config.keywords import (
+        SEMANTIC_KEYWORDS,
+        MIN_CONFIDENCE_SCORE,
+        KEYWORD_MATCH_WEIGHT,
+        PATTERN_MATCH_WEIGHT,
+        VALUE_SAMPLE_WEIGHT,
+        SAMPLE_SIZE,
+        MIN_PATTERN_MATCHES,
+    )
+except ImportError:
+    # Fallback for different execution contexts
+    from ...config.keywords import (
+        SEMANTIC_KEYWORDS,
+        MIN_CONFIDENCE_SCORE,
+        KEYWORD_MATCH_WEIGHT,
+        PATTERN_MATCH_WEIGHT,
+        VALUE_SAMPLE_WEIGHT,
+        SAMPLE_SIZE,
+        MIN_PATTERN_MATCHES,
+    )
 
 
 class SemanticAnalyzer:
@@ -100,12 +113,38 @@ class SemanticAnalyzer:
         
         pattern_scores = self._score_by_pattern(sample)
         
-        # Verificar se é data
+        # Verificar se é data com formatos comuns em português/Brasil
         try:
-            pd.to_datetime(series.dropna(), errors="coerce")
-            temporal_valid = pd.to_datetime(series.dropna(), errors="coerce").notna().sum() / len(
-                series.dropna()
-            )
+            # Formatos comuns de data em português
+            date_formats = [
+                "%d/%m/%Y",
+                "%d/%m/%y", 
+                "%Y-%m-%d",
+                "%d-%m-%Y",
+                "%d.%m.%Y",
+                "%d/%m/%Y %H:%M:%S",
+                "%d/%m/%y %H:%M:%S",
+            ]
+            
+            # Tentar cada formato
+            valid_dates = 0
+            for date_format in date_formats:
+                try:
+                    result = pd.to_datetime(series.dropna(), format=date_format, errors="coerce")
+                    valid_count = result.notna().sum()
+                    if valid_count > 0:
+                        valid_dates = valid_count
+                        break
+                except (ValueError, TypeError):
+                    continue
+            
+            # Se nenhum formato específico funcionou, tentar inferência geral
+            if valid_dates == 0:
+                result = pd.to_datetime(series.dropna(), errors="coerce")
+                valid_dates = result.notna().sum()
+            
+            total_dates = len(series.dropna())
+            temporal_valid = float(valid_dates) / float(total_dates) if total_dates > 0 else 0.0
             if temporal_valid > 0.8:
                 pattern_scores["temporal"] = 0.9
         except Exception:

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useSessionStore } from '../store/session';
+import { DistributionAnalytics } from '../components/DistributionAnalytics';
 
 export function DistributionPage() {
-  const { numericCols } = useSessionStore();
+  const { sessionId, numericCols } = useSessionStore();
   const [col, setCol] = useState('');
 
   useEffect(() => {
@@ -53,6 +54,12 @@ export function DistributionPage() {
           {col ? `Análise de distribuição: ${col}` : 'Selecione uma coluna para análise'}
         </p>
       </div>
+
+      {sessionId && (
+        <div style={{ marginTop: '32px' }}>
+          <DistributionAnalytics sessionId={sessionId} />
+        </div>
+      )}
     </div>
   );
 }

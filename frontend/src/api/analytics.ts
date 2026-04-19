@@ -295,6 +295,18 @@ export async function getRecommendations(sessionId: string): Promise<any> {
   return data;
 }
 
+// ─── Views & Filters ────────────────────────────────────────────────────────
+
+export async function getAvailableViews(sessionId: string): Promise<any> {
+  const { data } = await api.get(`/api/data/${sessionId}/views/available`);
+  return data;
+}
+
+export async function getFilterOptions(sessionId: string): Promise<any> {
+  const { data } = await api.get(`/api/data/${sessionId}/filter-options`);
+  return data;
+}
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export async function exportExcel(sessionId: string, filename: string): Promise<void> {

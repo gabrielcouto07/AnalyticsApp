@@ -12,6 +12,7 @@ const NAV = [
   { id: "insights", icon: "💡", label: "Insights" },
   { id: "correlation", icon: "🔗", label: "Correlation" },
   { id: "quality", icon: "✅", label: "Quality" },
+  { id: "audit", icon: "🔎", label: "Data Audit" },
   { id: "advanced", icon: "🚀", label: "Advanced" },
   { id: "profile", icon: "📋", label: "Profile" },
   { id: "export", icon: "📥", label: "Export" },
@@ -95,25 +96,25 @@ export function Sidebar({ active, onChange }: SidebarProps) {
               padding: "12px 12px",
               borderRadius: "10px",
               border: "none",
-              backgroundColor: active === id ? "rgba(79, 142, 247, 0.15)" : "transparent",
-              color: active === id ? "#4f8ef7" : "#cbd5e1",
+              backgroundColor: active === id ? "rgba(59, 130, 246, 0.2)" : "transparent",
+              color: active === id ? "#3b82f6" : "#94a3b8",
               fontSize: "13px",
               fontWeight: active === id ? "700" : "500",
               cursor: "pointer",
               transition: "all 0.2s ease",
               textAlign: "left",
-              borderLeft: active === id ? "3px solid #4f8ef7" : "3px solid transparent"
+              borderLeft: active === id ? "3px solid #3b82f6" : "3px solid transparent"
             }}
             onMouseEnter={e => {
               if (active !== id) {
-                e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.05)"
-                e.currentTarget.style.color = "#e2e8f0"
+                e.currentTarget.style.backgroundColor = "rgba(59, 130, 246, 0.1)"
+                e.currentTarget.style.color = "#cbd5e1"
               }
             }}
             onMouseLeave={e => {
               if (active !== id) {
                 e.currentTarget.style.backgroundColor = "transparent"
-                e.currentTarget.style.color = "#cbd5e1"
+                e.currentTarget.style.color = "#94a3b8"
               }
             }}
           >
@@ -146,7 +147,7 @@ export function Sidebar({ active, onChange }: SidebarProps) {
           margin: "0 0 4px 0",
           fontSize: "12px",
           fontWeight: "600",
-          color: "#e2e8f0",
+          color: "#f1f5f9",
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap"
@@ -170,20 +171,20 @@ export function Sidebar({ active, onChange }: SidebarProps) {
             padding: "8px 12px",
             fontSize: "12px",
             fontWeight: "600",
-            color: "#f87171",
-            backgroundColor: "rgba(248, 113, 113, 0.1)",
-            border: "1px solid rgba(248, 113, 113, 0.2)",
+            color: "#dc2626",
+            backgroundColor: "rgba(220, 38, 38, 0.1)",
+            border: "1px solid rgba(220, 38, 38, 0.2)",
             borderRadius: "8px",
             cursor: "pointer",
             transition: "all 0.2s ease"
           }}
           onMouseEnter={e => {
-            e.currentTarget.style.backgroundColor = "rgba(248, 113, 113, 0.2)"
-            e.currentTarget.style.borderColor = "rgba(248, 113, 113, 0.4)"
+            e.currentTarget.style.backgroundColor = "rgba(220, 38, 38, 0.2)"
+            e.currentTarget.style.borderColor = "rgba(220, 38, 38, 0.4)"
           }}
           onMouseLeave={e => {
-            e.currentTarget.style.backgroundColor = "rgba(248, 113, 113, 0.1)"
-            e.currentTarget.style.borderColor = "rgba(248, 113, 113, 0.2)"
+            e.currentTarget.style.backgroundColor = "rgba(220, 38, 38, 0.1)"
+            e.currentTarget.style.borderColor = "rgba(220, 38, 38, 0.2)"
           }}
         >
           ↩ New Upload

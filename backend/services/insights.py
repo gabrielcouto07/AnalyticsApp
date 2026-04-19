@@ -11,11 +11,32 @@ def generate_insights(df: pd.DataFrame) -> List[Dict[str, Any]]:
     insights: List[Dict[str, Any]] = []
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 
+    # Detectar colunas de data
     date_cols = list(df.select_dtypes(include=["datetime64"]).columns)
+    date_formats = [
+        "%d/%m/%Y", "%d/%m/%y",
+        "%Y-%m-%d", "%d-%m-%Y",
+        "%d.%m.%Y", "%d/%m/%Y %H:%M:%S"
+    ]
+    
     for col in df.select_dtypes(include=["object"]).columns:
         try:
-            pd.to_datetime(df[col].dropna().head(20), errors="raise")
-            date_cols.append(col)
+            # Tentar com formatos específicos primeiro
+            sample = df[col].dropna().head(20)
+            detected = False
+            for date_format in date_formats:
+                try:
+                    pd.to_datetime(sample, format=date_format, errors="raise")
+                    date_cols.append(col)
+                    detected = True
+                    break
+                except (ValueError, TypeError):
+                    continue
+            
+            # Se nenhum formato funcionou, tentar inferência geral
+            if not detected:
+                pd.to_datetime(sample, errors="raise")
+                date_cols.append(col)
         except Exception:
             pass
 
@@ -55,7 +76,10 @@ def generate_insights(df: pd.DataFrame) -> List[Dict[str, Any]]:
         q1  = series.quantile(0.25)
         q3  = series.quantile(0.75)
         iqr = q3 - q1
-        if iqr == 0:
+        # Ensure iqr is a scalar for comparison
+        if isinstance(iqr, pd.Series):
+            iqr = float(iqr.iloc[0]) if len(iqr) > 0 else 0
+        if float(iqr) == 0:
             continue
         out_mask = (series < q1 - 1.5 * iqr) | (series > q3 + 1.5 * iqr)
         out_cnt  = int(out_mask.sum())

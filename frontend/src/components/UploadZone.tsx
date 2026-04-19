@@ -11,6 +11,7 @@ export function UploadZone() {
   const setKpis = useSession(s => s.setKpis)
   const setQuality = useSession(s => s.setQuality)
   const setStats = useSession(s => s.setStats)
+  const setSelectedTemplate = useSession(s => s.setSelectedTemplate)
 
   const handle = useCallback(async (file: File) => {
     setLoading(true)
@@ -24,6 +25,9 @@ export function UploadZone() {
         columns: upload.columns,
         col_types: upload.col_types,
       })
+
+      // Auto-select NF template for all CSV uploads
+      setSelectedTemplate('nf')
 
       const [kpisData, qualityData, statsData, semanticData] = await Promise.all([
         getKpis(upload.session_id),
@@ -41,7 +45,7 @@ export function UploadZone() {
     } finally {
       setLoading(false)
     }
-  }, [setSession, setSemanticData, setKpis, setQuality, setStats])
+  }, [setSession, setSemanticData, setKpis, setQuality, setStats, setSelectedTemplate])
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()

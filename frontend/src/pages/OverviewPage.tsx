@@ -1,7 +1,9 @@
 import { useEffect } from "react"
 import { useSession } from "../store/session"
 import { KpiCard } from "../components"
+import { OverviewAnalytics } from "../components/OverviewAnalytics"
 import { fmt } from "../lib/format"
+import "../components/Analytics.css"
 
 // Overview dashboard with KPIs and health score
 export function OverviewPage() {
@@ -130,6 +132,13 @@ export function OverviewPage() {
           </div>
         ))}
       </div>
+
+      {/* NF Analytics - if template is NF */}
+      {sessionId && (
+        <div>
+          <OverviewAnalytics sessionId={sessionId} />
+        </div>
+      )}
     </div>
   )
 }

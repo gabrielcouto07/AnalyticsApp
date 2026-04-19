@@ -2,7 +2,7 @@
 Templates router - Serve template definitions for different data types
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from typing import List, Dict, Any
 
 from ..services.templates import (
@@ -12,6 +12,7 @@ from ..services.templates import (
     filter_dataframe_for_template,
 )
 from ..services.nf_analyzer import NFAnalyzer
+from ..services.semantic import SemanticAnalyzer
 from ..session import get_active_df
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
@@ -62,16 +63,23 @@ async def get_template_detail(template_id: str) -> Dict[str, Any]:
 
 
 @router.post("/suggest")
-async def suggest_templates(columns: List[str]) -> Dict[str, Any]:
+async def suggest_templates(payload: Dict[str, List[str]] = Body(...)) -> Dict[str, Any]:
     """
     Suggest appropriate templates based on column names
     
     Args:
-        columns: List of column names from uploaded file
+        payload: Dictionary with 'columns' key containing list of column names from uploaded file
     
     Returns:
         Dictionary with suggested template IDs and details
     """
+    columns = payload.get("columns", [])
+    if not columns:
+        return {
+            "suggestions": [],
+            "primary": None,
+        }
+    
     suggestions = get_template_suggestions(columns)
     templates = get_all_templates()
     
@@ -233,5 +241,134 @@ async def get_nf_top_invoices(
     try:
         analyzer = NFAnalyzer(df)
         return analyzer.get_top_invoices(limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/nf/semantic/{session_id}")
+async def get_nf_semantic(session_id: str) -> Dict[str, Any]:
+    """
+    Get semantic classification of NF data columns
+    
+    Returns semantic analysis including:
+    - Column classifications (monetary, temporal, category, etc.)
+    - Confidence scores for each classification
+    - Column groupings by semantic type
+    - Primary column identifications
+    
+    Args:
+        session_id: Session ID with uploaded NF data
+    
+    Returns:
+        Dictionary with semantic analysis results
+    
+    Raises:
+        HTTPException: If session not found
+    """
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        analyzer = SemanticAnalyzer()
+        profile = analyzer.build_dataset_profile(df)
+        return profile
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/nf/nature/{session_id}")
+async def get_nf_nature(session_id: str) -> List[Dict[str, Any]]:
+    """Get nature/category analysis"""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        analyzer = NFAnalyzer(df)
+        return analyzer.get_nature_analysis()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/nf/payment/{session_id}")
+async def get_nf_payment(session_id: str) -> List[Dict[str, Any]]:
+    """Get payment method analysis"""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        analyzer = NFAnalyzer(df)
+        return analyzer.get_payment_method_analysis()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/nf/timeline/{session_id}")
+async def get_nf_timeline(session_id: str) -> List[Dict[str, Any]]:
+    """Get timeline/period analysis"""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        analyzer = NFAnalyzer(df)
+        return analyzer.get_timeline_analysis()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.post("/nf/data/{session_id}")
+async def get_nf_data(
+    session_id: str,
+    filters: Dict[str, Any] = Body(None),
+    limit: int = Query(100, ge=1, le=10000),
+    offset: int = Query(0, ge=0)
+) -> Dict[str, Any]:
+    """Get filtered NF data with pagination"""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        analyzer = NFAnalyzer(df)
+        df_filtered = analyzer.get_filtered_data(filters)
+        
+        total_rows = len(df_filtered)
+        df_paginated = df_filtered.iloc[offset:offset + limit]
+        
+        return {
+            "total": total_rows,
+            "limit": limit,
+            "offset": offset,
+            "rows": df_paginated.to_dict(orient='records'),
+            "columns": list(df_filtered.columns)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/nf/stats/{session_id}")
+async def get_nf_stats(session_id: str) -> Dict[str, Any]:
+    """Get comprehensive NF statistics for dashboard"""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        analyzer = NFAnalyzer(df)
+        summary = analyzer.get_summary()
+        suppliers = analyzer.get_supplier_analysis(limit=10)
+        nature = analyzer.get_nature_analysis(limit=10)
+        payment = analyzer.get_payment_method_analysis()
+        
+        return {
+            "summary": summary,
+            "top_suppliers": suppliers[:5],
+            "nature_breakdown": nature,
+            "payment_methods": payment,
+            "column_mapping": analyzer.column_map
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
