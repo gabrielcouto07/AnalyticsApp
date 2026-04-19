@@ -303,7 +303,7 @@ def load_dataframe(file_bytes: bytes, filename: str) -> Tuple[pd.DataFrame, Opti
     name = filename.lower()
     available_sheets = None
     
-    if name.endswith((".xlsx", ".xls")):
+    if name.endswith((".xlsx", ".xls", ".xlsm")):
         df, available_sheets = _load_excel_multisheet(file_bytes)
     elif name.endswith(".csv"):
         df = _load_csv(file_bytes, filename)
