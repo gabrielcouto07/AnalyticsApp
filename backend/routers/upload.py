@@ -3,6 +3,8 @@ from ..session import create_session
 from ..services.parser import load_dataframe, get_col_types
 from ..services.efetivo_template import detect_efetivo_file
 from ..services.efetivo_parser import parse_efetivo_file
+from ..services.orcamento_template import detect_orcamento_file
+from ..services.orcamento_parser import parse_orcamento_file
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -18,13 +20,28 @@ async def upload_file(file: UploadFile = File(...)):
     try:
         content = await file.read()
 
-        # Efetivo files use a non-standard layout — route to custom parser
-        if ext in {".xlsx", ".xls"} and detect_efetivo_file(content, file.filename):
-            df = parse_efetivo_file(content, file.filename)
-            if df.empty:
-                raise HTTPException(422, "Efetivo file parsed but returned no records")
-            template_type = "efetivo"
-            available_sheets = {}
+        if ext in {".xlsx", ".xls"}:
+            # 1) Check Efetivo layout
+            if detect_efetivo_file(content, file.filename):
+                df = parse_efetivo_file(content, file.filename)
+                if df.empty:
+                    raise HTTPException(422, "Efetivo file parsed but returned no records")
+                template_type = "efetivo"
+                available_sheets = {}
+
+            # 2) Check Orçamento (Mapa de Concorrência) layout
+            elif detect_orcamento_file(content, file.filename):
+                result = parse_orcamento_file(content, file.filename)
+                df = result["flat"]
+                if df.empty:
+                    raise HTTPException(422, "Orcamento file parsed but returned no records")
+                template_type = "orcamento"
+                available_sheets = {}
+
+            # 3) Standard Excel
+            else:
+                df, available_sheets = load_dataframe(content, file.filename)
+                template_type = None
         else:
             df, available_sheets = load_dataframe(content, file.filename)
             template_type = None
