@@ -1,14 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import upload, data, charts, export, filters, advanced, profiler, templates
+from .routers import upload, data, charts, export, filters, advanced, converter, profiler, templates
 
 app = FastAPI(title="Analytics Dashboard API", version="2.0.0")
 
-# CORS libera o React (localhost:5173/5175) para chamar o backend (localhost:8000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:3000"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:3000", "http://localhost:8001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -20,6 +19,7 @@ app.include_router(charts.router)
 app.include_router(export.router)
 app.include_router(filters.router)
 app.include_router(advanced.router)
+app.include_router(converter.router)
 app.include_router(profiler.router)
 app.include_router(templates.router)
 

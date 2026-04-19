@@ -16,6 +16,7 @@ const NAV = [
   { id: "advanced", icon: "🚀", label: "Advanced" },
   { id: "profile", icon: "📋", label: "Profile" },
   { id: "export", icon: "📥", label: "Export" },
+  { id: "converter", icon: "🛠️", label: "Converter" },
 ] as const
 
 export type PageId = typeof NAV[number]["id"]

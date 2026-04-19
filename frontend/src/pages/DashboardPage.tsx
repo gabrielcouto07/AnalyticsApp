@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSessionStore } from '../store/session';
-import { TemplateDashboard, NFDashboard, NFAnalyticsDashboard } from '../components';
+import { TemplateDashboard, NFDashboard, NFAnalyticsDashboard, EfetivoDashboard, OrcamentoDashboard } from '../components';
 import * as api from '../api/analytics';
 
 interface View {
@@ -26,20 +26,8 @@ interface DataProfile {
       null_pct: number;
       unique_pct: number;
     }>;
-    cleaning_suggestions?: {
-      remove_columns: string[];
-      remove_rows: any[];
-      normalize_columns: string[];
-    };
   };
-  data_summary?: {
-    data_quality_issues: string[];
-  };
-  recommendations?: {
-    data_cleaning: Array<{ action: string; severity: string; details: string }>;
-    performance: Array<{ action: string; severity: string; details: string }>;
-    analysis: Array<{ action: string; severity: string; details: string }>;
-  };
+  recommendations?: any;
 }
 
 export const DashboardPage: React.FC = () => {
@@ -69,9 +57,10 @@ export const DashboardPage: React.FC = () => {
 
       setProfile({
         data_profile: profileRes,
+        recommendations: viewsRes?.recommendations,
       });
       
-      if (viewsRes.views) {
+      if (viewsRes?.views) {
         setAvailableViews(viewsRes.views);
       }
       
@@ -85,68 +74,26 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
-  // If NF template is selected, show NF Analytics Dashboard
+  // Template-specific dashboards
   if (selectedTemplate === 'nf' && sessionId) {
     return <NFAnalyticsDashboard sessionId={sessionId} />;
   }
 
-  // If template is selected, show template dashboard
-  if (selectedTemplate) {
-    return <TemplateDashboard templateId={selectedTemplate} />;
+  if (selectedTemplate === 'efetivo' && sessionId) {
+    return <EfetivoDashboard sessionId={sessionId} />;
   }
 
-  const stats = profile?.data_profile?.structure;
-  const columns = profile?.data_profile?.columns || [];
-
-  const numericCols = columns.filter((c) => c.data_type === 'numeric').length;
-  const categoricalCols = columns.filter((c) => c.data_type === 'text').length;
-  const dataQuality = stats ? Math.round((1 - stats.null_cells_pct) * 100) : 0;
-
-  return (
-    <div className="space-y-6 p-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-bold text-white">📊 Analytics Dashboard</h1>
-          <p className="text-gray-400 mt-1">Complete Data Intelligence & Insights</p>
+  if (selectedTemplate === 'orcamento' && sessionId) {
+    return <OrcamentoDashboard sessionId={sessionId} />;
+  }
         </div>
-        <button
-          onClick={() => setShowViews(!showViews)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
-        >
-          {showViews ? 'Hide Views' : 'View Options'} ({Object.keys(availableViews).length})
-        </button>
-      </div>
-
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-br from-blue-900 to-blue-800 rounded-lg p-6 border border-blue-700">
-          <p className="text-blue-200 text-sm font-semibold">📊 Total Rows</p>
-          <p className="text-3xl font-bold text-white mt-2">{stats?.total_rows?.toLocaleString() || '—'}</p>
-          <p className="text-blue-300 text-xs mt-2">Dataset size</p>
-        </div>
-
-        <div className="bg-gradient-to-br from-purple-900 to-purple-800 rounded-lg p-6 border border-purple-700">
-          <p className="text-purple-200 text-sm font-semibold">🏛 Columns</p>
-          <p className="text-3xl font-bold text-white mt-2">{stats?.total_columns || '—'}</p>
-          <p className="text-purple-300 text-xs mt-2">
-            {numericCols} numeric, {categoricalCols} categorical
-          </p>
-        </div>
-
-        <div className="bg-gradient-to-br from-emerald-900 to-emerald-800 rounded-lg p-6 border border-emerald-700">
-          <p className="text-emerald-200 text-sm font-semibold">✅ Data Quality</p>
-          <p className="text-3xl font-bold text-white mt-2">{dataQuality}%</p>
-          <p className="text-emerald-300 text-xs mt-2">Complete records</p>
-        </div>
-
         <div className="bg-gradient-to-br from-orange-900 to-orange-800 rounded-lg p-6 border border-orange-700">
           <p className="text-orange-200 text-sm font-semibold">💾 Memory</p>
           <p className="text-3xl font-bold text-white mt-2">{stats?.memory_usage_mb?.toFixed(1) || '—'} MB</p>
-          <p className="text-orange-300 text-xs mt-2">Dataset size in RAM</p>
         </div>
       </div>
 
+<<<<<<< HEAD
       {/* Available Analytics Views */}
       {showViews && Object.keys(availableViews).length > 0 && (
         <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
@@ -240,41 +187,35 @@ export const DashboardPage: React.FC = () => {
       )}
 
       {/* Column Analysis */}
+=======
+>>>>>>> origin/main
       {columns.length > 0 && (
         <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
           <h2 className="text-xl font-bold text-white mb-4">📋 Column Analysis</h2>
-
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {columns.slice(0, 8).map((col) => (
+<<<<<<< HEAD
               <div key={col.name} className="bg-slate-700 rounded p-4 border border-slate-600 hover:border-blue-500 transition">
                 <p className="font-semibold text-white truncate text-sm">{col.name}</p>
                 <p className="text-xs text-gray-400 mt-1">Type: {col.data_type}</p>
 
+=======
+              <div key={col.name} className="bg-slate-700 rounded p-4 border border-slate-600">
+                <p className="font-semibold text-white truncate">{col.name}</p>
+                <p className="text-xs text-gray-300 mt-1">Type: {col.data_type}</p>
+>>>>>>> origin/main
                 <div className="mt-3 space-y-2">
                   <div>
                     <p className="text-xs text-gray-400">Completeness</p>
                     <div className="h-2 bg-slate-600 rounded overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-500"
-                        style={{ width: `${100 - (col.null_pct || 0)}%` }}
-                      />
+                      <div className="h-full bg-emerald-500" style={{ width: `${100 - (col.null_pct || 0)}%` }} />
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {((100 - (col.null_pct || 0)) || 0).toFixed(0)}%
-                    </p>
                   </div>
-
                   <div>
                     <p className="text-xs text-gray-400">Uniqueness</p>
                     <div className="h-2 bg-slate-600 rounded overflow-hidden">
-                      <div
-                        className="h-full bg-blue-500"
-                        style={{ width: `${col.unique_pct || 0}%` }}
-                      />
+                      <div className="h-full bg-blue-500" style={{ width: `${col.unique_pct || 0}%` }} />
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {((col.unique_pct || 0)).toFixed(0)}%
-                    </p>
                   </div>
                 </div>
               </div>
