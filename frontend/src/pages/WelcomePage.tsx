@@ -1,6 +1,111 @@
-import { UploadZone } from "../components"
+import { UploadZone, TemplateSelection } from "../components"
+import { useSession } from "../store/session"
+import { useNavigate } from "react-router-dom"
 
 export function WelcomePage() {
+  const sessionId = useSession(s => s.sessionId)
+  const selectedTemplate = useSession(s => s.selectedTemplate)
+  const navigate = useNavigate()
+
+  // If template is selected, navigate to dashboard
+  if (selectedTemplate && sessionId) {
+    navigate("/dashboard")
+  }
+
+  // If session exists, show template selection
+  if (sessionId && !selectedTemplate) {
+    return (
+      <div style={{
+        minHeight: "100vh",
+        backgroundImage: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: "60px 40px",
+        position: "relative",
+        overflow: "hidden"
+      }}>
+        {/* Background elements */}
+        <div style={{
+          position: "absolute",
+          width: "400px",
+          height: "400px",
+          background: "radial-gradient(circle, rgba(79, 142, 247, 0.1) 0%, transparent 70%)",
+          borderRadius: "50%",
+          top: "-100px",
+          right: "-100px",
+          pointerEvents: "none"
+        }} />
+
+        {/* Content */}
+        <div style={{
+          maxWidth: "1000px",
+          textAlign: "center",
+          zIndex: 1,
+          animation: "fadeInUp 0.6s ease-out",
+          width: "100%"
+        }}>
+          {/* Badge */}
+          <div style={{
+            display: "inline-block",
+            padding: "8px 16px",
+            backgroundColor: "rgba(79, 142, 247, 0.1)",
+            border: "1px solid rgba(79, 142, 247, 0.3)",
+            borderRadius: "20px",
+            marginBottom: "24px",
+            fontSize: "13px",
+            fontWeight: "600",
+            color: "#4f8ef7",
+            letterSpacing: "0.5px"
+          }}>
+            ✨ SELECT YOUR DATA TEMPLATE
+          </div>
+
+          {/* Main headline */}
+          <h1 style={{
+            fontSize: "48px",
+            fontWeight: "800",
+            marginBottom: "12px",
+            color: "#f1f5f9",
+            letterSpacing: "-1px",
+            lineHeight: "1.2"
+          }}>
+            Choose Your Analytics Template
+          </h1>
+
+          {/* Subtitle */}
+          <p style={{
+            fontSize: "16px",
+            color: "#cbd5e1",
+            marginBottom: "48px",
+            lineHeight: "1.6",
+            fontWeight: "400"
+          }}>
+            Select the template that best matches your data, or let our AI recommend one
+          </p>
+
+          {/* Template Selection */}
+          <TemplateSelection />
+        </div>
+
+        <style>{`
+          @keyframes fadeInUp {
+            from {
+              opacity: 0;
+              transform: translateY(30px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+        `}</style>
+      </div>
+    )
+  }
+
+  // Show original welcome page
   return (
     <div style={{
       minHeight: "100vh",

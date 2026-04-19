@@ -1,8 +1,10 @@
 import { useState } from "react"
 import { useSession } from "./store/session"
 import { UploadZone } from "./components/UploadZone"
+import { TemplateSelection } from "./components/TemplateSelection"
 import { Sidebar, type PageId } from "./components/layout/Sidebar"
 import {
+  DashboardPage,
   OverviewPage,
   TemporalPage,
   DistributionPage,
@@ -11,14 +13,16 @@ import {
   InsightsPage,
   CorrelationPage,
   QualityPage,
-  ExportPage
+  ExportPage,
+  AdvancedAnalyticsPage,
+  ProfilePage,
 } from "./pages"
 import { ConverterPage } from "./pages/ConverterPage"
 import "./App.css"
 
 export default function App() {
-  const { sessionId } = useSession()
-  const [page, setPage] = useState<PageId>("overview")
+  const { sessionId, selectedTemplate } = useSession()
+  const [page, setPage] = useState<PageId>("dashboard")
 
   if (!sessionId) {
     return (
@@ -39,6 +43,14 @@ export default function App() {
             <p style={{ color: "#cbd5e1", fontSize: "13px", margin: "8px 0 0 0" }}>Excel (.xlsx, .xls) • CSV • Text files • JSON</p>
           </div>
         </div>
+      </div>
+    )
+  }
+
+  if (!selectedTemplate) {
+    return (
+      <div style={{ width: "100%", minHeight: "100vh", backgroundColor: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px" }}>
+        <TemplateSelection />
       </div>
     )
   }
@@ -66,16 +78,19 @@ export default function App() {
 
         {/* Content */}
         <div style={{ flex: 1, overflow: "auto", padding: "24px" }}>
-          {page === "overview"      && <OverviewPage />}
-          {page === "temporal"      && <TemporalPage />}
-          {page === "distribution"  && <DistributionPage />}
-          {page === "ranking"       && <RankingPage />}
-          {page === "explorer"      && <ExplorerPage />}
-          {page === "insights"      && <InsightsPage />}
-          {page === "correlation"   && <CorrelationPage />}
-          {page === "quality"       && <QualityPage />}
-          {page === "export"        && <ExportPage />}
-          {page === "converter"     && <ConverterPage />}
+          {page === "dashboard"    && <DashboardPage />}
+          {page === "overview"     && <OverviewPage />}
+          {page === "temporal"     && <TemporalPage />}
+          {page === "distribution" && <DistributionPage />}
+          {page === "ranking"      && <RankingPage />}
+          {page === "explorer"     && <ExplorerPage />}
+          {page === "insights"     && <InsightsPage />}
+          {page === "correlation"  && <CorrelationPage />}
+          {page === "quality"      && <QualityPage />}
+          {page === "advanced"     && <AdvancedAnalyticsPage />}
+          {page === "profile"      && <ProfilePage />}
+          {page === "export"       && <ExportPage />}
+          {page === "converter"    && <ConverterPage />}
         </div>
       </div>
     </div>
