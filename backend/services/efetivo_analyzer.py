@@ -204,6 +204,120 @@ class EfetivoAnalyzer:
             for _, row in agg.iterrows()
         ]
 
+    # ─── Daily by Fornecedor (pivoted for line chart) ─────────────────
+
+    def get_daily_by_fornecedor(self) -> List[Dict[str, Any]]:
+        """
+        Returns one row per day with total Quantidade per Fornecedor as columns.
+        Format: [{"dia": 1, "Mês": "Março", "FornecedorA": 5, "FornecedorB": 3}, ...]
+        Ready to feed directly into a Recharts LineChart.
+        """
+        df_w = self._work_df()
+        if df_w.empty or "Dia" not in df_w.columns or "Fornecedor" not in df_w.columns:
+            return []
+
+        pivot = (
+            df_w.groupby(["Dia", "Fornecedor"])["Quantidade"]
+            .sum()
+            .reset_index()
+            .pivot(index="Dia", columns="Fornecedor", values="Quantidade")
+            .fillna(0)
+            .reset_index()
+            .sort_values("Dia")
+        )
+        pivot.columns.name = None
+        return pivot.to_dict(orient="records")
+
+    # ─── Media Diária by Fornecedor ───────────────────────────────────
+
+    def get_media_diaria_by_fornecedor(self) -> List[Dict[str, Any]]:
+        """
+        Returns average daily Quantidade per Fornecedor across all active days.
+        """
+        df_w = self._work_df()
+        if df_w.empty or "Fornecedor" not in df_w.columns:
+            return []
+
+        result = []
+        fornecedores = df_w["Fornecedor"].unique()
+        for forn in sorted(fornecedores):
+            df_f = df_w[df_w["Fornecedor"] == forn]
+            dias_ativos = int(df_f["Dia"].nunique())
+            total = float(df_f["Quantidade"].sum())
+            media = round(total / dias_ativos, 2) if dias_ativos > 0 else 0.0
+
+            # daily breakdown for sparkline
+            by_day = (
+                df_f.groupby("Dia")["Quantidade"].sum()
+                .reset_index()
+                .sort_values("Dia")
+            )
+
+            result.append({
+                "fornecedor": str(forn),
+                "total_diarias": round(total, 1),
+                "dias_ativos": dias_ativos,
+                "media_diaria": media,
+                "max_dia": round(float(by_day["Quantidade"].max()), 1) if not by_day.empty else 0,
+                "min_dia": round(float(by_day[by_day["Quantidade"] > 0]["Quantidade"].min()), 1) if not by_day.empty else 0,
+                "by_day": by_day.rename(columns={"Quantidade": "total"}).to_dict(orient="records"),
+            })
+        return result
+
+    # ─── Monthly breakdown: per-month daily pivot + funcao detail ────
+
+    def get_monthly_breakdown(self) -> List[Dict[str, Any]]:
+        """
+        Returns one entry per month with:
+        - daily pivot by fornecedor (for the line chart)
+        - daily funcao detail rows (for the service table)
+        """
+        df_w = self._work_df()
+        if df_w.empty or "Mes" not in df_w.columns:
+            return []
+
+        result = []
+        for mes_num in sorted(df_w["Mes"].unique()):
+            df_m = df_w[df_w["Mes"] == mes_num]
+            mes_nome = str(df_m["MesNome"].iloc[0]) if "MesNome" in df_m.columns else str(mes_num)
+
+            # pivoted daily fornecedor totals
+            fornecedores = sorted(df_m["Fornecedor"].unique().tolist())
+            pivot = (
+                df_m.groupby(["Dia", "Fornecedor"])["Quantidade"]
+                .sum().reset_index()
+                .pivot(index="Dia", columns="Fornecedor", values="Quantidade")
+                .fillna(0).reset_index().sort_values("Dia")
+            )
+            pivot.columns.name = None
+            daily_pivot = pivot.to_dict(orient="records")
+
+            # per-day funcao breakdown
+            funcao_cols = ["Dia", "Fornecedor", "Funcao", "Quantidade"]
+            existing = [c for c in funcao_cols if c in df_m.columns]
+            funcao_agg = (
+                df_m.groupby([c for c in ["Dia", "Fornecedor", "Funcao"] if c in df_m.columns])["Quantidade"]
+                .sum().reset_index().sort_values(["Dia", "Fornecedor"])
+            )
+            funcao_rows = [
+                {
+                    "dia": int(r["Dia"]),
+                    "fornecedor": str(r["Fornecedor"]) if "Fornecedor" in r else "",
+                    "funcao": str(r["Funcao"]) if "Funcao" in r else "",
+                    "quantidade": int(r["Quantidade"]),
+                }
+                for _, r in funcao_agg.iterrows()
+            ]
+
+            result.append({
+                "mes": int(mes_num),
+                "mes_nome": mes_nome,
+                "fornecedores": fornecedores,
+                "daily_pivot": daily_pivot,
+                "funcao_detail": funcao_rows,
+            })
+        return result
+
     # ─── Consolidated Report ──────────────────────────────────────────
 
     def get_consolidated_report(self) -> Dict[str, Any]:
@@ -213,6 +327,8 @@ class EfetivoAnalyzer:
             "funcao_analysis": self.get_funcao_analysis(),
             "monthly_analysis": self.get_monthly_analysis(),
             "daily_timeline": self.get_daily_timeline(),
+            "daily_by_fornecedor": self.get_daily_by_fornecedor(),
+            "media_diaria_by_fornecedor": self.get_media_diaria_by_fornecedor(),
             "top_servicos": self.get_top_servicos(20),
             "matrix": self.get_fornecedor_funcao_matrix(),
         }

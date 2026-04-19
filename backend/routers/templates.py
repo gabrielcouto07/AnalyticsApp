@@ -12,6 +12,7 @@ from ..services.templates import (
     filter_dataframe_for_template,
 )
 from ..services.nf_analyzer import NFAnalyzer
+from ..services.efetivo_analyzer import EfetivoAnalyzer
 from ..session import get_active_df
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
@@ -233,5 +234,55 @@ async def get_nf_top_invoices(
     try:
         analyzer = NFAnalyzer(df)
         return analyzer.get_top_invoices(limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+# ─── Efetivo Endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/efetivo/analysis/{session_id}")
+async def get_efetivo_analysis(session_id: str) -> Dict[str, Any]:
+    """Full consolidated report: summary, fornecedor breakdown, daily timeline, matrix."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        return EfetivoAnalyzer(df).get_consolidated_report()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/efetivo/daily-by-fornecedor/{session_id}")
+async def get_efetivo_daily_by_fornecedor(session_id: str) -> List[Dict[str, Any]]:
+    """Pivoted daily data: [{dia, FornecedorA, FornecedorB, ...}] — for line chart."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        return EfetivoAnalyzer(df).get_daily_by_fornecedor()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/efetivo/media-diaria/{session_id}")
+async def get_efetivo_media_diaria(session_id: str) -> List[Dict[str, Any]]:
+    """Average daily services per fornecedor with sparkline breakdown."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        return EfetivoAnalyzer(df).get_media_diaria_by_fornecedor()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/efetivo/monthly-breakdown/{session_id}")
+async def get_efetivo_monthly_breakdown(session_id: str) -> List[Dict[str, Any]]:
+    """Per-month daily pivot + funcao detail rows for month-aware dashboard."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        return EfetivoAnalyzer(df).get_monthly_breakdown()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")

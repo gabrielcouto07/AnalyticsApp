@@ -2,7 +2,7 @@ import re
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-from AnalyticsApp.config.keywords import (
+from config.keywords import (
     SEMANTIC_KEYWORDS,
     MIN_CONFIDENCE_SCORE,
     KEYWORD_MATCH_WEIGHT,

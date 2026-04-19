@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSessionStore } from '../store/session';
-import { TemplateDashboard, NFDashboard } from '../components';
+import { TemplateDashboard, NFDashboard, EfetivoDashboard } from '../components';
 import * as api from '../api/analytics';
 
 interface DataProfile {
@@ -70,6 +70,11 @@ export const DashboardPage: React.FC = () => {
   // If NF template is selected, show NF Dashboard
   if (selectedTemplate === 'nf' && sessionId) {
     return <NFDashboard sessionId={sessionId} />;
+  }
+
+  // If Efetivo template is selected, show Efetivo Dashboard
+  if (selectedTemplate === 'efetivo' && sessionId) {
+    return <EfetivoDashboard sessionId={sessionId} />;
   }
 
   // If template is selected, show template dashboard
