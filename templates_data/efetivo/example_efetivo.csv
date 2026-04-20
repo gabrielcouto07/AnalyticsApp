@@ -1,9 +1,0 @@
-Obra,Ano,Mes,MesNome,Fornecedor,Funcao,Dia,Quantidade,DiariasTotal,Data
-Obra RIL,2026,1,Janeiro,Fornecedor A,Pedreiro,01,5,25,2026-01-01
-Obra RIL,2026,1,Janeiro,Fornecedor A,Servente,01,8,40,2026-01-01
-Obra RIL,2026,1,Janeiro,Fornecedor B,Armador,01,3,15,2026-01-01
-Obra RIL,2026,1,Janeiro,Fornecedor A,Pedreiro,02,6,30,2026-01-02
-Obra RIL,2026,1,Janeiro,Fornecedor A,Servente,02,10,50,2026-01-02
-Obra RIL,2026,1,Janeiro,Fornecedor B,Armador,02,4,20,2026-01-02
-Obra RIL,2026,1,Janeiro,Fornecedor A,Pedreiro,03,5,25,2026-01-03
-Obra RIL,2026,1,Janeiro,Fornecedor C,Carpinteiro,03,7,35,2026-01-03
