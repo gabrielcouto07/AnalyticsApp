@@ -1,65 +1,94 @@
 import { useState, useEffect } from 'react';
 import { useSessionStore } from '../store/session';
 import { DistributionAnalytics } from '../components/DistributionAnalytics';
+import {
+  PageLayout,
+  FilterCard,
+  InfoGrid,
+  ChartCard,
+  EmptyState,
+  SelectField,
+  ActionButton,
+} from '../components';
 
 export function DistributionPage() {
   const { sessionId, numericCols } = useSessionStore();
   const [col, setCol] = useState('');
+  const [analyzed, setAnalyzed] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (numericCols.length > 0 && !col) setCol(numericCols[0]);
   }, [numericCols, col]);
 
-  return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-100">Distribution Analysis</h1>
-        <p className="text-slate-400 text-sm mt-1">Histogramas, boxplots e sumário estatístico</p>
-      </div>
+  const handleAnalyze = () => {
+    if (col) {
+      setLoading(true);
+      setAnalyzed(true);
+      setTimeout(() => setLoading(false), 300);
+    }
+  };
 
-      <div className="max-w-xs">
-        <label className="text-xs text-slate-400 uppercase tracking-wider block mb-2">
-          Selecionar Coluna
-        </label>
-        <select
-          className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+  const infoItems = col ? [
+    { label: '📊 Variável', value: col, sublabel: 'selecionada' },
+    { label: '📈 Tipo', value: 'Numérica', sublabel: 'contínua' },
+    { label: '✓ Status', value: analyzed ? '✓' : '○', sublabel: analyzed ? 'analisada' : 'pronta' },
+    { label: '📊 Gráficos', value: '3+', sublabel: 'visualizações' },
+    { label: '⚡ Métricas', value: '8+', sublabel: 'estatísticas' },
+  ] : [];
+
+  return (
+    <PageLayout icon="📉" title="Distribuição & Densidade" subtitle="Analise a distribuição, concentração e variabilidade dos seus dados">
+      <FilterCard title="Seleção da Coluna" accentColor="purple">
+        <SelectField
+          label="Coluna Numérica"
           value={col}
           onChange={(e) => setCol(e.target.value)}
-        >
-          <option value="">Selecione...</option>
-          {numericCols.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-      </div>
+          options={[
+            { value: '', label: 'Selecione...' },
+            ...numericCols.map((c) => ({ value: c, label: c })),
+          ]}
+        />
+        <ActionButton
+          label={analyzed ? 'Recarregar' : 'Analisar'}
+          disabled={!col}
+          onClick={handleAnalyze}
+          variant="purple"
+        />
+      </FilterCard>
 
-      <div className="flex flex-wrap gap-2">
-        {numericCols.map((c) => (
-          <button
-            key={c}
-            onClick={() => setCol(c)}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              c === col
-                ? 'bg-blue-600 text-white'
-                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-            }`}
-          >
-            {c}
-          </button>
-        ))}
-      </div>
-
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
-        <p className="text-slate-300 text-center">
-          {col ? `Análise de distribuição: ${col}` : 'Selecione uma coluna para análise'}
-        </p>
-      </div>
-
-      {sessionId && (
-        <div style={{ marginTop: '32px' }}>
-          <DistributionAnalytics sessionId={sessionId} />
-        </div>
+      {col && (
+        <InfoGrid
+          items={infoItems}
+          columns={5}
+        />
       )}
-    </div>
+
+      {!col && (
+        <EmptyState
+          icon="📊"
+          title="Nenhuma coluna selecionada"
+          description="Escolha uma coluna numérica para visualizar histogramas, densidade e estatísticas"
+        />
+      )}
+
+      {sessionId && col && analyzed && !loading && (
+        <ChartCard
+          title="Análise Detalhada"
+          subtitle={`Coluna: ${col}`}
+          size="large"
+        >
+          <DistributionAnalytics sessionId={sessionId} />
+        </ChartCard>
+      )}
+
+      {col && !analyzed && (
+        <EmptyState
+          icon="📈"
+          title="Pronto para analisar"
+          description={`Clique em "Analisar" para visualizar gráficos e estatísticas\nColuna: ${col}`}
+        />
+      )}
+    </PageLayout>
   );
 }

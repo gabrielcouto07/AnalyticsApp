@@ -1,20 +1,32 @@
 import { useCallback, useState } from "react"
-import { analyzeXlsx, type ConverterResult } from "../api/converter"
+import { analyzeXlsx, getPreview, convertFile, type ConverterResult, type FilePreview } from "../api/converter"
 
 type SqlTab = "alter" | "create" | "insert"
+type ConvertFormat = "csv" | "json" | "xlsx"
 
 export function ConverterPage() {
   const [data, setData]       = useState<ConverterResult | null>(null)
+  const [preview, setPreview] = useState<FilePreview | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
   const [tab, setTab]         = useState<SqlTab>("alter")
   const [dragging, setDragging] = useState(false)
+  const [converting, setConverting] = useState<ConvertFormat | null>(null)
+  const [currentFile, setCurrentFile] = useState<File | null>(null)
 
   const onFile = useCallback(async (file: File) => {
-    setLoading(true); setError(null); setData(null)
+    setLoading(true); setError(null); setData(null); setPreview(null); setCurrentFile(file)
     try {
-      const result = await analyzeXlsx(file)
-      setData(result)
+      // Get preview for any file format
+      const previewData = await getPreview(file)
+      setPreview(previewData)
+      
+      // If it's Excel, also get detailed SQL analysis
+      const ext = file.name.toLowerCase().split(".").pop()
+      if (ext === "xlsx" || ext === "xls") {
+        const result = await analyzeXlsx(file)
+        setData(result)
+      }
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Erro ao processar arquivo")
     } finally {
@@ -22,15 +34,32 @@ export function ConverterPage() {
     }
   }, [])
 
+  const handleConvert = useCallback(async (format: ConvertFormat) => {
+    if (!currentFile) return
+    setConverting(format)
+    try {
+      const blob = await convertFile(currentFile, format)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `${currentFile.name.split(".")[0]}_converted.${format}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Erro na conversão")
+    } finally {
+      setConverting(null)
+    }
+  }, [currentFile])
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700, color: "#f1f5f9" }}>
-          XLSX → SQL & JavaScript Converter
+        <h2 style={{ margin: 0, fontSize: "24px", fontWeight: 700, color: "#f1f5f9" }}>
+          🔄 Universal Converter
         </h2>
         <p style={{ margin: "8px 0 0 0", fontSize: "14px", color: "#cbd5e1" }}>
-          Upload an .xlsx file. Each column becomes an <code>ALTER TABLE … ADD COLUMN</code> statement,
-          and every Excel formula is translated to a JavaScript expression.
+          Upload CSV, Excel ou JSON • Converta entre formatos • Gere SQL statements • Traduza fórmulas Excel para JavaScript
         </p>
       </div>
 
@@ -44,32 +73,63 @@ export function ConverterPage() {
         }}
         style={{
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          minHeight: "160px", padding: "24px",
-          borderRadius: "12px",
+          minHeight: "180px", padding: "32px 24px",
+          borderRadius: "16px",
           border: `2px dashed ${dragging ? "#4f8ef7" : "#334155"}`,
-          backgroundColor: dragging ? "rgba(79,142,247,0.08)" : "rgba(30,41,59,0.5)",
+          background: dragging 
+            ? "linear-gradient(135deg, rgba(79,142,247,0.1) 0%, rgba(167,139,250,0.05) 100%)"
+            : "rgba(30,41,59,0.6)",
           cursor: "pointer",
           opacity: loading ? 0.6 : 1,
           pointerEvents: loading ? "none" : "auto",
+          transition: "all 0.3s ease",
         }}
       >
-        <input type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+        <input type="file" accept=".csv,.xlsx,.xls,.json" style={{ display: "none" }}
           onChange={e => e.target.files?.[0] && onFile(e.target.files[0])} />
-        <div style={{ fontSize: "40px", marginBottom: "10px" }}>{loading ? "⚙️" : "📥"}</div>
-        <p style={{ margin: 0, fontSize: "15px", fontWeight: 600, color: "#f1f5f9" }}>
-          {loading ? "Analyzing..." : "Drop an .xlsx here or click to choose"}
+        <div style={{ fontSize: "48px", marginBottom: "12px" }}>{loading ? "⚙️" : "📥"}</div>
+        <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#f1f5f9" }}>
+          {loading ? "Processando..." : "Solte seu arquivo ou clique para escolher"}
         </p>
-        <p style={{ margin: "6px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>
-          Only Excel files are supported on this page
+        <p style={{ margin: "8px 0 0 0", fontSize: "13px", color: "#94a3b8" }}>
+          Suportado: CSV, Excel (.xlsx/.xls), JSON
         </p>
       </label>
 
       {error && (
-        <div style={{ padding: "12px 16px", borderRadius: "10px",
+        <div style={{ padding: "14px 16px", borderRadius: "12px",
           backgroundColor: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)",
           color: "#fca5a5", fontSize: "13px" }}>
           ⚠️ {error}
         </div>
+      )}
+
+      {preview && (
+        <>
+          <PreviewCard preview={preview} />
+          
+          {/* Format conversion buttons */}
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            <FormatButton
+              label="📄 CSV"
+              format="csv"
+              onClick={() => handleConvert("csv")}
+              loading={converting === "csv"}
+            />
+            <FormatButton
+              label="🟢 JSON"
+              format="json"
+              onClick={() => handleConvert("json")}
+              loading={converting === "json"}
+            />
+            <FormatButton
+              label="📊 Excel"
+              format="xlsx"
+              onClick={() => handleConvert("xlsx")}
+              loading={converting === "xlsx"}
+            />
+          </div>
+        </>
       )}
 
       {data && (
@@ -84,7 +144,79 @@ export function ConverterPage() {
   )
 }
 
-// ---------- Sub-components ----------
+// ---------- New Components ----------
+
+function PreviewCard({ preview }: { preview: FilePreview }) {
+  return (
+    <section style={cardStyle}>
+      <SectionHeader 
+        title="📋 Preview" 
+        subtitle={`${preview.rows} de ${preview.total_rows} linhas`}
+      />
+      <div style={{ overflowX: "auto", maxHeight: "300px", overflowY: "auto" }}>
+        <table style={tableStyle}>
+          <thead>
+            <tr>
+              {preview.columns.map(col => (
+                <th key={col} style={thStyle}>
+                  {col}
+                  <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 400, marginTop: "2px" }}>
+                    {preview.data_types[col] === "object" ? "Text" : preview.data_types[col]}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {preview.preview.map((row, idx) => (
+              <tr key={idx}>
+                {preview.columns.map(col => (
+                  <td key={`${idx}-${col}`} style={tdStyle}>
+                    {String(row[col] ?? "—")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
+function FormatButton({
+  label,
+  format,
+  onClick,
+  loading,
+}: {
+  label: string
+  format: ConvertFormat
+  onClick: () => void
+  loading: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      style={{
+        padding: "12px 20px",
+        borderRadius: "12px",
+        border: "1px solid #334155",
+        backgroundColor: loading ? "rgba(79,142,247,0.2)" : "rgba(79,142,247,0.1)",
+        color: loading ? "#90caff" : "#4f8ef7",
+        fontSize: "14px",
+        fontWeight: 600,
+        cursor: loading ? "wait" : "pointer",
+        transition: "all 0.2s ease",
+      }}
+    >
+      {loading ? `⌛ Convertendo...` : label}
+    </button>
+  )
+}
+
+// ---------- Original Sub-components ----------
 
 function SummaryStrip({ data }: { data: ConverterResult }) {
   const items: [string, string | number][] = [

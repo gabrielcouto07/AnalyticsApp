@@ -1,0 +1,9 @@
+Obra,NumeroObra,Assunto,Item,Descricao,Quant,Unid,CodItem,FornecedorNumero,FornecedorNome,Contato,Telefone,Email,ValorUnitario,ValorNegociado,ValorTotal
+Obra RIL,01,Projeto Estrutural,1,Concreto Usinado 28MPa,50,m³,EST-001,1,Fornecedor A,João Silva,(31) 99999-0000,joao@fornecedor-a.com,450.00,420.00,21000.00
+Obra RIL,01,Projeto Estrutural,2,Aço CA-50,100,kg,EST-002,1,Fornecedor A,João Silva,(31) 99999-0000,joao@fornecedor-a.com,8.50,8.00,800.00
+Obra RIL,01,Projeto Estrutural,3,Madeira Compensada,30,un,EST-003,1,Fornecedor A,João Silva,(31) 99999-0000,joao@fornecedor-a.com,85.00,75.00,2250.00
+Obra RIL,01,Projeto Estrutural,1,Concreto Usinado 28MPa,50,m³,EST-001,2,Fornecedor B,Maria Costa,(31) 98888-1111,maria@fornecedor-b.com,480.00,450.00,22500.00
+Obra RIL,01,Projeto Estrutural,2,Aço CA-50,100,kg,EST-002,2,Fornecedor B,Maria Costa,(31) 98888-1111,maria@fornecedor-b.com,9.00,8.50,850.00
+Obra RIL,01,Projeto Estrutural,3,Madeira Compensada,30,un,EST-003,2,Fornecedor B,Maria Costa,(31) 98888-1111,maria@fornecedor-b.com,90.00,82.00,2460.00
+Obra RIL,01,Piscina e Aquecimento,1,Azulejos de Piscina,200,m²,PSC-001,1,Fornecedor C,Pedro Santos,(31) 97777-2222,pedro@fornecedor-c.com,125.00,115.00,23000.00
+Obra RIL,01,Piscina e Aquecimento,2,Sistema de Aquecimento,1,conj,PSC-002,1,Fornecedor C,Pedro Santos,(31) 97777-2222,pedro@fornecedor-c.com,5500.00,5000.00,5000.00

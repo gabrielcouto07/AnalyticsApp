@@ -1,0 +1,6 @@
+FORNECEDOR,NF,VALOR,DATA VENCTO,NATUREZA,BOLETO/DEPÓSITO,SITUAÇÃO PLANILHA
+Fornecedor A,001,1500.00,2026-05-15,Materiais,Boleto,Pendente
+Fornecedor B,002,2300.50,2026-04-20,Serviços,Depósito,Pago
+Fornecedor C,003,890.00,2026-06-01,Materiais,Boleto,Pendente
+Fornecedor A,004,3200.00,2026-05-30,Serviços,Depósito,Pago
+Fornecedor D,005,1100.00,2026-04-25,Materiais,Boleto,Vencido

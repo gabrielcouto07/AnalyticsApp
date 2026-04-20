@@ -15,3 +15,10 @@ export { NFFilters } from './NFFilters'
 export { NFDataTable } from './NFDataTable'
 export { EfetivoDashboard } from './EfetivoDashboard'
 export { OrcamentoDashboard } from './OrcamentoDashboard'
+export { MateriaisDashboard } from './MateriaisDashboard'
+
+// Premium UI Components
+export { PremiumCard, KPICardPremium, StatsGroup } from './PremiumCard'
+export { FilterCard, SelectField, ActionButton } from './FilterCard'
+export { ChartCard, ChartGrid, InfoGridItem, InfoGrid } from './ChartCard'
+export { PageLayout, Section, Row, EmptyState, LoadingState, Divider, Badge, StatisticRow } from './PageLayout'

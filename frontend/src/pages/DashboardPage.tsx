@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSessionStore } from '../store/session';
 import { TemplateDashboard, NFAnalyticsDashboard, EfetivoDashboard, OrcamentoDashboard } from '../components';
+import { MateriaisDashboard } from '../components/MateriaisDashboard';
 import * as api from '../api/analytics';
 
 interface DataProfile {
@@ -62,6 +63,11 @@ export const DashboardPage: React.FC = () => {
     return <OrcamentoDashboard sessionId={sessionId} />;
   }
 
+  // If Materiais template is selected
+  if (selectedTemplate === 'materiais' && sessionId) {
+    return <MateriaisDashboard sessionId={sessionId} />;
+  }
+
   // If other template is selected, show template dashboard
   if (selectedTemplate) {
     return <TemplateDashboard templateId={selectedTemplate} />;
@@ -76,83 +82,133 @@ export const DashboardPage: React.FC = () => {
   const dataQuality = stats ? Math.round((1 - stats.null_cells_pct) * 100) : 0;
 
   return (
-    <div className="space-y-6 p-4">
-      {/* Header */}
-      <div>
-        <h1 className="text-4xl font-bold text-white">📊 Analytics Dashboard</h1>
-        <p className="text-gray-400 mt-1">Complete Data Intelligence & Insights</p>
-      </div>
-
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-br from-blue-900 to-blue-800 rounded-lg p-6 border border-blue-700">
-          <p className="text-blue-200 text-sm font-semibold">📊 Total Rows</p>
-          <p className="text-3xl font-bold text-white mt-2">{stats?.total_rows?.toLocaleString() || '—'}</p>
-          <p className="text-blue-300 text-xs mt-2">Dataset size</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 sm:p-6 lg:p-8">
+      <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8">
+        {/* ─── Header ─────────────────────────────────────────────────────── */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl sm:text-4xl">📊</span>
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white">Analytics Dashboard</h1>
+          </div>
+          <p className="text-sm sm:text-base text-slate-400">Complete Data Intelligence & Insights</p>
         </div>
 
-        <div className="bg-gradient-to-br from-purple-900 to-purple-800 rounded-lg p-6 border border-purple-700">
-          <p className="text-purple-200 text-sm font-semibold">🏛 Columns</p>
-          <p className="text-3xl font-bold text-white mt-2">{stats?.total_columns || '—'}</p>
-          <p className="text-purple-300 text-xs mt-2">
-            {numericCols} numeric, {categoricalCols} categorical
-          </p>
+        {/* ─── Quick Stats Grid ────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {/* Total Rows Card */}
+          <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 backdrop-blur-sm p-5 sm:p-6 hover:bg-blue-500/15 transition-all">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xl">📊</span>
+              <h3 className="text-xs sm:text-sm font-bold text-blue-300 uppercase tracking-wider">Total Rows</h3>
+            </div>
+            <p className="text-2xl sm:text-3xl font-bold text-white mb-2">{stats?.total_rows?.toLocaleString() || '—'}</p>
+            <p className="text-xs text-blue-200">Dataset size</p>
+          </div>
+
+          {/* Columns Card */}
+          <div className="rounded-lg border border-purple-500/30 bg-purple-500/10 backdrop-blur-sm p-5 sm:p-6 hover:bg-purple-500/15 transition-all">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xl">🏛️</span>
+              <h3 className="text-xs sm:text-sm font-bold text-purple-300 uppercase tracking-wider">Columns</h3>
+            </div>
+            <p className="text-2xl sm:text-3xl font-bold text-white mb-2">{stats?.total_columns || '—'}</p>
+            <p className="text-xs text-purple-200">{numericCols} numeric, {categoricalCols} text</p>
+          </div>
+
+          {/* Data Quality Card */}
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 backdrop-blur-sm p-5 sm:p-6 hover:bg-emerald-500/15 transition-all">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xl">✅</span>
+              <h3 className="text-xs sm:text-sm font-bold text-emerald-300 uppercase tracking-wider">Quality</h3>
+            </div>
+            <p className="text-2xl sm:text-3xl font-bold text-white mb-2">{dataQuality}%</p>
+            <p className="text-xs text-emerald-200">Complete records</p>
+          </div>
+
+          {/* Memory Card */}
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 backdrop-blur-sm p-5 sm:p-6 hover:bg-amber-500/15 transition-all">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xl">💾</span>
+              <h3 className="text-xs sm:text-sm font-bold text-amber-300 uppercase tracking-wider">Memory</h3>
+            </div>
+            <p className="text-2xl sm:text-3xl font-bold text-white mb-2">{stats?.memory_usage_mb?.toFixed(1) || '—'} MB</p>
+            <p className="text-xs text-amber-200">RAM usage</p>
+          </div>
         </div>
 
-        <div className="bg-gradient-to-br from-emerald-900 to-emerald-800 rounded-lg p-6 border border-emerald-700">
-          <p className="text-emerald-200 text-sm font-semibold">✅ Data Quality</p>
-          <p className="text-3xl font-bold text-white mt-2">{dataQuality}%</p>
-          <p className="text-emerald-300 text-xs mt-2">Complete records</p>
-        </div>
+        {/* ─── Column Analysis ─────────────────────────────────────────────── */}
+        {columns.length > 0 && (
+          <div className="rounded-lg border border-slate-700/50 bg-slate-800/60 backdrop-blur-sm p-5 sm:p-6">
+            <div className="flex items-center gap-2 mb-5 sm:mb-6">
+              <div className="h-1 w-12 bg-gradient-to-r from-cyan-500 to-cyan-600 rounded-full"></div>
+              <h2 className="text-lg sm:text-xl lg:text-2xl font-bold text-white">Column Analysis</h2>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              {columns.slice(0, 8).map((col) => (
+                <div 
+                  key={col.name} 
+                  className="rounded-lg border border-slate-600/50 bg-slate-700/40 hover:bg-slate-700/60 p-4 transition-all group"
+                >
+                  <p className="font-semibold text-white truncate text-sm mb-1 group-hover:text-cyan-300 transition">{col.name}</p>
+                  <p className="text-xs text-slate-400">Type: <span className="text-slate-300 font-medium">{col.data_type}</span></p>
 
-        <div className="bg-gradient-to-br from-orange-900 to-orange-800 rounded-lg p-6 border border-orange-700">
-          <p className="text-orange-200 text-sm font-semibold">💾 Memory</p>
-          <p className="text-3xl font-bold text-white mt-2">{stats?.memory_usage_mb?.toFixed(1) || '—'} MB</p>
-          <p className="text-orange-300 text-xs mt-2">Dataset size in RAM</p>
-        </div>
-      </div>
-
-      {/* Column Analysis */}
-      {columns.length > 0 && (
-        <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h2 className="text-xl font-bold text-white mb-4">📋 Column Analysis</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {columns.slice(0, 8).map((col) => (
-              <div key={col.name} className="bg-slate-700 rounded p-4 border border-slate-600 hover:border-blue-500 transition">
-                <p className="font-semibold text-white truncate text-sm">{col.name}</p>
-                <p className="text-xs text-gray-400 mt-1">Type: {col.data_type}</p>
-
-                <div className="mt-3 space-y-2">
-                  <div>
-                    <p className="text-xs text-gray-400">Completeness</p>
-                    <div className="h-2 bg-slate-600 rounded overflow-hidden">
-                      <div className="h-full bg-emerald-500" style={{ width: `${100 - (col.null_pct || 0)}%` }} />
+                  <div className="mt-3 space-y-2.5">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <p className="text-xs text-slate-400">Completeness</p>
+                        <p className="text-xs font-semibold text-emerald-300">{Math.round(100 - (col.null_pct || 0))}%</p>
+                      </div>
+                      <div className="h-1.5 bg-slate-600/50 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full" 
+                          style={{ width: `${100 - (col.null_pct || 0)}%` }} 
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-400">Uniqueness</p>
-                    <div className="h-2 bg-slate-600 rounded overflow-hidden">
-                      <div className="h-full bg-blue-500" style={{ width: `${col.unique_pct || 0}%` }} />
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <p className="text-xs text-slate-400">Uniqueness</p>
+                        <p className="text-xs font-semibold text-cyan-300">{Math.round(col.unique_pct || 0)}%</p>
+                      </div>
+                      <div className="h-1.5 bg-slate-600/50 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-cyan-500 to-cyan-400 rounded-full" 
+                          style={{ width: `${col.unique_pct || 0}%` }} 
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
+              ))}
+            </div>
+
+            {columns.length > 8 && (
+              <div className="mt-4 text-center">
+                <p className="text-sm text-slate-400">
+                  Showing <span className="text-slate-300 font-semibold">8 of {columns.length}</span> columns
+                </p>
+                <p className="text-xs text-slate-500 mt-1">Use the sidebar to explore all columns</p>
               </div>
-            ))}
+            )}
           </div>
+        )}
 
-          {columns.length > 8 && (
-            <p className="text-center text-gray-500 text-sm mt-4">
-              Showing 8 of {columns.length} columns. Use the sidebar to explore more.
-            </p>
-          )}
-        </div>
-      )}
+        {/* ─── Loading State ─────────────────────────────────────────────── */}
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-12">
+            <div className="w-12 h-12 border-3 border-slate-600 border-t-cyan-500 rounded-full animate-spin mb-4"></div>
+            <p className="text-slate-400 text-sm">Loading dashboard data...</p>
+          </div>
+        )}
 
-      {loading && (
-        <div className="text-center py-8">
-          <p className="text-gray-400">Loading dashboard data...</p>
-        </div>
-      )}
+        {/* ─── Empty State ────────────────────────────────────────────────── */}
+        {!loading && !profile && (
+          <div className="rounded-lg border border-slate-600/50 bg-slate-700/30 p-8 sm:p-12 text-center">
+            <p className="text-slate-400 text-sm sm:text-base">No data available. Upload a file to get started.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

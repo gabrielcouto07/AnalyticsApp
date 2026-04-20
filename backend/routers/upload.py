@@ -6,6 +6,8 @@ from ..services.efetivo_template import detect_efetivo_file
 from ..services.efetivo_parser import parse_efetivo_file
 from ..services.orcamento_template import detect_orcamento_file
 from ..services.orcamento_parser import parse_orcamento_file
+from ..services.materiais_template import detect_materiais_file
+from ..services.mapa_concorrencia_parser import MapaConcorrenciaParser
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -23,34 +25,68 @@ async def upload_file(file: UploadFile = File(...)):
 
         if ext in {".xlsx", ".xls"}:
             # 1) Check Efetivo layout
-            if detect_efetivo_file(content, file.filename):
-                df = parse_efetivo_file(content, file.filename)
-                if df.empty:
-                    raise HTTPException(422, "Efetivo file parsed but returned no records")
-                template_type = "efetivo"
-                available_sheets = {}
+            is_efetivo = detect_efetivo_file(content, file.filename)
+            print(f"[UPLOAD DEBUG] Efetivo detection for '{file.filename}': {is_efetivo}")
+            if is_efetivo:
+                try:
+                    df = parse_efetivo_file(content, file.filename)
+                    print(f"[UPLOAD DEBUG] Efetivo parsed: shape={df.shape}, empty={df.empty}")
+                    if df.empty:
+                        raise HTTPException(422, "Efetivo file parsed but returned no records")
+                    template_type = "efetivo"
+                    available_sheets = {}
+                except Exception as e:
+                    print(f"[UPLOAD ERROR] Efetivo parsing failed: {e}")
+                    raise
 
-            # 2) Check Orçamento (Mapa de Concorrência) layout
+            # 2) Check Materiais (Mapa de Concorrência) layout BEFORE Orcamento
+            elif detect_materiais_file(content, file.filename):
+                try:
+                    print(f"[UPLOAD DEBUG] Materiais detection successful for '{file.filename}'")
+                    # Use specialized Mapa de Concorrência parser
+                    parser = MapaConcorrenciaParser(content, file.filename)
+                    df, metadata = parser.parse()
+                    print(f"[UPLOAD DEBUG] Materiais parsed: shape={df.shape}, metadata={metadata}")
+                    if df.empty:
+                        raise HTTPException(422, "Materiais file parsed but returned no records")
+                    template_type = "materiais"
+                    available_sheets = {}
+                except Exception as e:
+                    print(f"[UPLOAD ERROR] Materiais parsing failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
+
+            # 3) Check Orçamento (Mapa de Concorrência) layout
             elif detect_orcamento_file(content, file.filename):
-                result = parse_orcamento_file(content, file.filename)
-                df = result["flat"]
-                if df.empty:
-                    raise HTTPException(422, "Orcamento file parsed but returned no records")
-                template_type = "orcamento"
-                available_sheets = {}
+                try:
+                    result = parse_orcamento_file(content, file.filename)
+                    df = result["flat"]
+                    print(f"[UPLOAD DEBUG] Orcamento parsed: shape={df.shape}")
+                    if df.empty:
+                        raise HTTPException(422, "Orcamento file parsed but returned no records")
+                    template_type = "orcamento"
+                    available_sheets = {}
+                except Exception as e:
+                    print(f"[UPLOAD ERROR] Orcamento parsing failed: {e}")
+                    raise
 
-            # 3) Standard Excel
+            # 4) Standard Excel
             else:
-                df, available_sheets = load_dataframe(content, file.filename)
+                print(f"[UPLOAD DEBUG] Using standard Excel parser for '{file.filename}'")
+                df, available_sheets, _ = load_dataframe(content, file.filename)
                 template_type = None
         else:
-            df, available_sheets = load_dataframe(content, file.filename)
+            df, available_sheets, _ = load_dataframe(content, file.filename)
             template_type = None
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(422, f"Erro ao processar arquivo: {e}")
+
+    # Get column types
+    col_types = get_col_types(df)
 
     session_id = create_session(df, template_type=template_type)
     session = get_session(session_id)

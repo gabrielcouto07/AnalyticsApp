@@ -78,7 +78,7 @@ export default function App() {
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflow: "auto", padding: "24px", backgroundColor: "#0f172a" }}>
+        <div style={{ flex: 1, overflow: "auto" }}>
           {page === "dashboard"    && <DashboardPage />}
           {page === "overview"     && <OverviewPage />}
           {page === "temporal"     && <TemporalPage />}

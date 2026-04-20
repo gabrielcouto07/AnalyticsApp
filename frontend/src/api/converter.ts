@@ -40,9 +40,38 @@ export interface ConverterResult {
   formula_count: number
 }
 
+export interface FilePreview {
+  rows: number
+  total_rows: number
+  columns: string[]
+  preview: Record<string, any>[]
+  data_types: Record<string, string>
+  missing_values: Record<string, number>
+}
+
 export const analyzeXlsx = async (file: File): Promise<ConverterResult> => {
   const form = new FormData()
   form.append("file", file)
   const { data } = await api.post("/api/converter/analyze", form)
   return data
+}
+
+export const getPreview = async (file: File): Promise<FilePreview> => {
+  const form = new FormData()
+  form.append("file", file)
+  const { data } = await api.post("/api/converter/preview", form)
+  return data
+}
+
+export const convertFile = async (
+  file: File,
+  targetFormat: "csv" | "json" | "xlsx"
+): Promise<Blob> => {
+  const form = new FormData()
+  form.append("file", file)
+  form.append("target_format", targetFormat)
+  const response = await api.post("/api/converter/convert", form, {
+    responseType: "blob",
+  })
+  return response.data
 }

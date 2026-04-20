@@ -375,6 +375,33 @@ def _load_csv(file_bytes: bytes, filename: str) -> pd.DataFrame:
     
     buf.seek(0)
     df_raw = pd.read_csv(buf, sep=sep, on_bad_lines="skip", encoding=encoding, header=None, dtype=str, keep_default_na=False)
+    
+    # NOVO: Pré-processamento para pular linhas de metadata pura
+    # Detecta linhas que têm muitas poucas colunas preenchidas (indicando metadata/cabeçalho vazio)
+    metadata_lines = 0
+    for idx in range(min(len(df_raw), 15)):  # Procura nos primeiros 15 linhas
+        row = df_raw.iloc[idx]
+        filled_count = sum(1 for val in row if pd.notna(val) and str(val).strip())
+        filled_ratio = filled_count / len(row) if len(row) > 0 else 0
+        
+        # Se menos de 50% das colunas têm valor (ou menos de 10 colunas), é provavelmente metadata
+        if filled_ratio < 0.5 or filled_count < 10:
+            # Mas verifica se parece ser um header: procura por palavras-chave de header
+            row_text = " ".join([str(v)[:20] for v in row if pd.notna(v) and str(v).strip()])
+            # Se tem palavras chave de header (como palavras completas), não é metadata pura
+            header_keywords = r'\b(consolidado|cod|fornecedor|valor|data|natureza|boleto|deposito)\b'
+            if re.search(header_keywords, row_text, re.IGNORECASE):
+                break  # Para aqui - encontrou header
+            metadata_lines += 1
+        else:
+            # Para quando encontra a primeira linha com mais dados
+            break
+    
+    # Remove as linhas de metadata detectadas
+    if metadata_lines > 0:
+        df_raw = df_raw.iloc[metadata_lines:].reset_index(drop=True)
+    
+    # Agora detecta o header na parte remaining
     header_row, _ = _detect_header_row(df_raw)
     df = df_raw.iloc[header_row + 1 :].copy().reset_index(drop=True)
     df.columns = df_raw.iloc[header_row].tolist()

@@ -130,9 +130,14 @@ class NFAnalyzer:
         """Intelligently detect and map essential columns by analyzing data content"""
         logger.warning(f"NFAnalyzer INIT - Columns ({len(self.df.columns)}): {self.df.columns.tolist()}")
         
-        # If exact matches don't work, try to detect by data characteristics
-        if not self.column_map.get('VALOR'):
-            valor_col = self._find_numeric_column(['value', 'amount', 'total', 'col_6', 'col_5', 'col_8'])
+        # First try direct keyword matching
+        valor_col = self._find_column(self.VALOR_KEYWORDS)
+        if valor_col:
+            self.column_map['VALOR'] = valor_col
+            logger.info(f"NFAnalyzer - Detected VALOR column (by keywords): {valor_col}")
+        else:
+            # If exact matches don't work, try to detect by data characteristics
+            valor_col = self._find_numeric_column(['valor', 'value', 'amount', 'total', 'col_6', 'col_5', 'col_8', 'valor_do_item'])
             if valor_col:
                 self.column_map['VALOR'] = valor_col
                 logger.info(f"NFAnalyzer - Detected VALOR column (by data): {valor_col}")
@@ -140,8 +145,13 @@ class NFAnalyzer:
                 logger.warning("NFAnalyzer - VALOR column NOT found even by data analysis!")
         
         # Try to find supplier/vendor column
-        if not self.column_map.get('FORNECEDOR'):
-            fornecedor_col = self._find_text_column(['supplier', 'vendor', 'empresa', 'fornecedor', 'col_2', 'col_3', 'col_1'])
+        fornecedor_col = self._find_column(self.FORNECEDOR_KEYWORDS)
+        if fornecedor_col:
+            self.column_map['FORNECEDOR'] = fornecedor_col
+            logger.info(f"NFAnalyzer - Detected FORNECEDOR column (by keywords): {fornecedor_col}")
+        else:
+            # Fallback to data analysis
+            fornecedor_col = self._find_text_column(['fornecedor', 'supplier', 'vendor', 'empresa', 'col_2', 'col_3', 'col_1'])
             if fornecedor_col:
                 self.column_map['FORNECEDOR'] = fornecedor_col
                 logger.info(f"NFAnalyzer - Detected FORNECEDOR column (by data): {fornecedor_col}")

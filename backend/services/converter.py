@@ -309,3 +309,56 @@ def analyze_xlsx(file_bytes: bytes, filename: str) -> dict:
         "formulas": formulas,
         "formula_count": len(formulas),
     }
+
+
+# ---------- Multi-format conversion ----------
+
+def convert_to_format(df: pd.DataFrame, target_format: str, filename: str = "data") -> tuple[bytes, str]:
+    """Convert DataFrame to target format (csv, json, excel).
+    
+    Returns: (bytes, content_type)
+    """
+    base_name = re.sub(r"\.[^.]+$", "", filename or "data")
+    
+    if target_format.lower() == "csv":
+        buffer = io.StringIO()
+        df.to_csv(buffer, index=False)
+        return buffer.getvalue().encode(), "text/csv"
+    
+    elif target_format.lower() == "json":
+        return df.to_json(orient="records").encode(), "application/json"
+    
+    elif target_format.lower() in ("xlsx", "excel"):
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False, sheet_name="Data")
+        return buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    
+    else:
+        raise ValueError(f"Unsupported format: {target_format}")
+
+
+def get_preview(df: pd.DataFrame, rows: int = 5) -> dict:
+    """Get preview of DataFrame (first N rows + stats)."""
+    preview_df = df.head(rows)
+    return {
+        "rows": len(preview_df),
+        "total_rows": len(df),
+        "columns": list(df.columns),
+        "preview": preview_df.to_dict(orient="records"),
+        "data_types": {col: str(df[col].dtype) for col in df.columns},
+        "missing_values": {col: int(df[col].isna().sum()) for col in df.columns},
+    }
+
+
+def load_file_to_df(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Load file (CSV or Excel) into DataFrame."""
+    ext = filename.lower().split(".")[-1]
+    
+    if ext in ("xlsx", "xls"):
+        return pd.read_excel(io.BytesIO(file_bytes))
+    elif ext == "csv":
+        return pd.read_csv(io.BytesIO(file_bytes))
+    elif ext == "json":
+        return pd.read_json(io.BytesIO(file_bytes))
+    else:
+        raise ValueError(f"Unsupported file format: {ext}")

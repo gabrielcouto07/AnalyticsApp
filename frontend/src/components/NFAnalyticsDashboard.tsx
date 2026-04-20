@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
+import { api } from '../api/client';
 import {
   BarChart, Bar, PieChart, Pie, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -95,19 +96,21 @@ export const NFAnalyticsDashboard: React.FC<{ sessionId: string }> = ({ sessionI
     const previous = timeline.length > 1 ? timeline[timeline.length - 2] : undefined;
     
     return {
-      valueTrend: calculateTrend(current.total_value, previous?.total_value),
-      countTrend: calculateTrend(current.invoice_count, previous?.invoice_count),
-      avgTrend: calculateTrend(current.avg_value, previous?.avg_value)
+      valueTrend: calculateTrend(current?.total_value || 0, previous?.total_value),
+      countTrend: calculateTrend(current?.invoice_count || 0, previous?.invoice_count),
+      avgTrend: calculateTrend(current?.avg_value || 0, previous?.avg_value)
     };
   }, [timeline]);
 
   // Calculate insights
   const insights = useMemo(() => {
-    if (!summary || !suppliers || !nature) return null;
+    if (!summary || !suppliers || !nature || suppliers.length === 0) return null;
     
     const topSupplier = suppliers[0];
-    const concentration = (topSupplier.total_value / summary.total_value) * 100;
-    const avgInvoiceSize = summary.average_invoice_value;
+    const concentration = topSupplier?.total_value && summary?.total_value 
+      ? (topSupplier.total_value / summary.total_value) * 100 
+      : 0;
+    const avgInvoiceSize = summary?.average_invoice_value || 0;
     const largeInvoices = topInvoices.filter(inv => inv.value > avgInvoiceSize * 1.5).length;
     
     return {
@@ -130,13 +133,14 @@ export const NFAnalyticsDashboard: React.FC<{ sessionId: string }> = ({ sessionI
       setError(null);
 
       // Load all analytics in parallel
+      const baseURL = api.defaults.baseURL;
       const [statsRes, suppliersRes, natureRes, paymentRes, timelineRes, invoicesRes] = await Promise.all([
-        axios.get(`http://localhost:8000/api/templates/nf/stats/${sessionId}`),
-        axios.get(`http://localhost:8000/api/templates/nf/suppliers/${sessionId}?limit=20`),
-        axios.get(`http://localhost:8000/api/templates/nf/nature/${sessionId}`),
-        axios.get(`http://localhost:8000/api/templates/nf/payment/${sessionId}`),
-        axios.get(`http://localhost:8000/api/templates/nf/timeline/${sessionId}`),
-        axios.get(`http://localhost:8000/api/templates/nf/top-invoices/${sessionId}?limit=20`)
+        axios.get(`${baseURL}/api/templates/nf/stats/${sessionId}`),
+        axios.get(`${baseURL}/api/templates/nf/suppliers/${sessionId}?limit=20`),
+        axios.get(`${baseURL}/api/templates/nf/nature/${sessionId}`),
+        axios.get(`${baseURL}/api/templates/nf/payment/${sessionId}`),
+        axios.get(`${baseURL}/api/templates/nf/timeline/${sessionId}`),
+        axios.get(`${baseURL}/api/templates/nf/top-invoices/${sessionId}?limit=20`)
       ]);
 
       setSummary(statsRes.data.summary);

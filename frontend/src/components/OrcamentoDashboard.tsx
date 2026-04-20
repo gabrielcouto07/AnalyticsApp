@@ -4,7 +4,7 @@ import {
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
 } from "recharts"
 
-const API = "http://localhost:8001/api/templates"
+const API = "http://localhost:8000/api/templates"
 
 const COLORS = [
   "#34c97e", "#4f8ef7", "#f5a623", "#e05263",

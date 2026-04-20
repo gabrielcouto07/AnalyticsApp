@@ -24,10 +24,12 @@ export function UploadZone() {
         rows: upload.rows,
         columns: upload.columns,
         col_types: upload.col_types,
+        template: upload.template,
       })
 
-      // Auto-select NF template for all CSV uploads
-      setSelectedTemplate('nf')
+      // Use template from server response, fallback to 'nf'
+      const templateToUse = upload.template || 'nf'
+      setSelectedTemplate(templateToUse)
 
       const [kpisData, qualityData, statsData, semanticData] = await Promise.all([
         getKpis(upload.session_id),

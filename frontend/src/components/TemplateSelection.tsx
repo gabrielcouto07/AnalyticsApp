@@ -39,7 +39,7 @@ export const TemplateSelection: React.FC<TemplateSelectionProps> = ({
 
   const loadTemplates = async () => {
     try {
-      const response = await fetch('http://localhost:8001/api/templates/list');
+      const response = await fetch('http://localhost:8000/api/templates/list');
       const data = await response.json();
       
       // Convert array response to object if needed
@@ -68,7 +68,7 @@ export const TemplateSelection: React.FC<TemplateSelectionProps> = ({
       const columns = Object.keys(colTypes);
 
       // Call suggestion endpoint
-      const response = await fetch('http://localhost:8001/api/templates/suggest', {
+      const response = await fetch('http://localhost:8000/api/templates/suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(columns),

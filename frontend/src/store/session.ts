@@ -55,6 +55,7 @@ filteredRowCount: number | null;
 
 // Template
 selectedTemplate: string | null;
+templateType: string | null;
 suggestedTemplates: string[];
 
 // Actions
@@ -64,6 +65,7 @@ setSession: (payload: {
   rows: number;
   columns: number;
   col_types: Record<string, string>;
+  template?: string;
 }) => void;
 setSemanticData: (semanticData: SemanticData | null) => void;
 setKpis: (kpis: KpiData[]) => void;
@@ -124,6 +126,7 @@ insights:           [],
 activeFilters:      initialFilters,
 filteredRowCount:   null,
 selectedTemplate:   null,
+templateType:       null,
 suggestedTemplates: [],
 
 setSession: (payload) => {
@@ -137,6 +140,7 @@ setSession: (payload) => {
     numericCols:     numeric,
     dateCols:        date,
     categoricalCols: categorical,
+    templateType:    payload.template || null,
     // Reset dependent state
     kpis:            [],
     quality:         [],

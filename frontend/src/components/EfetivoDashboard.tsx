@@ -4,7 +4,9 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts"
 
-const API = "http://localhost:8001/api/templates"
+import { api } from "../api/client"
+
+const API = api.defaults.baseURL
 
 const COLORS = [
   "#4f8ef7", "#34c97e", "#f5a623", "#e05263",
@@ -73,6 +75,7 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
   const [error, setError]               = useState<string | null>(null)
   const [filterForn, setFilterForn]     = useState<string>("all")
   const [filterFuncao, setFilterFuncao] = useState<string>("all")
+  const [isServicosTableCollapsed, setIsServicosTableCollapsed] = useState(false)
 
   useEffect(() => {
     const load = async () => {
@@ -80,14 +83,15 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
       setError(null)
       try {
         const [analysisRes, monthlyRes] = await Promise.all([
-          fetch(`${API}/efetivo/analysis/${sessionId}`).then(r => r.json()),
-          fetch(`${API}/efetivo/monthly-breakdown/${sessionId}`).then(r => r.json()),
+          fetch(`${API}/api/templates/efetivo/analysis/${sessionId}`).then(r => r.json()),
+          fetch(`${API}/api/templates/efetivo/monthly-breakdown/${sessionId}`).then(r => r.json()),
         ])
         setSummary(analysisRes.summary)
-        setMonths(monthlyRes)
-        if (monthlyRes.length > 0) setActiveMes(monthlyRes[0].mes)
-      } catch {
-        setError("Erro ao carregar dados do Efetivo.")
+        const monthsData = Array.isArray(monthlyRes) ? monthlyRes : []
+        setMonths(monthsData)
+        if (monthsData.length > 0) setActiveMes(monthsData[0].mes)
+      } catch (err) {
+        setError(`Erro ao carregar dados do Efetivo: ${err instanceof Error ? err.message : 'Erro desconhecido'}`)
       } finally {
         setLoading(false)
       }
@@ -98,18 +102,37 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60vh", flexDirection: "column", gap: 16 }}>
       <div style={{ width: 40, height: 40, borderRadius: "50%", border: "3px solid #334155", borderTopColor: "#4f8ef7", animation: "spin 0.8s linear infinite" }} />
-      <p style={{ color: "#94a3b8" }}>Carregando Controle de Efetivo...</p>
+      <p style={{ color: "#94a3b8", fontSize: 14 }}>Carregando Controle de Efetivo...</p>
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   )
 
   if (error) return (
-    <div style={{ padding: 24, color: "#fca5a5", background: "rgba(248,113,113,0.1)", borderRadius: 12, border: "1px solid rgba(248,113,113,0.3)" }}>
-      ⚠️ {error}
+    <div style={{ padding: "24px", margin: "16px 0", color: "#fca5a5", background: "rgba(248,113,113,0.1)", borderRadius: 12, border: "1px solid rgba(248,113,113,0.3)", fontSize: 14 }}>
+      <div style={{ fontWeight: 600, marginBottom: 8 }}>⚠️ Erro ao carregar Efetivo</div>
+      <div style={{ fontSize: 13, color: "#f5a5a5" }}>{error}</div>
     </div>
   )
 
-  const currentMonth = months.find(m => m.mes === activeMes) ?? months[0]
+  // Ensure months is always an array before using it
+  const validMonths = Array.isArray(months) ? months : []
+  if (validMonths.length === 0) return (
+    <div style={{ minHeight: "50vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+      <div style={{ maxWidth: "500px", textAlign: "center", padding: "32px", background: "rgba(15,23,42,0.5)", border: "1px solid rgba(100,116,139,0.3)", borderRadius: 16 }}>
+        <div style={{ fontSize: 32, marginBottom: 16 }}>📋</div>
+        <h3 style={{ color: "#e2e8f0", fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Nenhum dado de Efetivo disponível</h3>
+        <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.6 }}>
+          O arquivo carregado não possui a estrutura esperada de "Controle de Efetivo". 
+          Verifique se o arquivo foi carregado corretamente e contém as colunas necessárias (Mês, Fornecedor, Função, Quantidade).
+        </p>
+        <div style={{ marginTop: 20, padding: 12, background: "rgba(59,130,246,0.1)", borderLeft: "3px solid #3b82f6", borderRadius: 4, fontSize: 12, color: "#93c5fd", textAlign: "left" }}>
+          💡 Dica: Use a planilha de "Controle de Efetivo" do Excel com a estrutura padrão.
+        </div>
+      </div>
+    </div>
+  )
+
+  const currentMonth = validMonths.find(m => m.mes === activeMes) ?? validMonths[0]
   const fornecedores = currentMonth?.fornecedores ?? []
   const grandMedia = summary ? summary.media_diaria : 0
 
@@ -157,7 +180,7 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
 
       {/* ── Month Tabs ─────────────────────────────────────────────────── */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {months.map(m => (
+        {validMonths.map(m => (
           <button
             key={m.mes}
             onClick={() => { setActiveMes(m.mes); setFilterForn("all"); setFilterFuncao("all") }}
@@ -205,72 +228,109 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
 
           {/* ── Serviços por Dia (funções) ────────────────────────────── */}
           <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-                  👷 Serviços por Dia — {currentMonth.mes_nome}
-                </h3>
-                <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>
-                  Quais funções estavam presentes em cada dia
-                </p>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: isServicosTableCollapsed ? 0 : 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={() => setIsServicosTableCollapsed(!isServicosTableCollapsed)}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid #475569",
+                    borderRadius: 6,
+                    color: "#94a3b8",
+                    cursor: "pointer",
+                    padding: "6px 10px",
+                    fontSize: 14,
+                    transition: "all 0.2s ease",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 32,
+                    minHeight: 32,
+                  }}
+                  title={isServicosTableCollapsed ? "Expandir tabela" : "Encolher tabela"}
+                  onMouseEnter={e => {
+                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(148, 163, 184, 0.1)"
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "#94a3b8"
+                  }}
+                  onMouseLeave={e => {
+                    (e.currentTarget as HTMLButtonElement).style.background = "transparent"
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "#475569"
+                  }}
+                >
+                  {isServicosTableCollapsed ? "▸" : "▾"}
+                </button>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
+                    👷 Serviços por Dia — {currentMonth.mes_nome}
+                  </h3>
+                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>
+                    Quais funções estavam presentes em cada dia
+                  </p>
+                </div>
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <select value={filterForn} onChange={e => setFilterForn(e.target.value)} style={selectStyle}>
-                  <option value="all">Todos fornecedores</option>
-                  {allFornecedores.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-                <select value={filterFuncao} onChange={e => setFilterFuncao(e.target.value)} style={selectStyle}>
-                  <option value="all">Todas funções</option>
-                  {allFuncoes.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-              </div>
+              {!isServicosTableCollapsed && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <select value={filterForn} onChange={e => setFilterForn(e.target.value)} style={selectStyle}>
+                    <option value="all">Todos fornecedores</option>
+                    {allFornecedores.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                  <select value={filterFuncao} onChange={e => setFilterFuncao(e.target.value)} style={selectStyle}>
+                    <option value="all">Todas funções</option>
+                    {allFuncoes.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
 
-            {dias.length === 0 ? (
-              <p style={{ color: "#64748b", fontSize: 13 }}>Nenhum dado para os filtros selecionados.</p>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead>
-                    <tr>
-                      <th style={thStyle}>Dia</th>
-                      <th style={thStyle}>Fornecedor</th>
-                      <th style={thStyle}>Serviço / Função</th>
-                      <th style={{ ...thStyle, textAlign: "right" }}>Qtd</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dias.map(dia =>
-                      funcaoPorDia[dia].map((row, idx) => {
-                        const colorIdx = fornecedores.indexOf(row.fornecedor)
-                        const color = COLORS[colorIdx >= 0 ? colorIdx % COLORS.length : idx % COLORS.length]
-                        return (
-                          <tr key={`${dia}-${row.fornecedor}-${row.funcao}`}
-                            style={{ background: dia % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
-                            {idx === 0 && (
-                              <td rowSpan={funcaoPorDia[dia].length}
-                                style={{ ...tdStyle, fontWeight: 800, color: "#94a3b8", verticalAlign: "middle", fontSize: 14, borderRight: "1px solid #334155" }}>
-                                {String(dia).padStart(2, "0")}
-                              </td>
-                            )}
-                            <td style={{ ...tdStyle, color, fontWeight: 600 }}>{row.fornecedor}</td>
-                            <td style={{ ...tdStyle, color: "#f1f5f9" }}>{row.funcao}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color }}>{row.quantidade}</td>
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ borderTop: "2px solid #334155" }}>
-                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#f1f5f9" }}>Total no mês</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#f5a623" }}>
-                        {dias.reduce((s, d) => s + funcaoPorDia[d].reduce((ss, r) => ss + r.quantidade, 0), 0)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+            {!isServicosTableCollapsed && (
+              <>
+                {dias.length === 0 ? (
+                  <p style={{ color: "#64748b", fontSize: 13 }}>Nenhum dado para os filtros selecionados.</p>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          <th style={thStyle}>Dia</th>
+                          <th style={thStyle}>Fornecedor</th>
+                          <th style={thStyle}>Serviço / Função</th>
+                          <th style={{ ...thStyle, textAlign: "right" }}>Qtd</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dias.map(dia =>
+                          funcaoPorDia[dia].map((row, idx) => {
+                            const colorIdx = fornecedores.indexOf(row.fornecedor)
+                            const color = COLORS[colorIdx >= 0 ? colorIdx % COLORS.length : idx % COLORS.length]
+                            return (
+                              <tr key={`${dia}-${row.fornecedor}-${row.funcao}`}
+                                style={{ background: dia % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
+                                {idx === 0 && (
+                                  <td rowSpan={funcaoPorDia[dia].length}
+                                    style={{ ...tdStyle, fontWeight: 800, color: "#94a3b8", verticalAlign: "middle", fontSize: 14, borderRight: "1px solid #334155" }}>
+                                    {String(dia).padStart(2, "0")}
+                                  </td>
+                                )}
+                                <td style={{ ...tdStyle, color, fontWeight: 600 }}>{row.fornecedor}</td>
+                                <td style={{ ...tdStyle, color: "#f1f5f9" }}>{row.funcao}</td>
+                                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color }}>{row.quantidade}</td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ borderTop: "2px solid #334155" }}>
+                          <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#f1f5f9" }}>Total no mês</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#f5a623" }}>
+                            {dias.reduce((s, d) => s + funcaoPorDia[d].reduce((ss, r) => ss + r.quantidade, 0), 0)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
