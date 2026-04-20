@@ -24,6 +24,7 @@ import "./App.css"
 export default function App() {
   const { sessionId, selectedTemplate } = useSession()
   const [page, setPage] = useState<PageId>("dashboard")
+  const [sidebarOpen, setSidebarOpen] = useState(true)
 
   if (!sessionId) {
     return (
@@ -59,26 +60,56 @@ export default function App() {
   return (
     <div style={{ backgroundColor: "#0f172a", color: "#f1f5f9", minHeight: "100vh", display: "flex", flexDirection: "row" }}>
       {/* Left Sidebar */}
-      <div style={{ width: "280px", height: "100vh", borderRight: "1px solid #334155", overflowY: "auto", backgroundColor: "#1e293b" }}>
-        <Sidebar active={page} onChange={setPage} />
-      </div>
+      {sidebarOpen && (
+        <div style={{ width: "280px", height: "100vh", borderRight: "1px solid #334155", overflowY: "auto", backgroundColor: "#1e293b", flexShrink: 0 }}>
+          <Sidebar active={page} onChange={setPage} />
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-        {/* Top Bar */}
+        {/* Top Bar with Toggle */}
         <div style={{
           backgroundColor: "#1e293b",
           borderBottom: "1px solid #334155",
-          padding: "16px 24px",
-          flexShrink: 0
+          padding: "12px 24px",
+          flexShrink: 0,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center"
         }}>
           <h2 style={{ margin: 0, color: "#f1f5f9", fontSize: "18px", fontWeight: "600" }}>
             {page.charAt(0).toUpperCase() + page.slice(1)}
           </h2>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            style={{
+              padding: "8px 12px",
+              backgroundColor: "rgba(79, 142, 247, 0.1)",
+              color: "#4f8ef7",
+              border: "1px solid rgba(79, 142, 247, 0.3)",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "14px",
+              fontWeight: "500",
+              transition: "all 0.2s ease"
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.backgroundColor = "rgba(79, 142, 247, 0.2)"
+              e.currentTarget.style.borderColor = "rgba(79, 142, 247, 0.5)"
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.backgroundColor = "rgba(79, 142, 247, 0.1)"
+              e.currentTarget.style.borderColor = "rgba(79, 142, 247, 0.3)"
+            }}
+            title={sidebarOpen ? "Esconder sidebar" : "Mostrar sidebar"}
+          >
+            {sidebarOpen ? "◀ Ocultar" : "▶ Mostrar"}
+          </button>
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflow: "auto" }}>
+        <div style={{ flex: 1, overflow: "auto", backgroundColor: "#0f172a" }}>
           {page === "dashboard"    && <DashboardPage />}
           {page === "overview"     && <OverviewPage />}
           {page === "temporal"     && <TemporalPage />}

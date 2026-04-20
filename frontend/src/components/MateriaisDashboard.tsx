@@ -1,75 +1,86 @@
 import React, { useEffect, useState } from "react"
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
-  LineChart, Line, Legend, Area, AreaChart
+  BarChart, Bar, PieChart, Pie, LineChart, Line, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from "recharts"
-import { ExplainerModal, useExplainerModal, type ExplainerContent } from "./ExplainerModal"
 
 import { api } from "../api/client"
+import { DashboardLayout, Card, KPIGrid, Section } from "./DashboardLayout"
 
 const API = api.defaults.baseURL
 
-const COLORS = [
-  "#34c97e", "#4f8ef7", "#f5a623", "#e05263",
-  "#a78bfa", "#06b6d4", "#f97316", "#ec4899",
-]
-const WINNER_COLOR = "#34c97e"
-const LOSER_COLOR = "#475569"
+const COLORS = ["#4f8ef7", "#34c97e", "#f5a623", "#e05263", "#a78bfa", "#06b6d4", "#f97316", "#ec4899"]
 
-interface MateriaisDashboardProps {
-  sessionId: string
+interface Summary {
+  total_quantidade: number
+  total_valor: number
+  unique_materiais: number
+  unique_fornecedores: number
+  media_valor_unitario: number
+  material_mais_caro: string
+  valor_mais_caro: number
 }
 
-interface KPIData {
-  items: number
-  suppliers: number
-  minPrice: number
-  supplier: string
-  totalValue: number
-  services: number
-  inputs: number
+interface Material {
+  material: string
+  quantidade: number
+  valor_total: number
+  valor_unitario: number
+  fornecedor: string
+  categoria: string
 }
 
-interface ChartData {
-  name: string
-  value: number
-  formatted: string
+interface Fornecedor {
+  fornecedor: string
+  total_quantidade: number
+  total_valor: number
+  quantidade_materiais: number
 }
 
-interface PriceComparison {
-  item: string
-  quantity: number
-  type: string
-  prices: Record<string, number>
+interface Categoria {
+  categoria: string
+  total_quantidade: number
+  total_valor: number
+  quantidade_materiais: number
 }
 
-export function MateriaisDashboard({ sessionId }: MateriaisDashboardProps) {
-  const [kpi, setKpi] = useState<KPIData | null>(null)
-  const [supplierChart, setSupplierChart] = useState<ChartData[]>([])
-  const [typeChart, setTypeChart] = useState<ChartData[]>([])
-  const [comparison, setComparison] = useState<PriceComparison[]>([])
+const CustomTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div style={{
+      background: "#1e293b", border: "1px solid #334155",
+      borderRadius: 8, padding: "10px 12px", fontSize: 12,
+    }}>
+      {payload.map((e: any) => (
+        <p key={e.dataKey} style={{ color: e.color, margin: "2px 0" }}>
+          {e.name}: <strong>{e.name.includes("Quantidade") ? e.value : `R$ ${e.value?.toLocaleString('pt-BR')}`}</strong>
+        </p>
+      ))}
+    </div>
+  )
+}
+
+export const MateriaisDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) => {
+  const [summary, setSummary] = useState<Summary | null>(null)
+  const [materiais, setMateriais] = useState<Material[]>([])
+  const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
+  const [categorias, setCategorias] = useState<Categoria[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<"summary" | "comparison" | "analysis">("summary")
-  const modal = useExplainerModal()
+  const [filterCategoria, setFilterCategoria] = useState<string>("all")
 
   useEffect(() => {
     const load = async () => {
+      setLoading(true)
+      setError(null)
       try {
-        setLoading(true)
-        const res = await fetch(`${API}/materiais/analysis/${sessionId}`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json()
-
-        setKpi(data.kpi)
-        setSupplierChart(data.supplierChart || [])
-        setTypeChart(data.typeChart || [])
-        setComparison(data.comparison || [])
-        setError(null)
+        const analysisRes = await fetch(`${API}/api/templates/materiais/analysis/${sessionId}`).then(r => r.json())
+        setSummary(analysisRes.summary)
+        setMateriais(analysisRes.materiais || [])
+        setFornecedores(analysisRes.fornecedores || [])
+        setCategorias(analysisRes.categorias || [])
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Unknown error")
-        console.error("Materiais dashboard error:", err)
+        setError(`Erro ao carregar dados: ${err instanceof Error ? err.message : 'Erro desconhecido'}`)
       } finally {
         setLoading(false)
       }
@@ -79,423 +90,165 @@ export function MateriaisDashboard({ sessionId }: MateriaisDashboardProps) {
 
   if (loading) {
     return (
-      <div style={{ padding: "24px", textAlign: "center" }}>
-        <p style={{ color: "#94a3b8", fontSize: "14px" }}>⏳ Carregando análise de Materiais...</p>
-      </div>
+      <DashboardLayout title="Carregando..." description="Aguarde...">
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "300px" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ width: 40, height: 40, borderRadius: "50%", border: "3px solid #334155", borderTopColor: "#4f8ef7", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
+            <p style={{ color: "#94a3b8" }}>Carregando dados de Materiais...</p>
+          </div>
+        </div>
+      </DashboardLayout>
     )
   }
 
-  if (error || !kpi) {
+  if (error) {
     return (
-      <div style={{ padding: "24px", textAlign: "center" }}>
-        <p style={{ color: "#ef4444", fontSize: "14px" }}>❌ Erro ao carregar dashboard: {error}</p>
-      </div>
+      <DashboardLayout title="Erro">
+        <Card>
+          <div style={{ padding: "16px", backgroundColor: "rgba(248, 113, 113, 0.1)", border: "1px solid rgba(248, 113, 113, 0.3)", borderRadius: "8px", color: "#fca5a5" }}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>⚠️ {error}</div>
+          </div>
+        </Card>
+      </DashboardLayout>
     )
   }
+
+  if (!summary || materiais.length === 0) {
+    return (
+      <DashboardLayout title="Nenhum dado de Materiais" description="Estrutura não detectada">
+        <Card>
+          <div style={{ textAlign: "center", padding: "48px 32px" }}>
+            <div style={{ fontSize: "48px", marginBottom: "16px" }}>📦</div>
+            <h3 style={{ fontSize: "20px", fontWeight: "600", color: "#f1f5f9", marginBottom: "12px" }}>
+              Nenhum dado de Materiais disponível
+            </h3>
+            <p style={{ color: "#94a3b8", fontSize: "14px", lineHeight: "1.6", marginBottom: "16px" }}>
+              O arquivo carregado não possui a estrutura esperada de "Gestão de Materiais".
+            </p>
+          </div>
+        </Card>
+      </DashboardLayout>
+    )
+  }
+
+  const filteredMateriais = filterCategoria === "all" ? materiais : materiais.filter(m => m.categoria === filterCategoria)
+  const allCategorias = ["all", ...Array.from(new Set(materiais.map(m => m.categoria)))]
 
   return (
-    <div style={{
-      padding: "24px",
-      backgroundColor: "#0f172a",
-      borderRadius: "16px",
-      color: "#f1f5f9",
-      minHeight: "calc(100vh - 120px)",
-      animation: "fadeIn 0.6s ease-in"
-    }}>
-      {/* Header */}
-      <div style={{
-        marginBottom: "32px",
-        paddingBottom: "24px",
-        borderBottom: "2px solid #1e293b"
-      }}>
-        <h2 style={{
-          margin: "0 0 8px 0",
-          fontSize: "28px",
-          fontWeight: "700",
-          color: "#f1f5f9",
-          background: "linear-gradient(135deg, #34c97e 0%, #06b6d4 100%)",
-          backgroundClip: "text",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent"
-        }}>
-          💰 Mapa de Concorrência
-        </h2>
-        <p style={{ margin: "0", fontSize: "13px", color: "#94a3b8" }}>
-          Análise Completa de Materiais e Fornecedores
-        </p>
-      </div>
-
-      {/* KPI Cards - Enhanced */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-        gap: "16px",
-        marginBottom: "32px"
-      }}>
-        {[
-          {
-            icon: "📦",
-            label: "Total Itens",
-            value: kpi.items,
-            color: "#4f8ef7",
-            gradient: "linear-gradient(135deg, #4f8ef7 0%, #3b82f6 100%)",
-            onClickExplainer: () => modal.open({
-              title: "Total Itens",
-              definition: "Quantidade total de materiais únicos cadastrados na análise.",
-              calculation: "COUNT(DISTINCT item_id)",
-              value: kpi.items,
-              source: "Dados de Materiais",
-              details: { "Itens cadastrados": kpi.items }
-            })
-          },
-          {
-            icon: "🏢",
-            label: "Fornecedores",
-            value: kpi.suppliers,
-            color: "#f5a623",
-            gradient: "linear-gradient(135deg, #f5a623 0%, #f97316 100%)",
-            onClickExplainer: () => modal.open({
-              title: "Total Fornecedores",
-              definition: "Número de fornecedores distintos que oferecem esses materiais.",
-              calculation: "COUNT(DISTINCT supplier_id)",
-              value: kpi.suppliers,
-              source: "Dados de Fornecedores",
-              details: { "Fornecedores ativos": kpi.suppliers }
-            })
-          },
-          {
-            icon: "🏆",
-            label: "Menor Preço",
-            value: `R$ ${kpi.minPrice.toLocaleString("pt-BR")}`,
-            supplier: kpi.supplier,
-            color: "#34c97e",
-            gradient: "linear-gradient(135deg, #34c97e 0%, #10b981 100%)",
-            onClickExplainer: () => modal.open({
-              title: "Menor Preço por Item",
-              definition: "Valor mínimo encontrado entre todos os itens e fornecedores.",
-              calculation: "MIN(price) per item",
-              value: `R$ ${kpi.minPrice.toLocaleString("pt-BR")}`,
-              source: "Comparação de Preços",
-              details: {
-                "Menor preço": `R$ ${kpi.minPrice.toLocaleString("pt-BR")}`,
-                "Fornecedor": kpi.supplier
-              }
-            })
-          },
-          {
-            icon: "💵",
-            label: "Valor Total",
-            value: `R$ ${kpi.totalValue.toLocaleString("pt-BR")}`,
-            color: "#a78bfa",
-            gradient: "linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%)",
-            onClickExplainer: () => modal.open({
-              title: "Valor Total",
-              definition: "Soma de todos os valores de materiais (quantidade × preço unitário).",
-              calculation: "SUM(quantity × unit_price)",
-              value: `R$ ${kpi.totalValue.toLocaleString("pt-BR")}`,
-              source: "Consolidação de Materiais",
-              details: { "Valor consolidado": `R$ ${kpi.totalValue.toLocaleString("pt-BR")}` }
-            })
-          },
-          {
-            icon: "🔧",
-            label: "Serviços",
-            value: kpi.services,
-            color: "#06b6d4",
-            gradient: "linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)",
-            onClickExplainer: () => modal.open({
-              title: "Itens de Serviço",
-              definition: "Quantidade de itens classificados como serviços (não-produtos).",
-              calculation: "COUNT(*) WHERE type = 'Serviço'",
-              value: kpi.services,
-              source: "Classificação de Materiais",
-              details: { "Serviços": kpi.services, "Percentual": `${((kpi.services / kpi.items) * 100).toFixed(1)}%` }
-            })
-          },
-          {
-            icon: "📋",
-            label: "Insumos",
-            value: kpi.inputs,
-            color: "#ec4899",
-            gradient: "linear-gradient(135deg, #ec4899 0%, #db2777 100%)",
-            onClickExplainer: () => modal.open({
-              title: "Itens de Insumo",
-              definition: "Quantidade de itens classificados como insumos/produtos.",
-              calculation: "COUNT(*) WHERE type = 'Insumo'",
-              value: kpi.inputs,
-              source: "Classificação de Materiais",
-              details: { "Insumos": kpi.inputs, "Percentual": `${((kpi.inputs / kpi.items) * 100).toFixed(1)}%` }
-            })
-          },
-        ].map((card, idx) => (
-          <div key={idx} 
-            onClick={card.onClickExplainer}
-            style={{
-              background: card.gradient,
-              borderRadius: "12px",
-              padding: "20px",
-              boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
-              transition: "all 0.3s ease",
-              cursor: "pointer",
-              border: "1px solid rgba(255,255,255,0.1)",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-4px)"
-              e.currentTarget.style.boxShadow = "0 15px 40px rgba(0,0,0,0.3)"
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0)"
-              e.currentTarget.style.boxShadow = "0 10px 30px rgba(0,0,0,0.2)"
-            }}>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>{card.icon}</div>
-            <p style={{ margin: "0 0 4px 0", fontSize: "12px", color: "rgba(255,255,255,0.8)", fontWeight: "600" }}>
-              {card.label}
-            </p>
-            <p style={{ margin: "0", fontSize: "20px", fontWeight: "700", color: "#fff" }}>
-              {card.value}
-            </p>
-            {card.supplier && (
-              <p style={{ margin: "4px 0 0 0", fontSize: "11px", color: "rgba(255,255,255,0.7)" }}>
-                {card.supplier}
-              </p>
-            )}
-            <p style={{ margin: "8px 0 0 0", fontSize: "10px", color: "rgba(255,255,255,0.6)", fontStyle: "italic" }}>
-              Clique para detalhes ➜
-            </p>
-          </div>
-        ))}
-      </div>
-
-      {/* Modal */}
-      {modal.content && (
-        <ExplainerModal
-          isOpen={modal.isOpen}
-          onClose={modal.close}
-          content={modal.content}
+    <DashboardLayout
+      title="📦 Gestão de Materiais"
+      description={`${summary?.unique_materiais} materiais • ${summary?.unique_fornecedores} fornecedores`}
+    >
+      {/* KPIs */}
+      <Card>
+        <KPIGrid
+          items={[
+            { label: "Total Quantidade", value: summary?.total_quantidade, icon: "📊" },
+            { label: "Total Valor", value: `R$ ${(summary.total_valor / 1000).toFixed(1)}K`, icon: "💰" },
+            { label: "Fornecedores", value: summary?.unique_fornecedores, icon: "🏢" },
+            { label: "Valor Médio Unit.", value: `R$ ${summary?.media_valor_unitario.toFixed(2)}`, icon: "🏷️" },
+          ]}
         />
-      )}
+      </Card>
 
-      {/* Tab Navigation */}
-      <div style={{
-        display: "flex",
-        gap: "0",
-        marginBottom: "24px",
-        borderBottom: "1px solid #334155",
-        borderRadius: "8px 8px 0 0",
-        backgroundColor: "#1e293b"
-      }}>
-        {["summary", "comparison", "analysis"].map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab as any)}
+      {/* Fornecedores Chart */}
+      <Card title="🏢 Distribuição por Fornecedor" description={`${fornecedores.length} fornecedores`}>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={fornecedores.slice(0, 10)} margin={{ top: 5, right: 30, left: 0, bottom: 60 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+            <XAxis dataKey="fornecedor" angle={-45} textAnchor="end" height={100} tick={{ fill: "#94a3b8", fontSize: 10 }} />
+            <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
+            <Tooltip content={<CustomTooltip />} />
+            <Bar dataKey="total_valor" fill="#4f8ef7" radius={[8, 8, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      {/* Categorias Pie */}
+      <Card title="📂 Distribuição por Categoria">
+        <ResponsiveContainer width="100%" height={300}>
+          <PieChart>
+            <Pie
+              data={categorias}
+              dataKey="total_valor"
+              nameKey="categoria"
+              cx="50%"
+              cy="50%"
+              outerRadius={100}
+              label={({ categoria, total_valor }) => `${categoria}: R$ ${(total_valor / 1000).toFixed(0)}K`}
+            >
+              {categorias.map((_, index) => (
+                <Cell key={index} fill={COLORS[index % COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip />
+          </PieChart>
+        </ResponsiveContainer>
+      </Card>
+
+      {/* Materials Table */}
+      <Card title="📋 Relação de Materiais" description={`${filteredMateriais.length} itens`}>
+        <div style={{ marginBottom: "16px" }}>
+          <select
+            value={filterCategoria}
+            onChange={e => setFilterCategoria(e.target.value)}
             style={{
-              flex: 1,
-              padding: "12px 16px",
-              background: activeTab === tab ? "linear-gradient(135deg, #34c97e 0%, #10b981 100%)" : "transparent",
-              color: activeTab === tab ? "#fff" : "#94a3b8",
-              border: "none",
-              borderBottom: activeTab === tab ? "3px solid #34c97e" : "1px solid transparent",
-              cursor: "pointer",
-              fontWeight: activeTab === tab ? "700" : "600",
-              fontSize: "14px",
-              transition: "all 0.3s ease",
-              textTransform: "capitalize"
+              padding: "8px 12px",
+              backgroundColor: "#0f172a",
+              color: "#e2e8f0",
+              border: "1px solid #334155",
+              borderRadius: "6px",
+              fontSize: "13px",
+              cursor: "pointer"
             }}
           >
-            {tab === "summary" && "📊 Resumo"}
-            {tab === "comparison" && "🔄 Comparativo"}
-            {tab === "analysis" && "📈 Análise"}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Content */}
-      {activeTab === "summary" && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "24px",
-          marginBottom: "24px"
-        }}>
-          {/* Supplier Price Chart */}
-          <div style={{
-            backgroundColor: "#1e293b",
-            borderRadius: "12px",
-            padding: "20px",
-            border: "1px solid #334155",
-            boxShadow: "0 4px 15px rgba(0,0,0,0.2)"
-          }}>
-            <h3 style={{
-              margin: "0 0 16px 0",
-              fontSize: "16px",
-              fontWeight: "700",
-              color: "#f1f5f9"
-            }}>
-              📊 Preço Total por Fornecedor
-            </h3>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={supplierChart}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="name" stroke="#94a3b8" style={{ fontSize: "12px" }} />
-                <YAxis stroke="#94a3b8" style={{ fontSize: "12px" }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#0f172a",
-                    border: "1px solid #334155",
-                    borderRadius: "8px",
-                    color: "#f1f5f9"
-                  }}
-                  formatter={(value) => `R$ ${value.toLocaleString("pt-BR")}`}
-                />
-                <Bar dataKey="value" fill={WINNER_COLOR} radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Type Distribution Chart */}
-          <div style={{
-            backgroundColor: "#1e293b",
-            borderRadius: "12px",
-            padding: "20px",
-            border: "1px solid #334155",
-            boxShadow: "0 4px 15px rgba(0,0,0,0.2)"
-          }}>
-            <h3 style={{
-              margin: "0 0 16px 0",
-              fontSize: "16px",
-              fontWeight: "700",
-              color: "#f1f5f9"
-            }}>
-              🔧 Distribuição por Tipo
-            </h3>
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie
-                  data={typeChart}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, value }) => `${name}: ${value}`}
-                  outerRadius={90}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {typeChart.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => value} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
+            {allCategorias.map(cat => (
+              <option key={cat} value={cat}>
+                {cat === "all" ? `Todas categorias (${materiais.length})` : cat}
+              </option>
+            ))}
+          </select>
         </div>
-      )}
 
-      {activeTab === "comparison" && (
-        <div style={{
-          backgroundColor: "#1e293b",
-          borderRadius: "12px",
-          padding: "20px",
-          border: "1px solid #334155",
-          boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
-          overflowX: "auto"
-        }}>
-          <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", fontWeight: "700", color: "#f1f5f9" }}>
-            🔄 Comparativo de Preços — Item × Fornecedor
-          </h3>
-          <p style={{ margin: "0 0 16px 0", fontSize: "12px", color: "#94a3b8" }}>
-            Células verdes = menor preço para o item
-          </p>
-          <table style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            fontSize: "13px"
-          }}>
-            <thead>
-              <tr style={{ borderBottom: "2px solid #334155" }}>
-                <th style={{ textAlign: "left", padding: "12px", color: "#f1f5f9", fontWeight: "700" }}>#</th>
-                <th style={{ textAlign: "left", padding: "12px", color: "#f1f5f9", fontWeight: "700" }}>Descrição</th>
-                <th style={{ textAlign: "center", padding: "12px", color: "#f1f5f9", fontWeight: "700" }}>Qtd</th>
-                <th style={{ textAlign: "center", padding: "12px", color: "#f1f5f9", fontWeight: "700" }}>Tipo</th>
-                {Object.keys(comparison[0]?.prices || {}).map((supplier) => (
-                  <th key={supplier} style={{ textAlign: "right", padding: "12px", color: "#f1f5f9", fontWeight: "700" }}>
-                    {supplier}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {comparison.map((item, idx) => {
-                const minPrice = Math.min(...Object.values(item.prices))
-                return (
-                  <tr key={idx} style={{
-                    borderBottom: "1px solid #334155",
-                    backgroundColor: idx % 2 === 0 ? "#0f172a" : "transparent"
-                  }}>
-                    <td style={{ padding: "12px", color: "#94a3b8" }}>{idx + 1}</td>
-                    <td style={{ padding: "12px", color: "#f1f5f9" }}>
-                      <span title={item.item}>{item.item.substring(0, 40)}...</span>
-                    </td>
-                    <td style={{ textAlign: "center", padding: "12px", color: "#f1f5f9" }}>{item.quantity}</td>
-                    <td style={{ textAlign: "center", padding: "12px", color: "#f1f5f9" }}>{item.type}</td>
-                    {Object.entries(item.prices).map(([supplier, price]) => (
-                      <td
-                        key={`${idx}-${supplier}`}
-                        style={{
-                          textAlign: "right",
-                          padding: "12px",
-                          backgroundColor: price === minPrice ? "rgba(52, 201, 126, 0.1)" : "transparent",
-                          color: price === minPrice ? "#34c97e" : "#f1f5f9",
-                          fontWeight: price === minPrice ? "700" : "400"
-                        }}
-                      >
-                        R$ {price.toLocaleString("pt-BR")}
-                      </td>
-                    ))}
+        {filteredMateriais.length === 0 ? (
+          <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8" }}>
+            Nenhum material encontrado para a categoria selecionada
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+              <thead>
+                <tr style={{ backgroundColor: "rgba(79, 142, 247, 0.05)", borderBottom: "2px solid #334155" }}>
+                  <th style={{ padding: "12px", textAlign: "left", fontWeight: "600", color: "#94a3b8" }}>Material</th>
+                  <th style={{ padding: "12px", textAlign: "right", fontWeight: "600", color: "#94a3b8" }}>Quantidade</th>
+                  <th style={{ padding: "12px", textAlign: "right", fontWeight: "600", color: "#94a3b8" }}>Valor Unit.</th>
+                  <th style={{ padding: "12px", textAlign: "right", fontWeight: "600", color: "#94a3b8" }}>Total</th>
+                  <th style={{ padding: "12px", textAlign: "left", fontWeight: "600", color: "#94a3b8" }}>Fornecedor</th>
+                  <th style={{ padding: "12px", textAlign: "left", fontWeight: "600", color: "#94a3b8" }}>Categoria</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredMateriais.slice(0, 50).map((mat, idx) => (
+                  <tr key={idx} style={{ borderBottom: "1px solid #334155", backgroundColor: idx % 2 === 0 ? "transparent" : "rgba(30, 41, 59, 0.3)" }}>
+                    <td style={{ padding: "12px", color: "#cbd5e1" }}>{mat.material}</td>
+                    <td style={{ padding: "12px", textAlign: "right", color: "#4f8ef7", fontWeight: "600" }}>{mat.quantidade}</td>
+                    <td style={{ padding: "12px", textAlign: "right", color: "#34c97e" }}>R$ {mat.valor_unitario.toFixed(2)}</td>
+                    <td style={{ padding: "12px", textAlign: "right", color: "#f5a623", fontWeight: "600" }}>R$ {mat.valor_total.toLocaleString('pt-BR')}</td>
+                    <td style={{ padding: "12px", color: "#cbd5e1" }}>{mat.fornecedor}</td>
+                    <td style={{ padding: "12px", color: "#cbd5e1" }}>{mat.categoria}</td>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {activeTab === "analysis" && (
-        <div style={{
-          backgroundColor: "#1e293b",
-          borderRadius: "12px",
-          padding: "20px",
-          border: "1px solid #334155",
-          boxShadow: "0 4px 15px rgba(0,0,0,0.2)"
-        }}>
-          <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", fontWeight: "700", color: "#f1f5f9" }}>
-            📈 Análise Detalhada
-          </h3>
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "16px"
-          }}>
-            <div style={{ padding: "12px", backgroundColor: "rgba(52, 201, 126, 0.1)", borderRadius: "8px", border: "1px solid rgba(52, 201, 126, 0.3)" }}>
-              <p style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#94a3b8" }}>Maior Fornecedor</p>
-              <p style={{ margin: "0", fontSize: "16px", fontWeight: "700", color: "#34c97e" }}>{kpi.supplier}</p>
-            </div>
-            <div style={{ padding: "12px", backgroundColor: "rgba(79, 142, 247, 0.1)", borderRadius: "8px", border: "1px solid rgba(79, 142, 247, 0.3)" }}>
-              <p style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#94a3b8" }}>Razão Serviços/Insumos</p>
-              <p style={{ margin: "0", fontSize: "16px", fontWeight: "700", color: "#4f8ef7" }}>
-                {kpi.inputs > 0 ? (kpi.services / kpi.inputs).toFixed(2) : "∞"} : 1
-              </p>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        )}
+      </Card>
 
       <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
+        @keyframes spin {
+          to { transform: rotate(360deg) }
         }
       `}</style>
-    </div>
+    </DashboardLayout>
   )
 }
