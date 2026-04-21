@@ -1,3 +1,5 @@
+import json as _json
+
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from ..session import create_session, get_session
 from ..services.parser import load_dataframe, get_col_types
@@ -8,6 +10,11 @@ from ..services.orcamento_template import detect_orcamento_file
 from ..services.orcamento_parser import parse_orcamento_file
 from ..services.materiais_template import detect_materiais_file
 from ..services.mapa_concorrencia_parser import MapaConcorrenciaParser
+
+
+def _safe_preview(df):
+    """Return preview records with NaN/inf replaced by None (JSON null)."""
+    return _json.loads(df.head(10).to_json(orient="records", default_handler=str, force_ascii=False))
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -85,8 +92,8 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(422, f"Erro ao processar arquivo: {e}")
 
-    # Get column types
-    col_types = get_col_types(df)
+    # Get column types (ensure keys are plain Python str, not numpy.str_)
+    col_types = {str(k): v for k, v in get_col_types(df).items()}
 
     session_id = create_session(df, template_type=template_type)
     session = get_session(session_id)
@@ -96,10 +103,10 @@ async def upload_file(file: UploadFile = File(...)):
     return {
         "session_id": session_id,
         "filename": file.filename,
-        "rows": len(df),
-        "columns": len(df.columns),
+        "rows": int(len(df)),
+        "columns": int(len(df.columns)),
         "col_types": col_types,
         "available_sheets": available_sheets or {},
         "template": template_type,
-        "preview": df.head(10).astype(str).to_dict(orient="records"),
+        "preview": _safe_preview(df),
     }

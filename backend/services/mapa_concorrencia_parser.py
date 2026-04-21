@@ -225,11 +225,12 @@ class MapaConcorrenciaParser:
         df.columns = normalized_cols
         
         # Convert numeric columns
+        import numpy as np
         numeric_patterns = ["quant", "preço", "preco", "valor", "total", "item"]
         for col in df.columns:
             col_lower = col.lower()
             if any(pattern in col_lower for pattern in numeric_patterns):
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+                df[col] = pd.to_numeric(df[col], errors='coerce').replace([np.inf, -np.inf], np.nan)
         
         return df.reset_index(drop=True)
     
