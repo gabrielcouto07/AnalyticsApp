@@ -164,19 +164,39 @@ ORCAMENTO_DETECTION_KEYWORDS = {
 def detect_orcamento_file(file_bytes: bytes, filename: str) -> bool:
     """
     Detect if a file is a Mapa de Concorrência spreadsheet.
-    Checks row 2 for "MAPA DE CONCORRÊNCIA" and row 6/13 for structural markers.
+    First checks filename, then structural cell markers.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    name_lower = filename.lower()
+    for src, dst in [("ç", "c"), ("ã", "a"), ("á", "a"), ("é", "e"), ("ê", "e"), ("ó", "o"), ("ú", "u")]:
+        name_lower = name_lower.replace(src, dst)
+
+    # Filename heuristic
+    if any(kw in name_lower for kw in ["orcamento", "mapa", "concorr"]):
+        logger.info(f"[orcamento_detect] {filename} — matched by filename")
+        return True
+
     try:
         import openpyxl
         from io import BytesIO
         wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
         ws = wb[wb.sheetnames[0]]
 
-        # Row 2: title
-        for col in range(1, 5):
+        # Row 2: title (check cols 1-6 for wider layouts)
+        for col in range(1, 7):
             v = str(ws.cell(row=2, column=col).value or "").upper()
             if "MAPA" in v and "CONCORR" in v:
                 wb.close()
+                return True
+
+        # Row 6: FORNECEDOR (extended to 30 cols)
+        for col in range(1, 31):
+            v = str(ws.cell(row=6, column=col).value or "").upper()
+            if "FORNECEDOR" in v:
+                wb.close()
+                logger.info(f"[orcamento_detect] {filename} — matched FORNECEDOR at row6 col{col}")
                 return True
 
         # Row 13: ITEM header
@@ -185,16 +205,18 @@ def detect_orcamento_file(file_bytes: bytes, filename: str) -> bool:
             wb.close()
             return True
 
-        # Row 6: FORNECEDOR
-        for col in range(1, 22):
-            v = str(ws.cell(row=6, column=col).value or "").upper()
-            if "FORNECEDOR" in v:
-                wb.close()
-                return True
+        # Wider scan: rows 1-20 for MAPA + CONCORR anywhere
+        for row in range(1, 21):
+            for col in range(1, 6):
+                v = str(ws.cell(row=row, column=col).value or "").upper()
+                if "MAPA" in v and "CONCORR" in v:
+                    wb.close()
+                    logger.info(f"[orcamento_detect] {filename} — matched MAPA CONCORR at row{row} col{col}")
+                    return True
 
         wb.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(f"[orcamento_detect] {filename} — exception: {exc}")
     return False
 
 

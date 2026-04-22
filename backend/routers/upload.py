@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api", tags=["upload"])
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    allowed = {".xlsx", ".xls", ".csv", ".txt", ".json", ".pdf", ".sql", ".docx"}
+    allowed = {".xlsx", ".xls", ".xlsm", ".csv", ".txt", ".json", ".pdf", ".sql", ".docx"}
     ext = "." + file.filename.split(".")[-1].lower()
 
     if ext not in allowed:
@@ -30,7 +30,7 @@ async def upload_file(file: UploadFile = File(...)):
     try:
         content = await file.read()
 
-        if ext in {".xlsx", ".xls"}:
+        if ext in {".xlsx", ".xls", ".xlsm"}:
             # 1) Check Efetivo layout
             is_efetivo = detect_efetivo_file(content, file.filename)
             print(f"[UPLOAD DEBUG] Efetivo detection for '{file.filename}': {is_efetivo}")
