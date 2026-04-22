@@ -2,7 +2,7 @@
 echo.
 echo ========================================
 echo  Starting Analytics Dashboard Backend
-echo  FastAPI on http://localhost:8000
+echo  FastAPI on http://localhost:8001
 echo ========================================
 echo.
 
@@ -20,7 +20,7 @@ pip install -r requirements.txt -q
 
 echo.
 echo Starting FastAPI server...
-echo API Docs: http://localhost:8000/docs
+echo API Docs: http://localhost:8001/docs
 echo.
 
-python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8001
