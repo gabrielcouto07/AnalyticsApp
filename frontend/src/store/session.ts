@@ -64,6 +64,7 @@ setSession: (payload: {
   rows: number;
   columns: number;
   col_types: Record<string, string>;
+  template?: string | null;
 }) => void;
 setSemanticData: (semanticData: SemanticData | null) => void;
 setKpis: (kpis: KpiData[]) => void;
@@ -129,20 +130,21 @@ suggestedTemplates: [],
 setSession: (payload) => {
   const { numeric, date, categorical } = classifyCols(payload.col_types);
   set({
-    sessionId:       payload.session_id,
-    filename:        payload.filename,
-    rowCount:        payload.rows,
-    colCount:        payload.columns,
-    colTypes:        payload.col_types,
-    numericCols:     numeric,
-    dateCols:        date,
-    categoricalCols: categorical,
+    sessionId:        payload.session_id,
+    filename:         payload.filename,
+    rowCount:         payload.rows,
+    colCount:         payload.columns,
+    colTypes:         payload.col_types,
+    numericCols:      numeric,
+    dateCols:         date,
+    categoricalCols:  categorical,
+    selectedTemplate: payload.template ?? null,
     // Reset dependent state
-    kpis:            [],
-    quality:         [],
-    stats:           {},
-    insights:        [],
-    activeFilters:   initialFilters,
+    kpis:             [],
+    quality:          [],
+    stats:            {},
+    insights:         [],
+    activeFilters:    initialFilters,
     filteredRowCount: null,
   });
 },

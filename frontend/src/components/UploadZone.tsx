@@ -23,6 +23,7 @@ export function UploadZone() {
         rows: upload.rows,
         columns: upload.columns,
         col_types: upload.col_types,
+        template: upload.template ?? null,
       })
 
       const [kpisData, qualityData, statsData, semanticData] = await Promise.all([
@@ -76,7 +77,7 @@ export function UploadZone() {
       <input
         type="file"
         style={{ display: "none" }}
-        accept=".xlsx,.xls,.csv,.txt,.json"
+        accept=".xlsx,.xls,.xlsm,.csv,.txt,.json"
         onChange={e => e.target.files?.[0] && handle(e.target.files[0])}
       />
       
@@ -119,7 +120,7 @@ export function UploadZone() {
         flexWrap: "wrap",
         marginBottom: "8px"
       }}>
-        {["Excel", "CSV", "JSON"].map(fmt => (
+        {["XLSX", "XLSM", "CSV", "JSON"].map(fmt => (
           <span
             key={fmt}
             style={{

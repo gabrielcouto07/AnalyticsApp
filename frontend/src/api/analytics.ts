@@ -9,6 +9,7 @@ rows: number;
 columns: number;
 col_types: Record<string, string>;
 preview: Record<string, unknown>[];
+template: string | null;
 }
 
 export interface KpiData {
