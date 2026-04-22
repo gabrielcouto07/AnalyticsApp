@@ -8,8 +8,6 @@ from ..services.efetivo_template import detect_efetivo_file
 from ..services.efetivo_parser import parse_efetivo_file
 from ..services.orcamento_template import detect_orcamento_file
 from ..services.orcamento_parser import parse_orcamento_file
-from ..services.materiais_template import detect_materiais_file
-from ..services.mapa_concorrencia_parser import MapaConcorrenciaParser
 from ..services.custos_template import detect_custos_file
 from ..services.custos_parser import parse_custos_file
 
@@ -60,25 +58,7 @@ async def upload_file(file: UploadFile = File(...)):
                     print(f"[UPLOAD ERROR] Efetivo parsing failed: {e}")
                     raise
 
-            # 2) Check Materiais (Mapa de Concorrência) layout BEFORE Orcamento
-            elif detect_materiais_file(content, file.filename):
-                try:
-                    print(f"[UPLOAD DEBUG] Materiais detection successful for '{file.filename}'")
-                    # Use specialized Mapa de Concorrência parser
-                    parser = MapaConcorrenciaParser(content, file.filename)
-                    df, metadata = parser.parse()
-                    print(f"[UPLOAD DEBUG] Materiais parsed: shape={df.shape}, metadata={metadata}")
-                    if df.empty:
-                        raise HTTPException(422, "Materiais file parsed but returned no records")
-                    template_type = "materiais"
-                    available_sheets = {}
-                except Exception as e:
-                    print(f"[UPLOAD ERROR] Materiais parsing failed: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    raise
-
-            # 3) Check Orçamento (Mapa de Concorrência) layout
+            # 2) Check Orçamento (Mapa de Concorrência) layout
             elif detect_orcamento_file(content, file.filename):
                 try:
                     result = parse_orcamento_file(content, file.filename)
