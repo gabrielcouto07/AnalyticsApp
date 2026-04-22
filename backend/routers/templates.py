@@ -16,7 +16,8 @@ from ..services.nf_analyzer import NFAnalyzer
 from ..services.semantic import SemanticAnalyzer
 from ..services.efetivo_analyzer import EfetivoAnalyzer
 from ..services.orcamento_analyzer import OrcamentoAnalyzer
-from ..session import get_active_df
+from ..services.custos_analyzer import CustosAnalyzer
+from ..session import get_active_df, get_session_extra
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
 
@@ -578,3 +579,63 @@ async def get_materiais_analysis(session_id: str) -> Dict[str, Any]:
         logger_err.error(f"Materiais analysis error: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Materiais analysis error: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CUSTOS (CONTROLE DE CUSTOS CONSOLIDADOS) ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/custos/analysis/{session_id}")
+async def get_custos_analysis(session_id: str) -> Dict[str, Any]:
+    """Full consolidated report from both NFs and Consolidado sheets."""
+    df_nfs = get_active_df(session_id)
+    if df_nfs is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    df_cons = get_session_extra(session_id, "consolidado")
+    meta = get_session_extra(session_id, "custos_meta") or {}
+    if df_cons is None:
+        import pandas as pd
+        df_cons = pd.DataFrame()
+    try:
+        return CustosAnalyzer(df_nfs, df_cons, meta).get_consolidated_report()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Custos analysis error: {str(e)}")
+
+
+@router.get("/custos/summary/{session_id}")
+async def get_custos_summary(session_id: str) -> Dict[str, Any]:
+    df_nfs = get_active_df(session_id)
+    if df_nfs is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    df_cons = get_session_extra(session_id, "consolidado")
+    meta = get_session_extra(session_id, "custos_meta") or {}
+    import pandas as pd
+    return CustosAnalyzer(df_nfs, df_cons if df_cons is not None else pd.DataFrame(), meta).get_summary()
+
+
+@router.get("/custos/fornecedor-ranking/{session_id}")
+async def get_custos_fornecedor_ranking(session_id: str, limit: int = Query(20, ge=1, le=100)) -> List[Dict[str, Any]]:
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    import pandas as pd
+    return CustosAnalyzer(df, pd.DataFrame()).get_fornecedor_ranking(limit)
+
+
+@router.get("/custos/top-nfs/{session_id}")
+async def get_custos_top_nfs(session_id: str, limit: int = Query(20, ge=1, le=100)) -> List[Dict[str, Any]]:
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    import pandas as pd
+    return CustosAnalyzer(df, pd.DataFrame()).get_top_nfs(limit)
+
+
+@router.get("/custos/consolidado-detail/{session_id}")
+async def get_custos_consolidado_detail(session_id: str) -> List[Dict[str, Any]]:
+    df_nfs = get_active_df(session_id)
+    if df_nfs is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    df_cons = get_session_extra(session_id, "consolidado")
+    import pandas as pd
+    return CustosAnalyzer(df_nfs, df_cons if df_cons is not None else pd.DataFrame()).get_consolidado_detail()

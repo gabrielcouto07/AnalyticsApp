@@ -12,15 +12,28 @@ class Session:
     cache_invalidated: bool = False  # Flag para invalidar cache de charts
     audit: Any = None  # AuditTrail opcional associado à sessão
     template_type: Optional[str] = None  # e.g. "efetivo" for custom-parsed files
+    extras: dict[str, Any] = field(default_factory=dict)  # e.g. {"consolidado": df, "custos_meta": {...}}
 
 
 _sessions: dict[str, Session] = {}
 
 
-def create_session(df: pd.DataFrame, template_type: Optional[str] = None) -> str:
+def create_session(df: pd.DataFrame, template_type: Optional[str] = None, extras: dict = None) -> str:
     session_id = str(uuid.uuid4())
-    _sessions[session_id] = Session(df=df.copy(), template_type=template_type)
+    _sessions[session_id] = Session(
+        df=df.copy(),
+        template_type=template_type,
+        extras=extras or {},
+    )
     return session_id
+
+
+def get_session_extra(session_id: str, key: str) -> Any:
+    """Retrieve an extra stored value (e.g. consolidado DataFrame)."""
+    session = _sessions.get(session_id)
+    if session is None:
+        return None
+    return session.extras.get(key)
 
 
 def get_session(session_id: str) -> Optional[Session]:

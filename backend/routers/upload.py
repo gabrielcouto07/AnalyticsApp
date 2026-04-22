@@ -10,6 +10,8 @@ from ..services.orcamento_template import detect_orcamento_file
 from ..services.orcamento_parser import parse_orcamento_file
 from ..services.materiais_template import detect_materiais_file
 from ..services.mapa_concorrencia_parser import MapaConcorrenciaParser
+from ..services.custos_template import detect_custos_file
+from ..services.custos_parser import parse_custos_file
 
 
 def _safe_preview(df):
@@ -29,12 +31,24 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         content = await file.read()
+        custos_result = None
 
         if ext in {".xlsx", ".xls", ".xlsm"}:
+            # 0) Check Custos layout FIRST (most specific — looks for NF + CONSOLIDADO sheets)
+            if detect_custos_file(content, file.filename):
+                print(f"[UPLOAD DEBUG] Custos detection successful for '{file.filename}'")
+                custos_result = parse_custos_file(content, file.filename)
+                df = custos_result["nfs"]
+                if df.empty:
+                    df = custos_result["consolidado"]
+                if df.empty:
+                    raise HTTPException(422, "Custos file parsed but returned no records")
+                template_type = "custos"
+                available_sheets = {}
+
             # 1) Check Efetivo layout
-            is_efetivo = detect_efetivo_file(content, file.filename)
-            print(f"[UPLOAD DEBUG] Efetivo detection for '{file.filename}': {is_efetivo}")
-            if is_efetivo:
+            elif (is_efetivo := detect_efetivo_file(content, file.filename)):
+                print(f"[UPLOAD DEBUG] Efetivo detection for '{file.filename}': {is_efetivo}")
                 try:
                     df = parse_efetivo_file(content, file.filename)
                     print(f"[UPLOAD DEBUG] Efetivo parsed: shape={df.shape}, empty={df.empty}")
@@ -95,7 +109,12 @@ async def upload_file(file: UploadFile = File(...)):
     # Get column types (ensure keys are plain Python str, not numpy.str_)
     col_types = {str(k): v for k, v in get_col_types(df).items()}
 
-    session_id = create_session(df, template_type=template_type)
+    extras = {}
+    if template_type == "custos" and custos_result is not None:
+        extras["consolidado"] = custos_result["consolidado"]
+        extras["custos_meta"] = custos_result["meta"]
+
+    session_id = create_session(df, template_type=template_type, extras=extras)
     session = get_session(session_id)
     if session is not None:
         calculate_kpis(df)

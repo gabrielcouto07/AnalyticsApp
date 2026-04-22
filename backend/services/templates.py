@@ -94,6 +94,13 @@ try:
 except ImportError:
     pass
 
+# Register Custos template
+try:
+    from .custos_template import CUSTOS_TEMPLATE
+    TEMPLATES["custos"] = CUSTOS_TEMPLATE
+except ImportError:
+    pass
+
 
 def get_all_templates() -> Dict[str, Dict[str, Any]]:
     return TEMPLATES
@@ -112,6 +119,7 @@ def get_template_suggestions(columns: List[str]) -> List[str]:
         "efetivo": {"strong": ["fornecedor", "funcao", "quantidade", "diarias"], "medium": ["obra", "mesnome", "dia"], "weak": ["periodo", "trabalhou"]},
         "orcamento": {"strong": ["fornecedornome", "descricao", "preco", "valora", "valorb"], "medium": ["assunto", "quant", "unid", "tipo"], "weak": ["obra", "numero"]},
         "materiais": {"strong": ["fornecedor", "mapa", "item", "descricao", "quant", "preço", "negociado"], "medium": ["obra", "assunto", "unid", "contato", "telefone"], "weak": ["valor", "data"]},
+        "custos": {"strong": ["numconsolidado", "fornecedor", "mapaprecos", "datavencto", "condpagto"], "medium": ["valor", "natureza", "nf", "consolidado"], "weak": ["obra", "data"]},
     }
     scores = {}
     for template_id, keywords in templates_keywords.items():
