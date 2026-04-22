@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api", tags=["upload"])
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    allowed = {".xlsx", ".xls", ".csv", ".txt", ".json", ".pdf", ".sql", ".docx"}
+    allowed = {".xlsx", ".xls", ".xlsm", ".csv", ".txt", ".json", ".pdf", ".sql", ".docx"}
     ext = "." + file.filename.split(".")[-1].lower()
 
     if ext not in allowed:
@@ -19,7 +19,7 @@ async def upload_file(file: UploadFile = File(...)):
         content = await file.read()
 
         # Efetivo files use a non-standard layout — route to custom parser
-        if ext in {".xlsx", ".xls"} and detect_efetivo_file(content, file.filename):
+        if ext in {".xlsx", ".xls", ".xlsm"} and detect_efetivo_file(content, file.filename):
             df = parse_efetivo_file(content, file.filename)
             if df.empty:
                 raise HTTPException(422, "Efetivo file parsed but returned no records")
