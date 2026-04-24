@@ -225,6 +225,32 @@ class CustosAnalyzer:
             for _, r in cons.iterrows()
         ]
 
+    # ─── All NFS rows (for DB persistence) ───────────────────────────────
+
+    def get_all_nfs(self) -> List[Dict[str, Any]]:
+        """Return ALL rows from the NFs Entrada de Dados sheet, for DB storage."""
+        nfs = self.nfs
+        if nfs.empty:
+            return []
+        result = []
+        for _, r in nfs.iterrows():
+            forn = str(r.get("Fornecedor") or "").strip()
+            if not forn:
+                continue
+            valor = r.get("Valor")
+            dt = r.get("DataVencto")
+            result.append({
+                "fornecedor":      forn,
+                "nf":              str(r.get("NF") or ""),
+                "num_consolidado": str(r.get("NumConsolidado") or ""),
+                "mapa":            str(r.get("MapaPrecos") or ""),
+                "natureza":        str(r.get("Natureza") or ""),
+                "cond_pagto":      str(r.get("CondPagto") or ""),
+                "data_vencto":     str(dt.date()) if pd.notna(dt) else "",
+                "valor":           round(float(valor), 2) if pd.notna(valor) else 0.0,
+            })
+        return result
+
     # ─── Consolidated Report ──────────────────────────────────────────
 
     def get_consolidated_report(self) -> Dict[str, Any]:

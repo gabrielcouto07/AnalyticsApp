@@ -630,6 +630,13 @@ async def get_custos_top_nfs(session_id: str, limit: int = Query(20, ge=1, le=10
     import pandas as pd
     return CustosAnalyzer(df, pd.DataFrame()).get_top_nfs(limit)
 
+@router.get("/custos/nfs-all/{session_id}")
+async def get_custos_nfs_all(session_id: str):
+    """Return ALL rows from the NFs Entrada de Dados sheet (unlimited, for DB persistence)."""
+    df = get_active_df(session_id)
+    if df is None: raise HTTPException(404, "Session not found")
+    import pandas as pd
+    return CustosAnalyzer(df, pd.DataFrame()).get_all_nfs()
 
 @router.get("/custos/consolidado-detail/{session_id}")
 async def get_custos_consolidado_detail(session_id: str) -> List[Dict[str, Any]]:
