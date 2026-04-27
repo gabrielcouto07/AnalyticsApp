@@ -318,6 +318,31 @@ class EfetivoAnalyzer:
             })
         return result
 
+    # ─── All Rows (for DB persistence) ───────────────────────────────
+
+    def get_all_rows(self) -> List[Dict[str, Any]]:
+        """Return ALL rows with canonical field names, for DB storage."""
+        df = self.df
+        if df.empty:
+            return []
+        result = []
+        for _, r in df.iterrows():
+            forn = str(r.get("Fornecedor") or "").strip()
+            data = r.get("Data")
+            result.append({
+                "obra":          str(r.get("Obra") or ""),
+                "ano":           int(r.get("Ano") or 0),
+                "mes":           int(r.get("Mes") or 0),
+                "mes_nome":      str(r.get("MesNome") or ""),
+                "dia":           int(r.get("Dia") or 0),
+                "data":          str(data.date()) if pd.notna(data) else "",
+                "fornecedor":    forn,
+                "funcao":        str(r.get("Funcao") or ""),
+                "quantidade":    float(r.get("Quantidade") or 0),
+                "diarias_total": float(r.get("DiariasTotal") or 0),
+            })
+        return result
+
     # ─── Consolidated Report ──────────────────────────────────────────
 
     def get_consolidated_report(self) -> Dict[str, Any]:

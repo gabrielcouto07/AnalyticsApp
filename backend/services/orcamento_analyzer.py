@@ -252,6 +252,38 @@ class OrcamentoAnalyzer:
             ],
         }
 
+    # ─── All Rows (for DB persistence) ───────────────────────────────
+
+    def get_all_rows(self) -> List[Dict[str, Any]]:
+        """Return ALL rows with canonical field names, for DB storage."""
+        df = self.df
+        if df.empty:
+            return []
+        result = []
+        for _, r in df.iterrows():
+            forn = str(r.get("FornecedorNome") or "").strip()
+            preco = r.get("Preco")
+            data = r.get("Data")
+            result.append({
+                "obra":            str(r.get("Obra") or ""),
+                "assunto":         str(r.get("Assunto") or ""),
+                "numero":          str(r.get("Numero") or ""),
+                "data":            str(data) if pd.notna(data) else "",
+                "item":            int(r.get("Item") or 0),
+                "descricao":       str(r.get("Descricao") or ""),
+                "quant":           float(r.get("Quant") or 0),
+                "unid":            str(r.get("Unid") or ""),
+                "tipo":            str(r.get("Tipo") or ""),
+                "fornecedor_nome": forn,
+                "contato":         str(r.get("Contato") or ""),
+                "telefone":        str(r.get("Telefone") or ""),
+                "email":           str(r.get("Email") or ""),
+                "valor_a":         round(float(r.get("ValorA") or 0), 2) if pd.notna(r.get("ValorA")) else 0.0,
+                "valor_b":         round(float(r.get("ValorB") or 0), 2) if pd.notna(r.get("ValorB")) else 0.0,
+                "preco":           round(float(preco), 2) if pd.notna(preco) else None,
+            })
+        return result
+
     # ─── Consolidated Report ──────────────────────────────────────────
 
     def get_consolidated_report(self) -> Dict[str, Any]:

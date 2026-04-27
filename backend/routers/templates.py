@@ -220,11 +220,22 @@ async def get_nf_semantic(session_id: str) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/efetivo/analysis/{session_id}")
-async def get_efetivo_analysis(session_id: str) -> Dict[str, Any]:
+async def get_efetivo_analysis(
+    session_id: str,
+    fornecedor: str = Query(None, description="Filter to a specific fornecedor"),
+    mes: int = Query(None, description="Filter to a specific month number"),
+    funcao: str = Query(None, description="Filter to a specific funcao"),
+) -> Dict[str, Any]:
     df = get_active_df(session_id)
     if df is None:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
+        if fornecedor is not None and "Fornecedor" in df.columns:
+            df = df[df["Fornecedor"] == fornecedor]
+        if mes is not None and "Mes" in df.columns:
+            df = df[df["Mes"] == mes]
+        if funcao is not None and "Funcao" in df.columns:
+            df = df[df["Funcao"] == funcao]
         analyzer = EfetivoAnalyzer(df)
         return analyzer.get_consolidated_report()
     except Exception as e:
@@ -340,6 +351,30 @@ async def get_efetivo_trend(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Efetivo trend error: {str(e)}")
+
+
+@router.get("/efetivo/all/{session_id}")
+async def get_efetivo_all(session_id: str) -> List[Dict[str, Any]]:
+    """Return ALL efetivo rows with canonical field names (for ERP DB persistence)."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        return EfetivoAnalyzer(df).get_all_rows()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Efetivo all-rows error: {str(e)}")
+
+
+@router.get("/efetivo/matrix/{session_id}")
+async def get_efetivo_matrix(session_id: str) -> Dict[str, Any]:
+    """Fornecedor × Função heatmap matrix (sum of Quantidade)."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        return EfetivoAnalyzer(df).get_fornecedor_funcao_matrix()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Efetivo matrix error: {str(e)}")
 
 
 @router.get("/nf/nature/{session_id}")
@@ -579,6 +614,98 @@ async def get_orcamento_variance(session_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Orcamento variance error: {str(e)}")
 
 
+@router.get("/orcamento/anomalies/{session_id}")
+async def get_orcamento_anomalies(
+    session_id: str,
+    method: str = Query("iqr", pattern="^(iqr|zscore|forest)$"),
+    threshold: float = Query(3.0, gt=0),
+    contamination: float = Query(0.1, gt=0, lt=0.5),
+    column: str = Query("Preco", description="Column to run anomaly detection on (e.g. Preco, ValorTotal, ValorUnitario)"),
+) -> Dict[str, Any]:
+    """Detecta anomalias nos preços do orçamento."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        def compute():
+            # Fall back to first available price column
+            price_col = next((c for c in [column, "Preco", "ValorTotal", "ValorUnitario"] if c in df.columns), None)
+            if price_col is None:
+                return {"method": method, "anomalies": [], "count": 0, "percentage": 0, "column": column}
+
+            values = pd.to_numeric(df[price_col], errors="coerce").dropna()
+            if values.empty:
+                return {"method": method, "anomalies": [], "count": 0, "percentage": 0, "column": price_col}
+
+            if method == "iqr":
+                result = AnomalyDetector.iqr_method(values)
+            elif method == "zscore":
+                result = AnomalyDetector.zscore_method(values, threshold=threshold)
+            else:
+                result = AnomalyDetector.isolation_forest_method(
+                    df[[price_col]].dropna(), contamination=contamination
+                )
+            result["column"] = price_col
+            return result
+
+        scope = f"orcamento:anomalies:{column}:{method}:{threshold}:{contamination}"
+        return _cached(session_id, scope, compute)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Orcamento anomalies error: {str(e)}")
+
+
+@router.get("/orcamento/trend/{session_id}")
+async def get_orcamento_trend(
+    session_id: str,
+    window: int = Query(5, ge=2, le=60),
+) -> Dict[str, Any]:
+    """Analisa tendência de preços no orçamento (por item, se houver coluna de data)."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        def compute():
+            price_col = next((c for c in ["Preco", "ValorTotal", "ValorUnitario"] if c in df.columns), None)
+            if price_col is None:
+                return {"direction": "unknown", "strength": "fraca", "period_analyzed": 0, "note": "No price column found"}
+
+            # If a useful date column exists, sort by it; otherwise use item order
+            if "Data" in df.columns:
+                df_sorted = df.sort_values("Data")
+            elif "Item" in df.columns:
+                df_sorted = df.sort_values("Item")
+            else:
+                df_sorted = df
+
+            series = pd.to_numeric(df_sorted[price_col], errors="coerce").dropna()
+            if len(series) < window:
+                return {"direction": "unknown", "strength": "fraca", "period_analyzed": len(series)}
+
+            trend = TrendAnalyzer.detect_trend(series, window=window)
+            trend["column"] = price_col
+            trend["window"] = window
+            return trend
+
+        scope = f"orcamento:trend:{window}"
+        return _cached(session_id, scope, compute)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Orcamento trend error: {str(e)}")
+
+
+@router.get("/orcamento/all/{session_id}")
+async def get_orcamento_all(session_id: str) -> List[Dict[str, Any]]:
+    """Return ALL orcamento rows with canonical field names (for ERP DB persistence)."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        return OrcamentoAnalyzer(df).get_all_rows()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Orcamento all-rows error: {str(e)}")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MATERIAIS (MAPA DE CONCORRÊNCIA) ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -732,7 +859,11 @@ async def get_materiais_analysis(session_id: str) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/custos/analysis/{session_id}")
-async def get_custos_analysis(session_id: str) -> Dict[str, Any]:
+async def get_custos_analysis(
+    session_id: str,
+    fornecedor: str = Query(None, description="Filter to a specific fornecedor"),
+    mes: int = Query(None, description="Filter to a specific month (1-12)"),
+) -> Dict[str, Any]:
     """Full consolidated report from both NFs and Consolidado sheets."""
     df_nfs = get_active_df(session_id)
     if df_nfs is None:
@@ -740,9 +871,18 @@ async def get_custos_analysis(session_id: str) -> Dict[str, Any]:
     df_cons = get_session_extra(session_id, "consolidado")
     meta = get_session_extra(session_id, "custos_meta") or {}
     if df_cons is None:
-        import pandas as pd
         df_cons = pd.DataFrame()
     try:
+        if fornecedor is not None and "Fornecedor" in df_nfs.columns:
+            df_nfs = df_nfs[df_nfs["Fornecedor"] == fornecedor]
+            if not df_cons.empty and "Fornecedor" in df_cons.columns:
+                df_cons = df_cons[df_cons["Fornecedor"] == fornecedor]
+        if mes is not None and "DataVencto" in df_nfs.columns:
+            df_nfs_dt = pd.to_datetime(df_nfs["DataVencto"], errors="coerce")
+            df_nfs = df_nfs[df_nfs_dt.dt.month == mes]
+            if not df_cons.empty and "DataVencto" in df_cons.columns:
+                df_cons_dt = pd.to_datetime(df_cons["DataVencto"], errors="coerce")
+                df_cons = df_cons[df_cons_dt.dt.month == mes]
         return CustosAnalyzer(df_nfs, df_cons, meta).get_consolidated_report()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Custos analysis error: {str(e)}")
