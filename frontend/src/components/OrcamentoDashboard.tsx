@@ -3,8 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
 } from "recharts"
-
-const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001"}/api/templates`
+import { templatesApiUrl } from "../api/client"
 
 const COLORS = [
   "#34c97e", "#4f8ef7", "#f5a623", "#e05263",
@@ -73,6 +72,21 @@ interface FullReport {
   tipo_breakdown: { servicos: number; insumos: number }
 }
 
+interface VarianceRow {
+  item: number
+  descricao: string
+  menor_preco: number
+  maior_preco: number
+  delta: number
+  delta_pct: number
+}
+
+interface VarianceResponse {
+  rows: VarianceRow[]
+  total_items: number
+  avg_delta_pct: number
+}
+
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
 const fmtBRL = (n: number | null | undefined): string => {
@@ -104,19 +118,47 @@ const BarTooltip = ({ active, payload, label }: any) => {
 
 export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   const [report, setReport] = useState<FullReport | null>(null)
+  const [variance, setVariance] = useState<VarianceResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [warnings, setWarnings] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<"pivot" | "ranking" | "items">("pivot")
+  const [showAllPivot, setShowAllPivot] = useState(false)
+  const [showAllRanking, setShowAllRanking] = useState(false)
+  const [showAllItems, setShowAllItems] = useState(false)
 
   useEffect(() => {
     const load = async () => {
       setLoading(true)
       setError(null)
+      setWarnings([])
       try {
-        const res = await fetch(`${API}/orcamento/analysis/${sessionId}`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json()
-        setReport(data)
+        const [analysisRes, varianceRes] = await Promise.allSettled([
+          fetch(templatesApiUrl(`/orcamento/analysis/${sessionId}`)).then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            return r.json()
+          }),
+          fetch(templatesApiUrl(`/orcamento/variance/${sessionId}`)).then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            return r.json()
+          }),
+        ])
+
+        const nextWarnings: string[] = []
+
+        if (analysisRes.status === "fulfilled") {
+          setReport(analysisRes.value)
+        } else {
+          throw new Error("Falha na análise principal de orçamento.")
+        }
+
+        if (varianceRes.status === "fulfilled") {
+          setVariance(varianceRes.value)
+        } else {
+          nextWarnings.push("Métrica de variância (%) indisponível.")
+        }
+
+        setWarnings(nextWarnings)
       } catch (e: any) {
         setError(e?.message || "Erro ao carregar dados do Orçamento.")
       } finally {
@@ -143,6 +185,22 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
   )
 
   const { summary, price_pivot, fornecedor_ranking, item_analysis, tipo_breakdown } = report
+  const varianceMap = new Map<number, VarianceRow>()
+  for (const row of variance?.rows ?? []) varianceMap.set(row.item, row)
+
+  const downloadCsv = (filename: string, headers: string[], rows: Array<Array<string | number>>) => {
+    const lines = [headers.join(","), ...rows.map(r => r.map(cell => {
+      const text = String(cell ?? "")
+      return text.includes(",") ? `"${text.replaceAll('"', '""')}"` : text
+    }).join(","))]
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   // Chart data: fornecedor totals as bar chart
   const fornTotalData = Object.entries(summary.fornecedor_totals)
@@ -168,6 +226,12 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
           {summary.obra} · Nº {summary.numero} · {summary.total_items} itens · {summary.total_fornecedores} fornecedores
         </p>
       </div>
+
+      {warnings.length > 0 && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(251,191,36,0.4)", background: "rgba(251,191,36,0.08)", color: "#fcd34d", fontSize: 12 }}>
+          ⚠️ Algumas análises não foram carregadas: {warnings.join(" ")}
+        </div>
+      )}
 
       {/* ── KPI Cards ────────────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
@@ -257,6 +321,26 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
           <p style={{ margin: "0 0 16px", fontSize: 12, color: "#64748b" }}>
             Células verdes = menor preço para o item
           </p>
+          <button
+            onClick={() => downloadCsv(
+              `orcamento_pivot_${sessionId}.csv`,
+              ["item", "descricao", "tipo", "qtd", "delta_pct", ...price_pivot.fornecedores],
+              price_pivot.rows.map((row) => {
+                const varianceRow = varianceMap.get(row.item)
+                return [
+                  row.item,
+                  row.descricao,
+                  row.tipo,
+                  row.quant,
+                  varianceRow?.delta_pct ?? "",
+                  ...price_pivot.fornecedores.map((f) => row.precos[f] ?? ""),
+                ]
+              }),
+            )}
+            style={{ ...tdStyle, marginBottom: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
+          >
+            Exportar CSV
+          </button>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
@@ -265,13 +349,14 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
                   <th style={{ ...thStyle, minWidth: 200, textAlign: "left" }}>Descrição</th>
                   <th style={thStyle}>Qtd</th>
                   <th style={thStyle}>Tipo</th>
+                  <th style={thStyle}>Δ%</th>
                   {price_pivot.fornecedores.map(f => (
                     <th key={f} style={{ ...thStyle, minWidth: 120, color: "#4f8ef7" }}>{f}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {price_pivot.rows.map((row, idx) => (
+                {(showAllPivot ? price_pivot.rows : price_pivot.rows.slice(0, 12)).map((row, idx) => (
                   <tr key={row.item} style={{ background: idx % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
                     <td style={{ ...tdStyle, fontWeight: 700, color: "#64748b", textAlign: "center" }}>{row.item}</td>
                     <td style={{ ...tdStyle, color: "#f1f5f9", maxWidth: 280 }} title={row.descricao}>
@@ -284,6 +369,9 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
                         background: row.tipo === "Serviço" ? "rgba(79,142,247,0.15)" : "rgba(245,166,35,0.15)",
                         color: row.tipo === "Serviço" ? "#4f8ef7" : "#f5a623",
                       }}>{row.tipo}</span>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: (varianceMap.get(row.item)?.delta_pct ?? 0) > 25 ? "#e05263" : "#34c97e" }}>
+                      {varianceMap.get(row.item)?.delta_pct != null ? fmtPct(varianceMap.get(row.item)?.delta_pct) : "—"}
                     </td>
                     {price_pivot.fornecedores.map(forn => {
                       const preco = row.precos[forn]
@@ -304,7 +392,7 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
               {/* Totals footer */}
               <tfoot>
                 <tr style={{ borderTop: "2px solid #334155" }}>
-                  <td colSpan={4} style={{ ...tdStyle, fontWeight: 700, color: "#f1f5f9" }}>TOTAL</td>
+                  <td colSpan={5} style={{ ...tdStyle, fontWeight: 700, color: "#f1f5f9" }}>TOTAL</td>
                   {price_pivot.fornecedores.map(forn => {
                     const total = summary.fornecedor_totals[forn] ?? 0
                     const isWinner = forn === summary.menor_preco_fornecedor
@@ -323,6 +411,13 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
               </tfoot>
             </table>
           </div>
+          {price_pivot.rows.length > 12 && (
+            <div style={{ marginTop: 10 }}>
+              <button onClick={() => setShowAllPivot(v => !v)} style={{ ...tdStyle, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
+                {showAllPivot ? "Recolher" : `Mostrar tudo (${price_pivot.rows.length})`}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -331,7 +426,17 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
       {/* ══════════════════════════════════════════════════════════ */}
       {activeTab === "ranking" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {fornecedor_ranking.map((forn, idx) => {
+          <button
+            onClick={() => downloadCsv(
+              `orcamento_ranking_${sessionId}.csv`,
+              ["fornecedor", "total_preco", "items_cotados", "cobertura_pct", "itens_mais_barato"],
+              fornecedor_ranking.map((f) => [f.fornecedor, f.total_preco, f.items_cotados, f.cobertura_pct, f.itens_mais_barato]),
+            )}
+            style={{ ...tdStyle, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
+          >
+            Exportar CSV
+          </button>
+          {(showAllRanking ? fornecedor_ranking : fornecedor_ranking.slice(0, 8)).map((forn, idx) => {
             const isWinner = forn.fornecedor === summary.menor_preco_fornecedor
             const borderColor = isWinner ? WINNER_COLOR : COLORS[idx % COLORS.length]
             return (
@@ -383,6 +488,11 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
               </div>
             )
           })}
+          {fornecedor_ranking.length > 8 && (
+            <button onClick={() => setShowAllRanking(v => !v)} style={{ ...tdStyle, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
+              {showAllRanking ? "Recolher" : `Mostrar tudo (${fornecedor_ranking.length})`}
+            </button>
+          )}
         </div>
       )}
 
@@ -397,6 +507,25 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
           <p style={{ margin: "0 0 16px", fontSize: 12, color: "#64748b" }}>
             Diferença entre menor e maior cotação por item
           </p>
+          <button
+            onClick={() => downloadCsv(
+              `orcamento_items_${sessionId}.csv`,
+              ["item", "descricao", "tipo", "cotacoes", "menor_preco", "maior_preco", "spread_pct", "executado_pct"],
+              item_analysis.map((item) => [
+                item.item,
+                item.descricao,
+                item.tipo,
+                item.cotacoes,
+                item.menor_preco ?? "",
+                item.maior_preco ?? "",
+                item.spread_pct ?? "",
+                Math.round((item.cotacoes / Math.max(summary.total_fornecedores, 1)) * 100),
+              ]),
+            )}
+            style={{ ...tdStyle, marginBottom: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
+          >
+            Exportar CSV
+          </button>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
@@ -411,10 +540,11 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
                   <th style={thStyle}>Fornecedor</th>
                   <th style={thStyle}>Spread</th>
                   <th style={thStyle}>Spread %</th>
+                  <th style={thStyle}>% Executado</th>
                 </tr>
               </thead>
               <tbody>
-                {item_analysis.map((item, idx) => (
+                {(showAllItems ? item_analysis : item_analysis.slice(0, 15)).map((item, idx) => (
                   <tr key={item.item} style={{ background: idx % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
                     <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: "#64748b" }}>{item.item}</td>
                     <td style={{ ...tdStyle, color: "#f1f5f9" }} title={item.descricao}>
@@ -449,11 +579,31 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
                         </span>
                       ) : "—"}
                     </td>
+                    <td style={{ ...tdStyle, minWidth: 140 }}>
+                      {(() => {
+                        const progress = Math.min(100, Math.round((item.cotacoes / Math.max(summary.total_fornecedores, 1)) * 100))
+                        return (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, height: 8, borderRadius: 999, background: "rgba(148,163,184,0.25)" }}>
+                              <div style={{ width: `${progress}%`, height: "100%", borderRadius: 999, background: progress >= 80 ? "#34c97e" : progress >= 50 ? "#f5a623" : "#e05263" }} />
+                            </div>
+                            <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{progress}%</span>
+                          </div>
+                        )
+                      })()}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {item_analysis.length > 15 && (
+            <div style={{ marginTop: 10 }}>
+              <button onClick={() => setShowAllItems(v => !v)} style={{ ...tdStyle, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
+                {showAllItems ? "Recolher" : `Mostrar tudo (${item_analysis.length})`}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -465,10 +615,10 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
 const thStyle: React.CSSProperties = {
   textAlign: "center",
   padding: "8px 12px",
-  borderBottom: "1px solid #334155",
+  borderBottom: "1px solid var(--erp-border)",
   fontSize: 11,
   fontWeight: 700,
-  color: "#94a3b8",
+  color: "var(--erp-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.5px",
   whiteSpace: "nowrap",
@@ -477,5 +627,5 @@ const thStyle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = {
   padding: "7px 12px",
   borderBottom: "1px solid rgba(51,65,85,0.4)",
-  color: "#f1f5f9",
+  color: "var(--erp-text)",
 }

@@ -4,6 +4,19 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 @import "../App.css";
 
+:root {
+  --erp-bg: #0f172a;
+  --erp-card: #1e293b;
+  --erp-border: #334155;
+  --erp-text: #f1f5f9;
+  --erp-muted: #94a3b8;
+  --erp-faint: #64748b;
+  --erp-success: #34c97e;
+  --erp-warning: #f5a623;
+  --erp-danger: #e05263;
+  --erp-primary: #4f8ef7;
+}
+
 * {
   margin: 0;
   padding: 0;

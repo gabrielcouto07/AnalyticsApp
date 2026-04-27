@@ -5,6 +5,7 @@ for NF, Efetivo, and Orçamento (Mapa de Concorrência) data types.
 
 from fastapi import APIRouter, HTTPException, Query, Body
 from typing import List, Dict, Any
+import pandas as pd
 
 from ..services.templates import (
     get_all_templates,
@@ -17,9 +18,25 @@ from ..services.semantic import SemanticAnalyzer
 from ..services.efetivo_analyzer import EfetivoAnalyzer
 from ..services.orcamento_analyzer import OrcamentoAnalyzer
 from ..services.custos_analyzer import CustosAnalyzer
+from ..services.advanced_analytics import AnomalyDetector, TrendAnalyzer
 from ..session import get_active_df, get_session_extra
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
+
+_analysis_cache: Dict[str, Any] = {}
+
+
+def _cache_key(session_id: str, scope: str) -> str:
+    return f"{session_id}:{scope}"
+
+
+def _cached(session_id: str, scope: str, fn):
+    key = _cache_key(session_id, scope)
+    if key in _analysis_cache:
+        return _analysis_cache[key]
+    value = fn()
+    _analysis_cache[key] = value
+    return value
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -230,6 +247,101 @@ async def get_efetivo_monthly_breakdown(session_id: str) -> List[Dict[str, Any]]
         return []
 
 
+@router.get("/efetivo/anomalies/{session_id}")
+async def get_efetivo_anomalies(
+    session_id: str,
+    method: str = Query("iqr", pattern="^(iqr|zscore|forest)$"),
+    threshold: float = Query(3.0, gt=0),
+    contamination: float = Query(0.1, gt=0, lt=0.5),
+) -> Dict[str, Any]:
+    """Detecta anomalias no total diário de efetivo."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        def compute():
+            analyzer = EfetivoAnalyzer(df)
+            daily = analyzer.get_daily_timeline()
+            if not daily:
+                return {"method": method, "anomalies": [], "count": 0, "percentage": 0}
+
+            daily_df = pd.DataFrame(daily)
+            series = daily_df["total_trabalhadores"]
+
+            if method == "iqr":
+                result = AnomalyDetector.iqr_method(series)
+                bounds = result.get("bounds", {})
+                low, high = bounds.get("lower"), bounds.get("upper")
+                points = []
+                for _, row in daily_df.iterrows():
+                    value = float(row["total_trabalhadores"])
+                    if low is not None and high is not None and (value < low or value > high):
+                        points.append({"data": row["data"], "valor": value})
+                result["points"] = points
+                return result
+
+            if method == "zscore":
+                result = AnomalyDetector.zscore_method(series, threshold=threshold)
+                mean = result.get("mean", 0)
+                std = result.get("std", 0)
+                points = []
+                if std and std > 0:
+                    for _, row in daily_df.iterrows():
+                        value = float(row["total_trabalhadores"])
+                        z = abs((value - mean) / std)
+                        if z > threshold:
+                            points.append({"data": row["data"], "valor": value, "zscore": round(z, 4)})
+                result["points"] = points
+                return result
+
+            result = AnomalyDetector.isolation_forest_method(
+                daily_df[["total_trabalhadores", "fornecedores", "funcoes"]],
+                contamination=contamination,
+            )
+            return result
+
+        scope = f"efetivo:anomalies:{method}:{threshold}:{contamination}"
+        return _cached(session_id, scope, compute)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Efetivo anomalies error: {str(e)}")
+
+
+@router.get("/efetivo/trend/{session_id}")
+async def get_efetivo_trend(
+    session_id: str,
+    column: str = Query("total_trabalhadores"),
+    window: int = Query(5, ge=2, le=60),
+) -> Dict[str, Any]:
+    """Analisa tendência na série diária de efetivo."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        def compute():
+            analyzer = EfetivoAnalyzer(df)
+            daily = analyzer.get_daily_timeline()
+            if not daily:
+                return {"direction": "unknown", "strength": "fraca", "period_analyzed": 0}
+
+            daily_df = pd.DataFrame(daily)
+            if column not in daily_df.columns:
+                raise HTTPException(status_code=422, detail=f"Column '{column}' not found in daily timeline")
+
+            trend = TrendAnalyzer.detect_trend(daily_df[column], window=window)
+            trend["column"] = column
+            trend["window"] = window
+            return trend
+
+        scope = f"efetivo:trend:{column}:{window}"
+        return _cached(session_id, scope, compute)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Efetivo trend error: {str(e)}")
+
+
 @router.get("/nf/nature/{session_id}")
 async def get_nf_nature(session_id: str) -> List[Dict[str, Any]]:
     """Get nature/category analysis"""
@@ -433,6 +545,40 @@ async def get_orcamento_tipo_breakdown(session_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
+@router.get("/orcamento/variance/{session_id}")
+async def get_orcamento_variance(session_id: str) -> Dict[str, Any]:
+    """Retorna variação percentual entre menor e maior preço por item."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        analyzer = OrcamentoAnalyzer(df)
+        items = analyzer.get_item_analysis()
+        rows = []
+        for item in items:
+            if item.get("menor_preco") is None or item.get("maior_preco") is None:
+                continue
+            rows.append({
+                "item": item.get("item"),
+                "descricao": item.get("descricao"),
+                "menor_preco": item.get("menor_preco"),
+                "maior_preco": item.get("maior_preco"),
+                "delta": item.get("spread"),
+                "delta_pct": item.get("spread_pct"),
+            })
+
+        avg_delta_pct = round(float(sum(r["delta_pct"] for r in rows if r.get("delta_pct") is not None) / len(rows)), 2) if rows else 0
+
+        return {
+            "rows": rows,
+            "total_items": len(rows),
+            "avg_delta_pct": avg_delta_pct,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Orcamento variance error: {str(e)}")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MATERIAIS (MAPA DE CONCORRÊNCIA) ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -600,6 +746,78 @@ async def get_custos_analysis(session_id: str) -> Dict[str, Any]:
         return CustosAnalyzer(df_nfs, df_cons, meta).get_consolidated_report()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Custos analysis error: {str(e)}")
+
+
+@router.get("/custos/anomalies/{session_id}")
+async def get_custos_anomalies(
+    session_id: str,
+    method: str = Query("iqr", pattern="^(iqr|zscore|forest)$"),
+    threshold: float = Query(3.0, gt=0),
+    contamination: float = Query(0.1, gt=0, lt=0.5),
+) -> Dict[str, Any]:
+    """Detecta anomalias nos valores de NFs."""
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        def compute():
+            if "Valor" not in df.columns:
+                raise HTTPException(status_code=422, detail="Column 'Valor' not found")
+
+            values = pd.to_numeric(df["Valor"], errors="coerce").dropna()
+            if values.empty:
+                return {"method": method, "anomalies": [], "count": 0, "percentage": 0}
+
+            if method == "iqr":
+                result = AnomalyDetector.iqr_method(values)
+            elif method == "zscore":
+                result = AnomalyDetector.zscore_method(values, threshold=threshold)
+            else:
+                result = AnomalyDetector.isolation_forest_method(df, contamination=contamination)
+
+            return result
+
+        scope = f"custos:anomalies:{method}:{threshold}:{contamination}"
+        return _cached(session_id, scope, compute)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Custos anomalies error: {str(e)}")
+
+
+@router.get("/custos/trend/{session_id}")
+async def get_custos_trend(
+    session_id: str,
+    window: int = Query(5, ge=2, le=60),
+) -> Dict[str, Any]:
+    """Analisa tendência mensal de custos totais."""
+    df_nfs = get_active_df(session_id)
+    if df_nfs is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    df_cons = get_session_extra(session_id, "consolidado")
+    meta = get_session_extra(session_id, "custos_meta") or {}
+    if df_cons is None:
+        df_cons = pd.DataFrame()
+
+    try:
+        def compute():
+            analyzer = CustosAnalyzer(df_nfs, df_cons, meta)
+            timeline = analyzer.get_monthly_timeline()
+            if not timeline:
+                return {"direction": "unknown", "strength": "fraca", "period_analyzed": 0}
+
+            timeline_df = pd.DataFrame(timeline)
+            trend = TrendAnalyzer.detect_trend(timeline_df["total_valor"], window=window)
+            trend["column"] = "total_valor"
+            trend["window"] = window
+            return trend
+
+        scope = f"custos:trend:{window}"
+        return _cached(session_id, scope, compute)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Custos trend error: {str(e)}")
 
 
 @router.get("/custos/summary/{session_id}")

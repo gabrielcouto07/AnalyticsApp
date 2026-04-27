@@ -110,6 +110,37 @@ export const TemplateSelection: React.FC<TemplateSelectionProps> = ({
     return colorMap[color || 'blue'];
   };
 
+  const renderPreview = (id: string) => {
+    if (id === 'efetivo') {
+      return (
+        <div className="grid grid-cols-6 gap-1 mt-2">
+          {[30, 45, 25, 55, 42, 38].map((v, i) => (
+            <div key={i} className="bg-white/20 rounded-sm" style={{ height: `${Math.max(8, v / 3)}px` }} />
+          ))}
+        </div>
+      );
+    }
+    if (id === 'custos') {
+      return (
+        <div className="mt-2 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-full border-4 border-white/20 border-t-white/70" />
+        </div>
+      );
+    }
+    if (id === 'orcamento' || id === 'materiais') {
+      return (
+        <div className="mt-2 space-y-1">
+          <div className="h-2 rounded bg-white/30" />
+          <div className="h-2 rounded bg-white/20 w-4/5" />
+          <div className="h-2 rounded bg-white/15 w-3/5" />
+        </div>
+      );
+    }
+    return (
+      <div className="mt-2 h-8 rounded bg-white/15" />
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center space-y-4 py-12">
@@ -165,6 +196,10 @@ export const TemplateSelection: React.FC<TemplateSelectionProps> = ({
                 <p className="text-xs text-gray-300 line-clamp-2 leading-relaxed">
                   {template.description}
                 </p>
+                <div className="rounded-lg border border-white/20 bg-black/15 p-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/75 font-semibold">Prévia</p>
+                  {renderPreview(id)}
+                </div>
               </div>
             </button>
           );

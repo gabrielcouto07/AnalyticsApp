@@ -1,15 +1,31 @@
 import React, { useEffect, useState } from "react"
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
+  Tooltip, Legend, ResponsiveContainer, ReferenceLine, ReferenceDot,
+  BarChart, Bar,
 } from "recharts"
-
-const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001"}/api/templates`
+import { templatesApiUrl } from "../api/client"
 
 const COLORS = [
   "#4f8ef7", "#34c97e", "#f5a623", "#e05263",
   "#a78bfa", "#06b6d4", "#f97316", "#ec4899",
 ]
+
+const MONTH_MAP: Record<string, number> = {
+  janeiro: 1,
+  fevereiro: 2,
+  marco: 3,
+  março: 3,
+  abril: 4,
+  maio: 5,
+  junho: 6,
+  julho: 7,
+  agosto: 8,
+  setembro: 9,
+  outubro: 10,
+  novembro: 11,
+  dezembro: 12,
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +56,18 @@ interface MonthData {
   funcao_detail: FuncaoRow[]
 }
 
+interface TrendData {
+  direction: "up" | "down" | "flat" | "unknown"
+  slope?: number
+  r_squared?: number
+  strength?: "forte" | "moderada" | "fraca"
+}
+
+interface AnomalyPoint {
+  data: string
+  valor: number
+}
+
 // ─── Tooltip ──────────────────────────────────────────────────────────────────
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -68,24 +96,72 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   const [summary, setSummary]           = useState<Summary | null>(null)
   const [months, setMonths]             = useState<MonthData[]>([])
+  const [trendTotal, setTrendTotal]     = useState<TrendData | null>(null)
+  const [trendMedia, setTrendMedia]     = useState<TrendData | null>(null)
+  const [anomalyPoints, setAnomalyPoints] = useState<AnomalyPoint[]>([])
   const [activeMes, setActiveMes]       = useState<number | null>(null)
   const [loading, setLoading]           = useState(true)
   const [error, setError]               = useState<string | null>(null)
+  const [warnings, setWarnings]         = useState<string[]>([])
   const [filterForn, setFilterForn]     = useState<string>("all")
   const [filterFuncao, setFilterFuncao] = useState<string>("all")
+  const [showAllDias, setShowAllDias]   = useState(false)
+  const [hiddenFornecedores, setHiddenFornecedores] = useState<string[]>([])
 
   useEffect(() => {
     const load = async () => {
       setLoading(true)
       setError(null)
+      setWarnings([])
       try {
-        const [analysisRes, monthlyRes] = await Promise.all([
-          fetch(`${API}/efetivo/analysis/${sessionId}`).then(r => r.json()),
-          fetch(`${API}/efetivo/monthly-breakdown/${sessionId}`).then(r => r.json()),
+        const requests = await Promise.allSettled([
+          fetch(templatesApiUrl(`/efetivo/analysis/${sessionId}`)).then(r => r.json()),
+          fetch(templatesApiUrl(`/efetivo/monthly-breakdown/${sessionId}`)).then(r => r.json()),
+          fetch(templatesApiUrl(`/efetivo/trend/${sessionId}?column=total_trabalhadores&window=7`)).then(r => r.json()),
+          fetch(templatesApiUrl(`/efetivo/trend/${sessionId}?column=fornecedores&window=7`)).then(r => r.json()),
+          fetch(templatesApiUrl(`/efetivo/anomalies/${sessionId}?method=iqr`)).then(r => r.json()),
         ])
-        setSummary(analysisRes.summary)
-        setMonths(monthlyRes)
-        if (monthlyRes.length > 0) setActiveMes(monthlyRes[0].mes)
+
+        const nextWarnings: string[] = []
+
+        const analysisRes = requests[0].status === "fulfilled" ? requests[0].value : null
+        if (analysisRes?.summary) {
+          setSummary(analysisRes.summary)
+        } else {
+          nextWarnings.push("Resumo não pôde ser carregado.")
+        }
+
+        const monthlyRes = requests[1].status === "fulfilled" ? requests[1].value : []
+        if (Array.isArray(monthlyRes) && monthlyRes.length > 0) {
+          setMonths(monthlyRes)
+          setActiveMes(monthlyRes[0].mes)
+        } else {
+          nextWarnings.push("Série mensal indisponível.")
+        }
+
+        if (requests[2].status === "fulfilled") {
+          setTrendTotal(requests[2].value)
+        } else {
+          nextWarnings.push("Tendência de total diário indisponível.")
+        }
+
+        if (requests[3].status === "fulfilled") {
+          setTrendMedia(requests[3].value)
+        } else {
+          nextWarnings.push("Tendência de fornecedores/dia indisponível.")
+        }
+
+        if (requests[4].status === "fulfilled") {
+          setAnomalyPoints(Array.isArray(requests[4].value?.points) ? requests[4].value.points : [])
+        } else {
+          nextWarnings.push("Detecção de anomalias indisponível.")
+        }
+
+        setWarnings(nextWarnings)
+
+        if (!analysisRes?.summary && (!Array.isArray(monthlyRes) || monthlyRes.length === 0)) {
+          setError("Erro ao carregar dados essenciais do Efetivo.")
+        }
       } catch {
         setError("Erro ao carregar dados do Efetivo.")
       } finally {
@@ -125,6 +201,29 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
     funcaoPorDia[row.dia].push(row)
   }
   const dias = Object.keys(funcaoPorDia).map(Number).sort((a, b) => a - b)
+  const diasVisiveis = showAllDias ? dias : dias.slice(0, 7)
+
+  const trendArrow = (trend: TrendData | null): string => {
+    if (!trend || trend.direction === "unknown") return "→"
+    if (trend.direction === "up") return trend.strength === "forte" ? "↑" : "↗"
+    if (trend.direction === "down") return trend.strength === "forte" ? "↓" : "↘"
+    return "→"
+  }
+
+  const monthKey = (currentMonth?.mes_nome || "").toLowerCase()
+  const monthNumber = currentMonth?.mes ?? MONTH_MAP[monthKey] ?? 0
+  const anomalyDaySet = new Set<number>()
+  for (const p of anomalyPoints) {
+    const dt = new Date(p.data)
+    if (!Number.isNaN(dt.getTime()) && dt.getMonth() + 1 === monthNumber) {
+      anomalyDaySet.add(dt.getDate())
+    }
+  }
+
+  const fornecedorTotals = fornecedores.map((forn) => {
+    const total = (currentMonth?.daily_pivot ?? []).reduce((sum, row) => sum + (Number(row[forn]) || 0), 0)
+    return { fornecedor: forn, total }
+  }).sort((a, b) => b.total - a.total)
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -139,17 +238,23 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
         </p>
       </div>
 
+      {warnings.length > 0 && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(251,191,36,0.4)", background: "rgba(251,191,36,0.08)", color: "#fcd34d", fontSize: 12 }}>
+          ⚠️ Algumas análises não foram carregadas: {warnings.join(" ")}
+        </div>
+      )}
+
       {/* ── KPI Cards ──────────────────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
         {[
-          { label: "Total Diárias", value: summary?.total_diarias.toLocaleString("pt-BR"), color: "#4f8ef7", icon: "📋" },
+          { label: "Total Diárias", value: summary?.total_diarias.toLocaleString("pt-BR"), color: "#4f8ef7", icon: "📋", trend: trendArrow(trendTotal) },
           { label: "Dias Ativos",   value: summary?.dias_ativos,                           color: "#34c97e", icon: "📅" },
-          { label: "Média Diária",  value: summary?.media_diaria,                          color: "#f5a623", icon: "📊" },
+          { label: "Média Diária",  value: summary?.media_diaria,                          color: "#f5a623", icon: "📊", trend: trendArrow(trendMedia) },
           { label: "Fornecedores",  value: summary?.unique_fornecedores,                   color: "#a78bfa", icon: "🏢" },
           { label: "Funções",       value: summary?.unique_funcoes,                        color: "#06b6d4", icon: "👷" },
-        ].map(({ label, value, color, icon }) => (
+        ].map(({ label, value, color, icon, trend }) => (
           <div key={label} style={{ background: "rgba(30,41,59,0.7)", border: `1px solid ${color}30`, borderRadius: 12, padding: "16px 18px" }}>
-            <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>{icon} {label}</p>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>{icon} {label} {trend ? ` ${trend}` : ""}</p>
             <p style={{ margin: "8px 0 0", fontSize: 26, fontWeight: 800, color }}>{value ?? "—"}</p>
           </div>
         ))}
@@ -160,7 +265,13 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
         {months.map(m => (
           <button
             key={m.mes}
-            onClick={() => { setActiveMes(m.mes); setFilterForn("all"); setFilterFuncao("all") }}
+            onClick={() => {
+              setActiveMes(m.mes)
+              setFilterForn("all")
+              setFilterFuncao("all")
+              setShowAllDias(false)
+              setHiddenFornecedores([])
+            }}
             style={{
               padding: "8px 18px", borderRadius: 20, border: "none", cursor: "pointer",
               fontSize: 13, fontWeight: 700,
@@ -191,15 +302,43 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
                   label={{ value: "Dia", position: "insideBottom", offset: -2, fill: "#64748b", fontSize: 11 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
                 <Tooltip content={<CustomTooltip />} />
-                <Legend wrapperStyle={{ paddingTop: 12, fontSize: 12 }} />
+                <Legend
+                  wrapperStyle={{ paddingTop: 12, fontSize: 12, cursor: "pointer" }}
+                  onClick={(payload: any) => {
+                    const key = payload?.dataKey
+                    if (!key) return
+                    setHiddenFornecedores(prev => prev.includes(key) ? prev.filter(f => f !== key) : [...prev, key])
+                  }}
+                />
                 <ReferenceLine y={grandMedia} stroke="#475569" strokeDasharray="5 5"
                   label={{ value: `Média geral: ${grandMedia}`, fill: "#64748b", fontSize: 10, position: "right" }} />
+                {[...anomalyDaySet].map(day => {
+                  const dayRow = currentMonth.daily_pivot.find(r => Number(r.Dia) === day)
+                  const total = fornecedores.reduce((sum, forn) => sum + (Number(dayRow?.[forn]) || 0), 0)
+                  return <ReferenceDot key={`anom-${day}`} x={day} y={total} r={6} fill="#ef4444" stroke="#7f1d1d" />
+                })}
                 {fornecedores.map((forn, i) => (
                   <Line key={forn} type="monotone" dataKey={forn}
                     stroke={COLORS[i % COLORS.length]} strokeWidth={2.5}
-                    dot={{ r: 3, fill: COLORS[i % COLORS.length] }} activeDot={{ r: 5 }} connectNulls />
+                    dot={{ r: 3, fill: COLORS[i % COLORS.length] }} activeDot={{ r: 5 }} connectNulls
+                    hide={hiddenFornecedores.includes(forn)} />
                 ))}
               </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
+            <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
+              📶 Totais por Fornecedor — {currentMonth.mes_nome}
+            </h3>
+            <ResponsiveContainer width="100%" height={Math.max(220, fornecedorTotals.length * 36)}>
+              <BarChart data={fornecedorTotals} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                <YAxis type="category" dataKey="fornecedor" width={180} tick={{ fill: "#f1f5f9", fontSize: 11 }} />
+                <Tooltip />
+                <Bar dataKey="total" radius={[0, 6, 6, 0]} fill="#4f8ef7" />
+              </BarChart>
             </ResponsiveContainer>
           </div>
 
@@ -223,6 +362,27 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
                   <option value="all">Todas funções</option>
                   {allFuncoes.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rows: string[] = ["Dia,Fornecedor,Funcao,Quantidade"]
+                    for (const dia of dias) {
+                      for (const row of funcaoPorDia[dia]) {
+                        rows.push(`${dia},"${row.fornecedor}","${row.funcao}",${row.quantidade}`)
+                      }
+                    }
+                    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement("a")
+                    a.href = url
+                    a.download = `efetivo_${currentMonth.mes_nome.toLowerCase()}_${sessionId}.csv`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                  style={{ ...selectStyle, fontWeight: 700 }}
+                >
+                  Exportar CSV
+                </button>
               </div>
             </div>
 
@@ -240,7 +400,7 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
                     </tr>
                   </thead>
                   <tbody>
-                    {dias.map(dia =>
+                    {diasVisiveis.map(dia =>
                       funcaoPorDia[dia].map((row, idx) => {
                         const colorIdx = fornecedores.indexOf(row.fornecedor)
                         const color = COLORS[colorIdx >= 0 ? colorIdx % COLORS.length : idx % COLORS.length]
@@ -270,6 +430,18 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
                     </tr>
                   </tfoot>
                 </table>
+              </div>
+            )}
+
+            {dias.length > 7 && (
+              <div style={{ position: "sticky", bottom: 0, marginTop: 10, paddingTop: 8, background: "linear-gradient(180deg, rgba(30,41,59,0), rgba(30,41,59,0.9) 35%)" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAllDias(v => !v)}
+                  style={{ ...selectStyle, width: "100%", fontWeight: 700 }}
+                >
+                  {showAllDias ? "Recolher" : `Mostrar todos os ${dias.length} dias`}
+                </button>
               </div>
             )}
           </div>
@@ -327,10 +499,10 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
 const thStyle: React.CSSProperties = {
   textAlign: "left",
   padding: "8px 12px",
-  borderBottom: "1px solid #334155",
+  borderBottom: "1px solid var(--erp-border)",
   fontSize: 11,
   fontWeight: 700,
-  color: "#94a3b8",
+  color: "var(--erp-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.5px",
   whiteSpace: "nowrap",
@@ -339,14 +511,14 @@ const thStyle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = {
   padding: "7px 12px",
   borderBottom: "1px solid rgba(51,65,85,0.4)",
-  color: "#f1f5f9",
+  color: "var(--erp-text)",
 }
 
 const selectStyle: React.CSSProperties = {
-  background: "#1e293b",
-  border: "1px solid #334155",
+  background: "var(--erp-card)",
+  border: "1px solid var(--erp-border)",
   borderRadius: 8,
-  color: "#f1f5f9",
+  color: "var(--erp-text)",
   padding: "6px 10px",
   fontSize: 12,
   cursor: "pointer",

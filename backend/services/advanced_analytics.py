@@ -192,7 +192,7 @@ class TrendAnalyzer:
                 }
             
             df_copy.set_index(date_col, inplace=True)
-            df_copy = df_copy.resample('D').mean().fillna(method='ffill')
+            df_copy = df_copy.resample('D').mean().ffill()
             
             result = seasonal_decompose(df_copy[metric_col], model='additive', period=period)
             

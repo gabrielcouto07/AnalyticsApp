@@ -4,8 +4,7 @@ import {
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
   LineChart, Line, Legend,
 } from "recharts"
-
-const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001"}/api/templates`
+import { templatesApiUrl } from "../api/client"
 
 const COLORS = [
   "#4f8ef7", "#34c97e", "#f5a623", "#e05263",
@@ -40,6 +39,16 @@ interface FullReport {
   consolidado_detail: ConsDetail[]
 }
 
+interface TrendData {
+  direction: "up" | "down" | "flat" | "unknown"
+  strength?: "forte" | "moderada" | "fraca"
+}
+
+interface AnomalyData {
+  count?: number
+  percentage?: number
+}
+
 const fmtBRL = (n: number | null | undefined): string => {
   if (n == null || isNaN(n)) return "—"
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
@@ -65,13 +74,45 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
   const [report, setReport] = useState<FullReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [trend, setTrend] = useState<TrendData | null>(null)
+  const [anomalies, setAnomalies] = useState<AnomalyData | null>(null)
   const [tab, setTab] = useState<"overview" | "fornecedores" | "consolidado" | "nfs">("overview")
+  const [showAllNatureza, setShowAllNatureza] = useState(false)
+  const [showAllFornecedores, setShowAllFornecedores] = useState(false)
+  const [showAllConsolidado, setShowAllConsolidado] = useState(false)
+  const [showAllNfs, setShowAllNfs] = useState(false)
 
   useEffect(() => {
     setLoading(true)
-    fetch(`${API}/custos/analysis/${sessionId}`)
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-      .then(setReport)
+    setWarnings([])
+    Promise.allSettled([
+      fetch(templatesApiUrl(`/custos/analysis/${sessionId}`)).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }),
+      fetch(templatesApiUrl(`/custos/trend/${sessionId}?window=6`)).then(r => r.json()),
+      fetch(templatesApiUrl(`/custos/anomalies/${sessionId}?method=iqr`)).then(r => r.json()),
+    ])
+      .then(([reportRes, trendRes, anomalyRes]) => {
+        const nextWarnings: string[] = []
+        if (reportRes.status === "fulfilled") {
+          setReport(reportRes.value)
+        } else {
+          setError("Falha ao carregar análise principal de custos.")
+        }
+
+        if (trendRes.status === "fulfilled") {
+          setTrend(trendRes.value)
+        } else {
+          nextWarnings.push("Tendência de custos indisponível.")
+        }
+
+        if (anomalyRes.status === "fulfilled") {
+          setAnomalies(anomalyRes.value)
+        } else {
+          nextWarnings.push("Detecção de anomalias indisponível.")
+        }
+
+        setWarnings(nextWarnings)
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [sessionId])
@@ -96,6 +137,21 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
   const pagPieData = pagamento_breakdown.map((p, i) => ({ name: p.metodo, value: p.total_valor, color: COLORS[i % COLORS.length] }))
   const consBarData = consolidado_breakdown.map((c) => ({ name: `MC ${c.consolidado}`, total: c.total_valor, nfs: c.qtd_nfs }))
   const timelineData = monthly_timeline.map(t => ({ mes: t.mes, valor: t.total_valor, nfs: t.qtd_nfs }))
+  const trendArrow = trend?.direction === "up" ? "↑" : trend?.direction === "down" ? "↓" : "→"
+
+  const downloadCsv = (filename: string, headers: string[], rows: Array<Array<string | number>>) => {
+    const lines = [headers.join(","), ...rows.map(r => r.map(cell => {
+      const text = String(cell ?? "")
+      return text.includes(",") ? `"${text.replaceAll('"', '""')}"` : text
+    }).join(","))]
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -109,6 +165,12 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
           {s.endereco} · {s.data_inicio} → {s.data_fim} · {s.unique_consolidados} consolidados
         </p>
       </div>
+
+      {warnings.length > 0 && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(251,191,36,0.4)", background: "rgba(251,191,36,0.08)", color: "#fcd34d", fontSize: 12 }}>
+          ⚠️ Algumas análises não foram carregadas: {warnings.join(" ")}
+        </div>
+      )}
 
       {/* ── KPI Cards ──────────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
@@ -126,6 +188,19 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
             {sub && <p style={{ margin: "4px 0 0", fontSize: 11, color: "#64748b" }}>{sub}</p>}
           </div>
         ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 12, padding: "14px 16px" }}>
+          <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>📈 Tendência Mensal</p>
+          <p style={{ margin: "8px 0 0", fontSize: 20, fontWeight: 800, color: "#4f8ef7" }}>{trendArrow} {trend?.direction ?? "unknown"}</p>
+          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b" }}>Força: {trend?.strength ?? "n/d"}</p>
+        </div>
+        <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 12, padding: "14px 16px" }}>
+          <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>⚠️ Itens Anômalos</p>
+          <p style={{ margin: "8px 0 0", fontSize: 20, fontWeight: 800, color: "#e05263" }}>{anomalies?.count ?? 0}</p>
+          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b" }}>{anomalies?.percentage ?? 0}% do total</p>
+        </div>
       </div>
 
       {/* ── Tabs ───────────────────────────────────────────────── */}
@@ -214,6 +289,16 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
           {/* Natureza Table */}
           <div style={cardStyle}>
             <h3 style={h3Style}>🏷️ Distribuição por Natureza / Mapa</h3>
+            <button
+              onClick={() => downloadCsv(
+                `custos_natureza_${sessionId}.csv`,
+                ["natureza", "total_valor", "qtd_nfs"],
+                natureza_breakdown.map((n) => [n.natureza, n.total_valor, n.qtd_nfs]),
+              )}
+              style={{ ...tdStyle, marginBottom: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
+            >
+              Exportar CSV
+            </button>
             <div style={{ overflowX: "auto", maxHeight: 350 }}>
               <table style={tableStyle}>
                 <thead>
@@ -224,7 +309,7 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                   </tr>
                 </thead>
                 <tbody>
-                  {natureza_breakdown.slice(0, 20).map((n, i) => (
+                  {(showAllNatureza ? natureza_breakdown : natureza_breakdown.slice(0, 20)).map((n, i) => (
                     <tr key={i} style={{ background: i % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
                       <td style={{ ...tdStyle, color: "#f1f5f9" }}>{n.natureza}</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#34c97e" }}>{fmtBRL(n.total_valor)}</td>
@@ -234,6 +319,11 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                 </tbody>
               </table>
             </div>
+            {natureza_breakdown.length > 20 && (
+              <button onClick={() => setShowAllNatureza(v => !v)} style={{ ...tdStyle, marginTop: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
+                {showAllNatureza ? "Recolher" : `Mostrar tudo (${natureza_breakdown.length})`}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -244,6 +334,16 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
       {tab === "fornecedores" && (
         <div style={cardStyle}>
           <h3 style={h3Style}>🏢 Ranking Completo de Fornecedores</h3>
+          <button
+            onClick={() => downloadCsv(
+              `custos_fornecedores_${sessionId}.csv`,
+              ["fornecedor", "total_valor", "qtd_nfs", "pct_total"],
+              fornecedor_ranking.map((f) => [f.fornecedor, f.total_valor, f.qtd_nfs, f.pct_total]),
+            )}
+            style={{ ...tdStyle, marginBottom: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
+          >
+            Exportar CSV
+          </button>
           <div style={{ overflowX: "auto" }}>
             <table style={tableStyle}>
               <thead>
@@ -256,7 +356,7 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                 </tr>
               </thead>
               <tbody>
-                {fornecedor_ranking.map((f, i) => (
+                {(showAllFornecedores ? fornecedor_ranking : fornecedor_ranking.slice(0, 20)).map((f, i) => (
                   <tr key={i} style={{ background: i % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
                     <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: "#64748b" }}>{i + 1}</td>
                     <td style={{ ...tdStyle, color: "#f1f5f9", fontWeight: 600 }}>{f.fornecedor}</td>
@@ -268,6 +368,11 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
               </tbody>
             </table>
           </div>
+          {fornecedor_ranking.length > 20 && (
+            <button onClick={() => setShowAllFornecedores(v => !v)} style={{ ...tdStyle, marginTop: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
+              {showAllFornecedores ? "Recolher" : `Mostrar tudo (${fornecedor_ranking.length})`}
+            </button>
+          )}
         </div>
       )}
 
@@ -277,6 +382,16 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
       {tab === "consolidado" && (
         <div style={cardStyle}>
           <h3 style={h3Style}>📋 Consolidado Atual — {consolidado_detail.length} NFs — {fmtBRL(s.consolidado_atual.total_valor)}</h3>
+          <button
+            onClick={() => downloadCsv(
+              `custos_consolidado_${sessionId}.csv`,
+              ["num", "fornecedor", "nf", "mapa", "cond_pagto", "data_vencto", "valor"],
+              consolidado_detail.map((c) => [c.num, c.fornecedor, c.nf, c.mapa, c.cond_pagto, c.data_vencto, c.valor]),
+            )}
+            style={{ ...tdStyle, marginBottom: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
+          >
+            Exportar CSV
+          </button>
           <div style={{ overflowX: "auto" }}>
             <table style={tableStyle}>
               <thead>
@@ -291,7 +406,7 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                 </tr>
               </thead>
               <tbody>
-                {consolidado_detail.map((c, i) => (
+                {(showAllConsolidado ? consolidado_detail : consolidado_detail.slice(0, 25)).map((c, i) => (
                   <tr key={i} style={{ background: i % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
                     <td style={{ ...tdStyle, textAlign: "center", color: "#64748b" }}>{c.num}</td>
                     <td style={{ ...tdStyle, color: "#f1f5f9", fontWeight: 600 }}>{c.fornecedor}</td>
@@ -318,6 +433,11 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
               </tfoot>
             </table>
           </div>
+          {consolidado_detail.length > 25 && (
+            <button onClick={() => setShowAllConsolidado(v => !v)} style={{ ...tdStyle, marginTop: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
+              {showAllConsolidado ? "Recolher" : `Mostrar tudo (${consolidado_detail.length})`}
+            </button>
+          )}
         </div>
       )}
 
@@ -327,6 +447,16 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
       {tab === "nfs" && (
         <div style={cardStyle}>
           <h3 style={h3Style}>📄 Top 20 Maiores NFs</h3>
+          <button
+            onClick={() => downloadCsv(
+              `custos_top_nfs_${sessionId}.csv`,
+              ["fornecedor", "nf", "mapa", "consolidado", "cond_pagto", "data_vencto", "valor"],
+              top_nfs.map((nf) => [nf.fornecedor, nf.nf, nf.mapa, nf.consolidado, nf.cond_pagto, nf.data_vencto, nf.valor]),
+            )}
+            style={{ ...tdStyle, marginBottom: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
+          >
+            Exportar CSV
+          </button>
           <div style={{ overflowX: "auto" }}>
             <table style={tableStyle}>
               <thead>
@@ -341,7 +471,7 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                 </tr>
               </thead>
               <tbody>
-                {top_nfs.map((nf, i) => (
+                {(showAllNfs ? top_nfs : top_nfs.slice(0, 20)).map((nf, i) => (
                   <tr key={i} style={{ background: i % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
                     <td style={{ ...tdStyle, color: "#f1f5f9", fontWeight: 600, maxWidth: 200 }}>{nf.fornecedor}</td>
                     <td style={{ ...tdStyle, textAlign: "center", color: "#94a3b8" }}>{nf.nf}</td>
@@ -354,12 +484,20 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                       }}>{nf.cond_pagto}</span>
                     </td>
                     <td style={{ ...tdStyle, textAlign: "center", color: "#94a3b8", fontSize: 11 }}>{nf.data_vencto}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: i < 3 ? "#e05263" : "#34c97e" }}>{fmtBRL(nf.valor)}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: i < 3 ? "#e05263" : "#34c97e" }}>
+                      {fmtBRL(nf.valor)}
+                      {(anomalies?.count ?? 0) > 0 && i < 3 ? <span style={{ marginLeft: 6, color: "#fca5a5" }}>⚠️</span> : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {top_nfs.length > 20 && (
+            <button onClick={() => setShowAllNfs(v => !v)} style={{ ...tdStyle, marginTop: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
+              {showAllNfs ? "Recolher" : `Mostrar tudo (${top_nfs.length})`}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -367,8 +505,8 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const cardStyle: React.CSSProperties = { background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }
-const h3Style: React.CSSProperties = { margin: "0 0 16px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }
+const cardStyle: React.CSSProperties = { background: "rgba(30,41,59,0.7)", border: "1px solid var(--erp-border)", borderRadius: 14, padding: "20px 24px" }
+const h3Style: React.CSSProperties = { margin: "0 0 16px", fontSize: 15, fontWeight: 700, color: "var(--erp-text)" }
 const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 12 }
-const thStyle: React.CSSProperties = { textAlign: "center", padding: "8px 12px", borderBottom: "1px solid #334155", fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }
-const tdStyle: React.CSSProperties = { padding: "7px 12px", borderBottom: "1px solid rgba(51,65,85,0.4)", color: "#f1f5f9" }
+const thStyle: React.CSSProperties = { textAlign: "center", padding: "8px 12px", borderBottom: "1px solid var(--erp-border)", fontSize: 11, fontWeight: 700, color: "var(--erp-muted)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }
+const tdStyle: React.CSSProperties = { padding: "7px 12px", borderBottom: "1px solid rgba(51,65,85,0.4)", color: "var(--erp-text)" }

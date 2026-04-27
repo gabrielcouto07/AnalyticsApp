@@ -6,13 +6,37 @@ export function UploadZone() {
   const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [fileHint, setFileHint] = useState<string | null>(null)
   const setSession = useSession(s => s.setSession)
 
+  const ALLOWED_EXTENSIONS = ["xlsx", "xls", "xlsm", "csv", "txt", "json"]
+  const MAX_FILE_SIZE = 100 * 1024 * 1024
+
+  const validateFile = (file: File): string | null => {
+    const extension = file.name.split(".").pop()?.toLowerCase()
+    if (!extension || !ALLOWED_EXTENSIONS.includes(extension)) {
+      return `Formato inválido. Use: ${ALLOWED_EXTENSIONS.join(", ")}`
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return "Arquivo excede o limite de 100MB"
+    }
+    return null
+  }
+
   const handle = useCallback(async (file: File) => {
+    const validationError = validateFile(file)
+    if (validationError) {
+      setError(validationError)
+      return
+    }
+
+    setFileHint(`${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`)
+    setUploadProgress(0)
     setLoading(true)
     setError(null)
     try {
-      const upload = await uploadFile(file)
+      const upload = await uploadFile(file, setUploadProgress)
       setSession({
         session_id: upload.session_id,
         filename: upload.filename,
@@ -24,6 +48,7 @@ export function UploadZone() {
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Erro ao processar arquivo")
     } finally {
+      setUploadProgress(100)
       setLoading(false)
     }
   }, [setSession])
@@ -131,6 +156,31 @@ export function UploadZone() {
       }}>
         Max 100MB
       </p>
+
+      {fileHint && (
+        <p style={{ fontSize: "12px", color: "#0b4f3a", marginTop: "6px", fontWeight: 600 }}>
+          {fileHint}
+        </p>
+      )}
+
+      {loading && (
+        <div style={{ width: "100%", maxWidth: 320, marginTop: 14 }}>
+          <div style={{ height: 8, width: "100%", background: "rgba(15,23,42,0.15)", borderRadius: 999 }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${uploadProgress}%`,
+                borderRadius: 999,
+                background: "linear-gradient(90deg, #1f7a5a, #06b6d4)",
+                transition: "width 0.2s ease",
+              }}
+            />
+          </div>
+          <p style={{ marginTop: 6, fontSize: 12, color: "#0f172a", textAlign: "center", fontWeight: 700 }}>
+            Upload: {uploadProgress}%
+          </p>
+        </div>
+      )}
 
       {/* Error message */}
       {error && (
