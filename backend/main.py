@@ -27,6 +27,7 @@ app.include_router(advanced.router)
 app.include_router(converter.router)
 app.include_router(profiler.router)
 app.include_router(templates.router)
+app.include_router(templates.compare_router)
 app.include_router(materiais.router)
 
 

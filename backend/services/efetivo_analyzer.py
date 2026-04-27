@@ -228,6 +228,34 @@ class EfetivoAnalyzer:
         pivot.columns.name = None
         return pivot.to_dict(orient="records")
 
+    # ─── All Rows ────────────────────────────────────────────────────
+
+    def get_all_rows(self) -> List[Dict[str, Any]]:
+        """Return all parsed rows using canonical API field names."""
+        if self.df.empty:
+            return []
+
+        rows: List[Dict[str, Any]] = []
+        for _, row in self.df.iterrows():
+            data_val = row.get("Data")
+            rows.append({
+                "obra": str(row.get("Obra", "")),
+                "ano": int(row["Ano"]) if pd.notna(row.get("Ano")) else None,
+                "mes": int(row["Mes"]) if pd.notna(row.get("Mes")) else None,
+                "mes_nome": str(row.get("MesNome", "")),
+                "fornecedor": str(row.get("Fornecedor", "")),
+                "funcao": str(row.get("Funcao", "")),
+                "dia": int(row["Dia"]) if pd.notna(row.get("Dia")) else None,
+                "quantidade": round(float(row.get("Quantidade", 0)), 1) if pd.notna(row.get("Quantidade")) else 0,
+                "diarias_total": round(float(row.get("DiariasTotal", 0)), 1) if pd.notna(row.get("DiariasTotal")) else 0,
+                "data": str(data_val.date()) if pd.notna(data_val) else "",
+                "dia_semana": str(row.get("DiaSemana", "")),
+                "periodo": str(row.get("Periodo", "")),
+                "fornecedor_funcao": str(row.get("FornecedorFuncao", "")),
+                "trabalhou": int(row.get("Trabalhou", 0)) if pd.notna(row.get("Trabalhou")) else 0,
+            })
+        return rows
+
     # ─── Media Diária by Fornecedor ───────────────────────────────────
 
     def get_media_diaria_by_fornecedor(self) -> List[Dict[str, Any]]:

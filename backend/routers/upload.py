@@ -1,6 +1,6 @@
 import json as _json
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from ..session import create_session, get_session
 from ..services.parser import load_dataframe, get_col_types
 from ..services.analytics import calculate_kpis
@@ -20,7 +20,10 @@ router = APIRouter(prefix="/api", tags=["upload"])
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    force_template: str | None = Query(None, pattern="^(efetivo|orcamento|custos|generic)$"),
+):
     allowed = {".xlsx", ".xls", ".xlsm", ".csv", ".txt", ".json", ".pdf", ".sql", ".docx"}
     ext = "." + file.filename.split(".")[-1].lower()
 
@@ -31,7 +34,36 @@ async def upload_file(file: UploadFile = File(...)):
         content = await file.read()
         custos_result = None
 
-        if ext in {".xlsx", ".xls", ".xlsm"}:
+        def _parse_generic():
+            print(f"[UPLOAD DEBUG] Using standard Excel parser for '{file.filename}'")
+            parsed_df, parsed_sheets, _ = load_dataframe(content, file.filename)
+            return parsed_df, parsed_sheets, None
+
+        if force_template == "generic":
+            df, available_sheets, template_type = _parse_generic()
+        elif force_template == "custos":
+            custos_result = parse_custos_file(content, file.filename)
+            df = custos_result["nfs"]
+            if df.empty:
+                df = custos_result["consolidado"]
+            if df.empty:
+                raise HTTPException(422, "Custos file parsed but returned no records")
+            template_type = "custos"
+            available_sheets = {}
+        elif force_template == "efetivo":
+            df = parse_efetivo_file(content, file.filename)
+            if df.empty:
+                raise HTTPException(422, "Efetivo file parsed but returned no records")
+            template_type = "efetivo"
+            available_sheets = {}
+        elif force_template == "orcamento":
+            result = parse_orcamento_file(content, file.filename)
+            df = result["flat"]
+            if df.empty:
+                raise HTTPException(422, "Orcamento file parsed but returned no records")
+            template_type = "orcamento"
+            available_sheets = {}
+        elif ext in {".xlsx", ".xls", ".xlsm"}:
             # 0) Check Custos layout FIRST (most specific — looks for NF + CONSOLIDADO sheets)
             if detect_custos_file(content, file.filename):
                 print(f"[UPLOAD DEBUG] Custos detection successful for '{file.filename}'")
@@ -74,12 +106,9 @@ async def upload_file(file: UploadFile = File(...)):
 
             # 4) Standard Excel
             else:
-                print(f"[UPLOAD DEBUG] Using standard Excel parser for '{file.filename}'")
-                df, available_sheets, _ = load_dataframe(content, file.filename)
-                template_type = None
+                df, available_sheets, template_type = _parse_generic()
         else:
-            df, available_sheets, _ = load_dataframe(content, file.filename)
-            template_type = None
+            df, available_sheets, template_type = _parse_generic()
 
     except HTTPException:
         raise

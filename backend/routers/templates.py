@@ -4,8 +4,9 @@ for NF, Efetivo, and Orçamento (Mapa de Concorrência) data types.
 """
 
 from fastapi import APIRouter, HTTPException, Query, Body
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pandas as pd
+import unicodedata
 
 from ..services.templates import (
     get_all_templates,
@@ -22,6 +23,7 @@ from ..services.advanced_analytics import AnomalyDetector, TrendAnalyzer
 from ..session import get_active_df, get_session_extra
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
+compare_router = APIRouter(prefix="/api", tags=["compare"])
 
 _analysis_cache: Dict[str, Any] = {}
 
@@ -37,6 +39,121 @@ def _cached(session_id: str, scope: str, fn):
     value = fn()
     _analysis_cache[key] = value
     return value
+
+
+def _normalize_text(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+
+
+def _apply_efetivo_filters(df: pd.DataFrame, fornecedor: Optional[str] = None, mes: Optional[str] = None, funcao: Optional[str] = None) -> pd.DataFrame:
+    filtered = df.copy()
+    if fornecedor and "Fornecedor" in filtered.columns:
+        target = _normalize_text(fornecedor)
+        filtered = filtered[filtered["Fornecedor"].astype(str).map(_normalize_text) == target]
+    if funcao and "Funcao" in filtered.columns:
+        target = _normalize_text(funcao)
+        filtered = filtered[filtered["Funcao"].astype(str).map(_normalize_text) == target]
+    if mes:
+        target = _normalize_text(mes)
+        if target.isdigit() and "Mes" in filtered.columns:
+            filtered = filtered[pd.to_numeric(filtered["Mes"], errors="coerce") == int(target)]
+        elif "MesNome" in filtered.columns:
+            filtered = filtered[filtered["MesNome"].astype(str).map(_normalize_text) == target]
+    return filtered
+
+
+def _apply_custos_filters(df: pd.DataFrame, fornecedor: Optional[str] = None, mes: Optional[str] = None) -> pd.DataFrame:
+    filtered = df.copy()
+    if fornecedor and "Fornecedor" in filtered.columns:
+        target = _normalize_text(fornecedor)
+        filtered = filtered[filtered["Fornecedor"].astype(str).map(_normalize_text) == target]
+    if mes and "DataVencto" in filtered.columns:
+        target = _normalize_text(mes)
+        if target.isdigit():
+            filtered = filtered[pd.to_datetime(filtered["DataVencto"], errors="coerce").dt.month == int(target)]
+        else:
+            month_map = {
+                "janeiro": 1, "fevereiro": 2, "marco": 3, "março": 3, "abril": 4, "maio": 5,
+                "junho": 6, "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10,
+                "novembro": 11, "dezembro": 12,
+            }
+            month_num = month_map.get(target)
+            if month_num is not None:
+                filtered = filtered[pd.to_datetime(filtered["DataVencto"], errors="coerce").dt.month == month_num]
+    return filtered
+
+
+def _sum_numeric_by_obra(df: pd.DataFrame, value_col: str, obra_col: str = "Obra") -> Dict[str, float]:
+    if df is None or df.empty or value_col not in df.columns:
+        return {}
+    working = df.copy()
+    working[value_col] = pd.to_numeric(working[value_col], errors="coerce")
+    if obra_col in working.columns:
+        grouped = working.groupby(obra_col)[value_col].sum()
+        result: Dict[str, float] = {}
+        for obra, value in grouped.items():
+            key = str(obra).strip()
+            if not key:
+                key = ""
+            result[key] = round(float(value), 2) if pd.notna(value) else 0.0
+        return result
+    total = float(working[value_col].sum())
+    return {"": round(total, 2)}
+
+
+def _aggregate_compare_rows(
+    efetivo_df: Optional[pd.DataFrame],
+    orcamento_df: Optional[pd.DataFrame],
+    custos_df: Optional[pd.DataFrame],
+) -> List[Dict[str, Any]]:
+    efetivo_totals: Dict[str, float] = {}
+    orcamento_totals: Dict[str, float] = {}
+    custos_totals: Dict[str, float] = {}
+
+    if efetivo_df is not None and not efetivo_df.empty:
+        working = efetivo_df.copy()
+        if "Quantidade" in working.columns:
+            working["Quantidade"] = pd.to_numeric(working["Quantidade"], errors="coerce")
+            working = working[working["Quantidade"] > 0]
+        efetivo_totals = _sum_numeric_by_obra(working, "Quantidade")
+
+    if orcamento_df is not None and not orcamento_df.empty:
+        working = orcamento_df.copy()
+        price_col = "Preco" if "Preco" in working.columns else ("ValorTotal" if "ValorTotal" in working.columns else None)
+        if price_col:
+            orcamento_totals = _sum_numeric_by_obra(working, price_col)
+
+    if custos_df is not None and not custos_df.empty:
+        working = custos_df.copy()
+        value_col = "Valor" if "Valor" in working.columns else ("ValorTotal" if "ValorTotal" in working.columns else None)
+        if value_col:
+            custos_totals = _sum_numeric_by_obra(working, value_col)
+
+    obra_keys = set(efetivo_totals) | set(orcamento_totals) | set(custos_totals)
+    if not obra_keys:
+        obra_keys = {""}
+
+    rows: List[Dict[str, Any]] = []
+    for obra in sorted(obra_keys):
+        efetivo_total = efetivo_totals.get(obra, 0.0)
+        orcamento_total = orcamento_totals.get(obra, 0.0)
+        custos_total = custos_totals.get(obra, 0.0)
+        delta_orcamento_custos_pct = None
+        delta_efetivo_orcamento_pct = None
+        if custos_total:
+            delta_orcamento_custos_pct = round(((orcamento_total - custos_total) / custos_total) * 100, 2)
+        if orcamento_total:
+            delta_efetivo_orcamento_pct = round(((efetivo_total - orcamento_total) / orcamento_total) * 100, 2)
+        rows.append({
+            "obra": obra,
+            "efetivo_total_diarias": round(float(efetivo_total), 2),
+            "orcamento_total_valor": round(float(orcamento_total), 2),
+            "custos_total_valor": round(float(custos_total), 2),
+            "delta_orcamento_custos_pct": delta_orcamento_custos_pct,
+            "delta_efetivo_orcamento_pct": delta_efetivo_orcamento_pct,
+        })
+    return rows
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -220,11 +337,17 @@ async def get_nf_semantic(session_id: str) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/efetivo/analysis/{session_id}")
-async def get_efetivo_analysis(session_id: str) -> Dict[str, Any]:
+async def get_efetivo_analysis(
+    session_id: str,
+    fornecedor: Optional[str] = Query(None),
+    mes: Optional[str] = Query(None),
+    funcao: Optional[str] = Query(None),
+) -> Dict[str, Any]:
     df = get_active_df(session_id)
     if df is None:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
+        df = _apply_efetivo_filters(df, fornecedor=fornecedor, mes=mes, funcao=funcao)
         analyzer = EfetivoAnalyzer(df)
         return analyzer.get_consolidated_report()
     except Exception as e:
@@ -342,6 +465,34 @@ async def get_efetivo_trend(
         raise HTTPException(status_code=500, detail=f"Efetivo trend error: {str(e)}")
 
 
+@router.get("/efetivo/all/{session_id}")
+async def get_efetivo_all(session_id: str) -> List[Dict[str, Any]]:
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        def compute():
+            return EfetivoAnalyzer(df).get_all_rows()
+
+        return _cached(session_id, "efetivo:all", compute)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Efetivo all rows error: {str(e)}")
+
+
+@router.get("/efetivo/matrix/{session_id}")
+async def get_efetivo_matrix(session_id: str) -> Dict[str, Any]:
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        def compute():
+            return EfetivoAnalyzer(df).get_fornecedor_funcao_matrix()
+
+        return _cached(session_id, "efetivo:matrix", compute)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Efetivo matrix error: {str(e)}")
+
+
 @router.get("/nf/nature/{session_id}")
 async def get_nf_nature(session_id: str) -> List[Dict[str, Any]]:
     """Get nature/category analysis"""
@@ -423,6 +574,87 @@ async def get_orcamento_analysis(session_id: str) -> Dict[str, Any]:
         return analyzer.get_consolidated_report()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Orcamento analysis error: {str(e)}")
+
+
+@router.get("/orcamento/anomalies/{session_id}")
+async def get_orcamento_anomalies(
+    session_id: str,
+    method: str = Query("iqr", pattern="^(iqr|zscore|forest)$"),
+    threshold: float = Query(3.0, gt=0),
+    contamination: float = Query(0.1, gt=0, lt=0.5),
+) -> Dict[str, Any]:
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        def compute():
+            if "Preco" not in df.columns and "ValorTotal" not in df.columns:
+                raise HTTPException(status_code=422, detail="Column 'Preco' not found")
+
+            value_col = "Preco" if "Preco" in df.columns else "ValorTotal"
+            values = pd.to_numeric(df[value_col], errors="coerce").dropna()
+            if values.empty:
+                return {"method": method, "anomalies": [], "count": 0, "percentage": 0}
+
+            if method == "iqr":
+                return AnomalyDetector.iqr_method(values)
+            if method == "zscore":
+                return AnomalyDetector.zscore_method(values, threshold=threshold)
+            return AnomalyDetector.isolation_forest_method(df[[value_col]].rename(columns={value_col: "value"}), contamination=contamination)
+
+        scope = f"orcamento:anomalies:{method}:{threshold}:{contamination}"
+        return _cached(session_id, scope, compute)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Orcamento anomalies error: {str(e)}")
+
+
+@router.get("/orcamento/trend/{session_id}")
+async def get_orcamento_trend(
+    session_id: str,
+    window: int = Query(5, ge=2, le=60),
+) -> Dict[str, Any]:
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        def compute():
+            analyzer = OrcamentoAnalyzer(df)
+            values = analyzer.df
+            value_col = "Preco" if "Preco" in values.columns else ("ValorTotal" if "ValorTotal" in values.columns else None)
+            if value_col is None:
+                return {"direction": "unknown", "strength": "fraca", "period_analyzed": 0}
+
+            series = pd.to_numeric(values[value_col], errors="coerce").dropna()
+            if series.empty:
+                return {"direction": "unknown", "strength": "fraca", "period_analyzed": 0}
+
+            trend = TrendAnalyzer.detect_trend(series, window=window)
+            trend["column"] = value_col
+            trend["window"] = window
+            return trend
+
+        scope = f"orcamento:trend:{window}"
+        return _cached(session_id, scope, compute)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Orcamento trend error: {str(e)}")
+
+
+@router.get("/orcamento/all/{session_id}")
+async def get_orcamento_all(session_id: str) -> List[Dict[str, Any]]:
+    df = get_active_df(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        def compute():
+            return OrcamentoAnalyzer(df).get_all_rows()
+
+        return _cached(session_id, "orcamento:all", compute)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Orcamento all rows error: {str(e)}")
 
 
 @router.get("/orcamento/summary/{session_id}")
@@ -732,7 +964,11 @@ async def get_materiais_analysis(session_id: str) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/custos/analysis/{session_id}")
-async def get_custos_analysis(session_id: str) -> Dict[str, Any]:
+async def get_custos_analysis(
+    session_id: str,
+    fornecedor: Optional[str] = Query(None),
+    mes: Optional[str] = Query(None),
+) -> Dict[str, Any]:
     """Full consolidated report from both NFs and Consolidado sheets."""
     df_nfs = get_active_df(session_id)
     if df_nfs is None:
@@ -743,6 +979,9 @@ async def get_custos_analysis(session_id: str) -> Dict[str, Any]:
         import pandas as pd
         df_cons = pd.DataFrame()
     try:
+        df_nfs = _apply_custos_filters(df_nfs, fornecedor=fornecedor, mes=mes)
+        if df_cons is not None and not df_cons.empty:
+            df_cons = _apply_custos_filters(df_cons, fornecedor=fornecedor, mes=mes)
         return CustosAnalyzer(df_nfs, df_cons, meta).get_consolidated_report()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Custos analysis error: {str(e)}")
@@ -864,3 +1103,34 @@ async def get_custos_consolidado_detail(session_id: str) -> List[Dict[str, Any]]
     df_cons = get_session_extra(session_id, "consolidado")
     import pandas as pd
     return CustosAnalyzer(df_nfs, df_cons if df_cons is not None else pd.DataFrame()).get_consolidado_detail()
+
+
+@compare_router.get("/compare/{session_efetivo}/{session_orcamento}/{session_custos}")
+async def compare_sessions(
+    session_efetivo: str,
+    session_orcamento: str,
+    session_custos: str,
+) -> List[Dict[str, Any]]:
+    try:
+        def _resolve(session_id: str):
+            if not session_id or session_id.lower() == "none":
+                return None
+            df = get_active_df(session_id)
+            if df is None:
+                raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+            return df
+
+        efetivo_df = _resolve(session_efetivo)
+        orcamento_df = _resolve(session_orcamento)
+        custos_df = _resolve(session_custos)
+
+        scope = f"compare:{session_efetivo}:{session_orcamento}:{session_custos}"
+
+        def compute():
+            return _aggregate_compare_rows(efetivo_df, orcamento_df, custos_df)
+
+        return _cached(scope, "compare", compute)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Compare error: {str(e)}")

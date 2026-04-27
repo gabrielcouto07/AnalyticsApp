@@ -153,7 +153,6 @@ class OrcamentoAnalyzer:
 
         result = []
         fornecedores = [f for f in df["FornecedorNome"].unique() if f]
-
         for forn in fornecedores:
             df_f = df[df["FornecedorNome"] == forn]
             total = df_f["Preco"].sum() if "Preco" in df_f.columns else 0
@@ -182,6 +181,38 @@ class OrcamentoAnalyzer:
 
         result.sort(key=lambda x: x["total_preco"] if x["total_preco"] > 0 else float("inf"))
         return result
+
+    # ─── All Rows ────────────────────────────────────────────────────
+
+    def get_all_rows(self) -> List[Dict[str, Any]]:
+        """Return all parsed rows using canonical API field names."""
+        if self.df.empty:
+            return []
+
+        rows: List[Dict[str, Any]] = []
+        for _, row in self.df.iterrows():
+            data_val = row.get("Data")
+            rows.append({
+                "obra": str(row.get("Obra", "")),
+                "assunto": str(row.get("Assunto", "")),
+                "numero": str(row.get("Numero", "")),
+                "data": str(data_val) if pd.notna(data_val) else "",
+                "filename": str(row.get("Filename", "")),
+                "item": int(row["Item"]) if pd.notna(row.get("Item")) else None,
+                "descricao": str(row.get("Descricao", "")),
+                "quant": float(row.get("Quant", 0)) if pd.notna(row.get("Quant")) else 0,
+                "unid": str(row.get("Unid", "")),
+                "tipo": str(row.get("Tipo", "")),
+                "fornecedor_index": int(row["FornecedorIndex"]) if pd.notna(row.get("FornecedorIndex")) else None,
+                "fornecedor_nome": str(row.get("FornecedorNome", "")),
+                "contato": str(row.get("Contato", "")),
+                "telefone": str(row.get("Telefone", "")),
+                "email": str(row.get("Email", "")),
+                "valor_a": round(float(row.get("ValorA", 0)), 2) if pd.notna(row.get("ValorA")) else None,
+                "valor_b": round(float(row.get("ValorB", 0)), 2) if pd.notna(row.get("ValorB")) else None,
+                "preco": round(float(row.get("Preco", 0)), 2) if pd.notna(row.get("Preco")) else None,
+            })
+        return rows
 
     # ─── Item Analysis ────────────────────────────────────────────────
 
