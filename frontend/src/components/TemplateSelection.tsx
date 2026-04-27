@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useSessionStore } from '../store/session';
 
 interface Template {
@@ -28,16 +28,7 @@ export const TemplateSelection: React.FC<TemplateSelectionProps> = ({
   const setSelectedTemplateStore = useSessionStore((state) => state.setSelectedTemplate);
   const setSuggestedTemplatesStore = useSessionStore((state) => state.setSuggestedTemplates);
 
-  useEffect(() => {
-    loadTemplates();
-    if (autoSuggest && sessionId && Object.keys(colTypes).length > 0) {
-      suggestTemplates();
-    } else {
-      setLoading(false);
-    }
-  }, [sessionId, colTypes]);
-
-  const loadTemplates = async () => {
+  const loadTemplates = useCallback(async () => {
     try {
       const response = await fetch('/api/templates/list');
       const data = await response.json();
@@ -55,9 +46,9 @@ export const TemplateSelection: React.FC<TemplateSelectionProps> = ({
     } catch (err) {
       console.error('Error loading templates:', err);
     }
-  };
+  }, []);
 
-  const suggestTemplates = async () => {
+  const suggestTemplates = useCallback(async () => {
     if (!sessionId || Object.keys(colTypes).length === 0) {
       setLoading(false);
       return;
@@ -91,7 +82,16 @@ export const TemplateSelection: React.FC<TemplateSelectionProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [colTypes, sessionId, setSuggestedTemplatesStore]);
+
+  useEffect(() => {
+    loadTemplates();
+    if (autoSuggest && sessionId && Object.keys(colTypes).length > 0) {
+      suggestTemplates();
+    } else {
+      setLoading(false);
+    }
+  }, [autoSuggest, colTypes, loadTemplates, sessionId, suggestTemplates]);
 
   const handleSelect = (templateId: string) => {
     setSelectedTemplate(templateId);

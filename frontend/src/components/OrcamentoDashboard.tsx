@@ -4,7 +4,7 @@ import {
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
 } from "recharts"
 
-const API = "http://localhost:8001/api/templates"
+const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001"}/api/templates`
 
 const COLORS = [
   "#34c97e", "#4f8ef7", "#f5a623", "#e05263",
@@ -199,7 +199,7 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
               <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={v => fmtBRL(v)} />
               <YAxis type="category" dataKey="name" tick={{ fill: "#f1f5f9", fontSize: 11 }} width={180} />
               <Tooltip content={<BarTooltip />} />
-              <Bar dataKey="total" radius={[0, 6, 6, 0]} label={{ position: "right", fill: "#94a3b8", fontSize: 11, formatter: (v: number) => fmtBRL(v) }}>
+              <Bar dataKey="total" radius={[0, 6, 6, 0]} label={{ position: "right", fill: "#94a3b8", fontSize: 11, formatter: (value) => fmtBRL(Number(value)) }}>
                 {fornTotalData.map((entry, i) => (
                   <Cell key={i} fill={entry.name === summary.menor_preco_fornecedor ? WINNER_COLOR : COLORS[i % COLORS.length]} />
                 ))}
@@ -221,7 +221,7 @@ export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId 
                   <Cell key={i} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value: number) => value} />
+              <Tooltip formatter={(value) => Number(value)} />
             </PieChart>
           </ResponsiveContainer>
         </div>

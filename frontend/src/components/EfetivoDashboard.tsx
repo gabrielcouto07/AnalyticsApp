@@ -4,7 +4,7 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts"
 
-const API = "http://localhost:8001/api/templates"
+const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001"}/api/templates`
 
 const COLORS = [
   "#4f8ef7", "#34c97e", "#f5a623", "#e05263",

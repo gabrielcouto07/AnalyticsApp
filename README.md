@@ -19,8 +19,8 @@
 ```bash
 cd AnalyticsApp
 pip install -r requirements.txt
-python backend/main.py
-# Access: http://localhost:8000/docs
+python -m uvicorn backend.main:app --reload --port 8001
+# Access: http://localhost:8001/docs
 ```
 
 **Frontend:**
@@ -51,18 +51,17 @@ AnalyticsApp/
 │   ├── main.py                # Entry point
 │   ├── session.py             # UUID session management
 │   ├── routers/               # API endpoints
-│   │   ├── upload.py          # File upload
-│   │   ├── data.py            # Data operations
-│   │   ├── charts.py          # Chart generation
-│   │   ├── filters.py         # Filter logic
-│   │   ├── export.py          # Data export
-│   │   └── analytics.py       # Analytics (GET)
+│   │   ├── upload.py          # File upload endpoint
+│   │   └── templates.py       # Template analysis endpoints
 │   └── services/              # Business logic
-│       ├── parser.py          # CSV/Excel parsing
-│       ├── analytics.py       # Calculations
-│       ├── insights.py        # Auto insights
-│       ├── export.py          # Export formats
-│       └── semantic.py        # Semantic analysis
+│       ├── parser.py          # CSV/Excel/PDF parsing
+│       ├── templates.py       # Template definitions
+│       ├── efetivo_template.py  # Efetivo template detection
+│       ├── orcamento_template.py # Orçamento template detection
+│       ├── custos_template.py    # Custos template detection
+│       ├── efetivo_analyzer.py   # Efetivo analysis
+│       ├── orcamento_analyzer.py # Orçamento analysis
+│       └── custos_analyzer.py    # Custos analysis
 │
 ├── frontend/                  # React + TypeScript
 │   ├── src/
@@ -126,34 +125,23 @@ AnalyticsApp/
 
 ## 🔌 API Endpoints
 
-### Upload & Data
-- `POST /api/upload` - Upload file
-- `GET /api/data-summary/{sessionId}` - Get data overview
-- `GET /api/columns/{sessionId}` - Get columns info
-- `POST /api/columns/{sessionId}` - Update column info
+### Upload & Templates
+- `POST /api/upload` - Upload file and detect template
+- `GET /api/templates/list` - List available templates
+- `GET /api/templates/{template_id}` - Get template details
+- `POST /api/templates/suggest` - Suggest templates based on columns
+- `GET /api/templates/{template_id}/data/{session_id}` - Get filtered data for template
 
-### Analytics & Insights
-- `GET /api/analytics/summary/{sessionId}` - Analytics summary
-- `GET /api/analytics/profile/{sessionId}` - Data profile
-- `GET /api/analytics/recommendations/{sessionId}` - Auto recommendations
-- `GET /api/analytics/quality/{sessionId}` - Data quality metrics
-
-### Charts & Visualization
-- `POST /api/charts/correlation/{sessionId}` - Correlation matrix
-- `POST /api/charts/distribution/{sessionId}` - Distribution data
-- `POST /api/charts/temporal/{sessionId}` - Time series data
-- `POST /api/charts/scatter/{sessionId}` - Scatter plot data
-
-### Filters & Export
-- `POST /api/filters/apply/{sessionId}` - Apply filters
-- `POST /api/export/{sessionId}` - Export data
-- `GET /api/export-formats/{sessionId}` - Available formats
+### Template-Specific Analysis
+- `GET /api/templates/efetivo/analysis/{session_id}` - Efetivo analysis
+- `GET /api/templates/orcamento/analysis/{session_id}` - Orçamento analysis
+- `GET /api/templates/custos/analysis/{session_id}` - Custos analysis
 
 ### Status & Health
-- `GET /api/health` - Health check
-- `GET /api/status/{sessionId}` - Session status
+- `GET /` - Root endpoint (returns status and docs link)
+- `GET /docs` - Swagger UI documentation
 
-**Full API Docs**: http://localhost:8000/docs (Swagger UI)
+**Full API Docs**: http://localhost:8001/docs (Swagger UI)
 
 ---
 

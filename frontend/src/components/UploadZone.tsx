@@ -48,14 +48,14 @@ export function UploadZone() {
         width: "100%",
         minHeight: "240px",
         borderRadius: "16px",
-        border: `2px dashed ${dragging ? "#4f8ef7" : "#334155"}`,
-        backgroundColor: dragging ? "rgba(79, 142, 247, 0.1)" : "rgba(30, 41, 59, 0.4)",
+        border: `2px dashed ${dragging ? "#1f7a5a" : "rgba(11,79,58,0.3)"}`,
+        backgroundColor: dragging ? "rgba(31, 122, 90, 0.12)" : "rgba(255, 255, 255, 0.85)",
         cursor: "pointer",
         transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
         opacity: loading ? 0.7 : 1,
         pointerEvents: loading ? "none" : "auto",
         padding: "40px 20px",
-        backdropFilter: "blur(10px)"
+        backdropFilter: "blur(6px)"
       }}
     >
       <input
@@ -79,7 +79,7 @@ export function UploadZone() {
       <p style={{
         fontSize: "18px",
         fontWeight: "700",
-        color: "#f1f5f9",
+        color: "#0f172a",
         margin: "0 0 8px 0",
         letterSpacing: "-0.3px"
       }}>
@@ -89,7 +89,7 @@ export function UploadZone() {
       {/* Subtitle */}
       <p style={{
         fontSize: "14px",
-        color: "#cbd5e1",
+        color: "#475569",
         margin: "0 0 16px 0",
         fontWeight: "400"
       }}>
@@ -111,8 +111,8 @@ export function UploadZone() {
               fontSize: "11px",
               fontWeight: "600",
               padding: "4px 10px",
-              backgroundColor: "rgba(79, 142, 247, 0.15)",
-              color: "#94a3b8",
+              backgroundColor: "rgba(31, 122, 90, 0.12)",
+              color: "#0b4f3a",
               borderRadius: "12px",
               textTransform: "uppercase",
               letterSpacing: "0.5px"
@@ -126,7 +126,7 @@ export function UploadZone() {
       {/* File size hint */}
       <p style={{
         fontSize: "12px",
-        color: "#64748b",
+        color: "#475569",
         margin: 0
       }}>
         Max 100MB

@@ -4,7 +4,7 @@ import json
 
 # Upload test_data_full.csv
 with open('test_data_full.csv', 'rb') as f:
-    resp = requests.post('http://localhost:8000/api/upload', files={'file': f})
+    resp = requests.post('http://localhost:8001/api/upload', files={'file': f})
 
 data = resp.json()
 sid = data['session_id']
@@ -17,7 +17,7 @@ numeric_cols = col_types.get('numeric', [])
 if len(numeric_cols) >= 2:
     # Test explorer
     payload = {'x_column': numeric_cols[0], 'y_column': numeric_cols[1]}
-    resp = requests.post(f'http://localhost:8000/api/charts/{sid}/explorer', json=payload)
+    resp = requests.post(f'http://localhost:8001/api/charts/{sid}/explorer', json=payload)
     result = resp.json()
     print('\n✅ Explorer Success!')
     print(f'Correlation: {result["statistics"]["correlation"]}')

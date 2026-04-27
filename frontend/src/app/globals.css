@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import "../App.css";
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  background: radial-gradient(1200px 600px at 0% 0%, rgba(31, 122, 90, 0.22), transparent 60%),
+    radial-gradient(900px 500px at 100% 100%, rgba(203, 187, 160, 0.20), transparent 55%),
+    #f4f6f8;
+  color: #0f172a;
+  font-family: 'Inter', sans-serif;
+  line-height: 1.5;
+}

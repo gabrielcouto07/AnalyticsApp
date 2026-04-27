@@ -1,29 +1,21 @@
-import { tokens } from "./src/lib/theme.ts"
-
-export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
   theme: {
     extend: {
-      colors: { ...tokens.colors, faint: "#475569" },
-      spacing: tokens.spacing,
-      borderRadius: tokens.radius,
-      fontFamily: {
-        sans: [tokens.typography.fontFamily],
+      colors: {
+        brand: {
+          deep: "#0b4f3a",
+          primary: "#1f7a5a",
+          accent: "#cbbba0",
+        },
       },
-      fontSize: tokens.typography.fontSize,
-      fontWeight: tokens.typography.fontWeight,
-      lineHeight: tokens.typography.lineHeight,
-      backgroundColor: {
-        surface: tokens.colors.surface,
-        card: tokens.colors.card,
-      },
-      textColor: {
-        text: tokens.colors.text,
-        muted: tokens.colors.muted,
-        faint: "#475569",
-      },
-      borderColor: {
-        border: tokens.colors.border,
+      boxShadow: {
+        glass: "0 12px 34px rgba(11, 79, 58, 0.16)",
       },
     },
   },

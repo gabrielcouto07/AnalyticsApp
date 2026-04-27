@@ -15,33 +15,45 @@ from typing import Dict, List, Any
 
 ORCAMENTO_TEMPLATE = {
     "name": "Orçamento - Mapa de Concorrência",
-    "description": "Mapa de concorrência com orçamento, fornecedores e cotação de preços por item.",
+    "description": "Análise competitiva de orçamento. Comparação de preços por fornecedor com classificação de serviços e insumos.",
     "icon": "💰",
-    "color": "emerald",
+    "color": "#10b981",
+    "tags": ["orçamento", "concorrência", "preços", "fornecedores"],
     "key_metrics": [
         {
-            "name": "Total Itens",
+            "name": "Total de Itens",
             "field": "Item",
-            "description": "Quantidade de itens no orçamento",
+            "description": "Quantidade total de linhas orçamentárias",
             "type": "unique_count",
+            "icon": "📋",
         },
         {
-            "name": "Fornecedores",
+            "name": "Fornecedores Cotados",
             "field": "FornecedorNome",
-            "description": "Número de fornecedores cotados",
+            "description": "Número de fornecedores em análise",
             "type": "unique_count",
+            "icon": "🤝",
         },
         {
-            "name": "Menor Preço Total",
+            "name": "Melhor Preço Total",
             "field": "Preco",
-            "description": "Menor soma total entre fornecedores",
+            "description": "Orçamento consolidado mais vantajoso",
             "type": "min_sum",
+            "icon": "✅",
         },
         {
-            "name": "Serviços vs Insumos",
+            "name": "Classificação de Itens",
             "field": "Tipo",
-            "description": "Proporção entre serviços e insumos",
+            "description": "Distribuição entre serviços e insumos",
             "type": "count_group",
+            "icon": "🏷️",
+        },
+        {
+            "name": "Valor Total em Disputa",
+            "field": "Preco",
+            "description": "Soma de todos os itens cotados",
+            "type": "sum",
+            "icon": "💵",
         },
     ],
     "required_columns": [
@@ -58,26 +70,62 @@ ORCAMENTO_TEMPLATE = {
     "visualizations": [
         {
             "type": "bar",
-            "title": "Preço Total por Fornecedor",
+            "title": "Preço Total Consolidado por Fornecedor",
             "field": "FornecedorNome",
             "value_field": "Preco",
+            "description": "Comparação de orçamento total para melhor decisão",
+            "icon": "📊",
         },
         {
             "type": "table",
-            "title": "Comparativo de Preços por Item",
+            "title": "Matriz Comparativa de Preços",
             "pivot": True,
             "rows": "Descricao",
             "columns": "FornecedorNome",
             "values": "Preco",
+            "description": "Análise item-a-item para identificar diferenciais",
+            "icon": "📈",
         },
         {
             "type": "pie",
-            "title": "Tipo: Serviço vs Insumo",
+            "title": "Composição: Serviços vs Insumos",
             "field": "Tipo",
             "value_field": "count",
+            "description": "Proporção de itens em cada categoria",
+            "icon": "🥧",
+        },
+        {
+            "type": "bar",
+            "title": "Distribuição de Valor por Tipo",
+            "field": "Tipo",
+            "value_field": "Preco",
+            "description": "Quanto é investido em cada tipo",
+            "icon": "💰",
+        },
+        {
+            "type": "bar",
+            "title": "Análise de Assuntos/Projetos",
+            "field": "Assunto",
+            "value_field": "Preco",
+            "description": "Segregação de custos por projeto",
+            "icon": "🏢",
+        },
+        {
+            "type": "heatmap",
+            "title": "Variação de Preços: Fornecedor vs Tipo",
+            "x_field": "FornecedorNome",
+            "y_field": "Tipo",
+            "value_field": "Preco",
+            "description": "Identifique onde cada fornecedor é mais competitivo",
+            "icon": "🔥",
         },
     ],
-    "filters": ["FornecedorNome", "Tipo", "Assunto"],
+    "filters": [
+        {"field": "FornecedorNome", "type": "multi_select"},
+        {"field": "Tipo", "type": "multi_select"},
+        {"field": "Assunto", "type": "multi_select"},
+        {"field": "Preco", "type": "number_range"},
+    ],
     "sample_columns": {
         "Obra": "text",
         "Assunto": "text",
@@ -125,7 +173,7 @@ def detect_orcamento_file(file_bytes: bytes, filename: str) -> bool:
     for src, dst in [("ç", "c"), ("ã", "a"), ("á", "a"), ("é", "e"), ("ê", "e"), ("ó", "o"), ("ú", "u")]:
         name_lower = name_lower.replace(src, dst)
 
-    # Filename heuristic (was completely missing before)
+    # Filename heuristic
     if any(kw in name_lower for kw in ["orcamento", "mapa", "concorr"]):
         logger.info(f"[orcamento_detect] {filename} — matched by filename")
         return True
@@ -136,14 +184,14 @@ def detect_orcamento_file(file_bytes: bytes, filename: str) -> bool:
         wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
         ws = wb[wb.sheetnames[0]]
 
-        # Row 2: title (check cols 1-6 instead of 1-4 for wider layouts)
+        # Row 2: title (check cols 1-6 for wider layouts)
         for col in range(1, 7):
             v = str(ws.cell(row=2, column=col).value or "").upper()
             if "MAPA" in v and "CONCORR" in v:
                 wb.close()
                 return True
 
-        # Row 6: FORNECEDOR (extend scan to 30 cols for wider files)
+        # Row 6: FORNECEDOR (extended to 30 cols)
         for col in range(1, 31):
             v = str(ws.cell(row=6, column=col).value or "").upper()
             if "FORNECEDOR" in v:
@@ -157,7 +205,7 @@ def detect_orcamento_file(file_bytes: bytes, filename: str) -> bool:
             wb.close()
             return True
 
-        # Wider scan: check rows 1-20 for "MAPA" + "CONCORR" anywhere
+        # Wider scan: rows 1-20 for MAPA + CONCORR anywhere
         for row in range(1, 21):
             for col in range(1, 6):
                 v = str(ws.cell(row=row, column=col).value or "").upper()
@@ -169,7 +217,6 @@ def detect_orcamento_file(file_bytes: bytes, filename: str) -> bool:
         wb.close()
     except Exception as exc:
         logger.warning(f"[orcamento_detect] {filename} — exception: {exc}")
-
     return False
 
 

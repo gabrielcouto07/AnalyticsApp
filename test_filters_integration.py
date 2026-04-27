@@ -17,10 +17,11 @@ from session import (
     get_session_info, invalidate_chart_cache
 )
 
-# Importar função de filtro diretamente
-import importlib.util
-spec = importlib.util.spec_from_file_location("filters", str(Path(__file__).parent / 'backend' / 'routers' / 'filters.py'))
-filters_module = importlib.util.module_from_spec(spec)
+# Importar função de filtro diretamente (se disponível)
+# Note: backend/routers/filters.py não existe mais na branch LIMPO
+# import importlib.util
+# spec = importlib.util.spec_from_file_location("filters", str(Path(__file__).parent / 'backend' / 'routers' / 'filters.py'))
+# filters_module = importlib.util.module_from_spec(spec)
 
 # Implementar _apply_filters localmente para evitar import issues
 def _apply_filters_test(df: pd.DataFrame, filters: dict):

@@ -5,7 +5,7 @@ import {
   LineChart, Line, Legend,
 } from "recharts"
 
-const API = "http://localhost:8001/api/templates"
+const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001"}/api/templates`
 
 const COLORS = [
   "#4f8ef7", "#34c97e", "#f5a623", "#e05263",
@@ -177,7 +177,7 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                     label={({ name, value }) => `${name}: ${fmtBRL(value)}`} labelLine={false}>
                     {pagPieData.map((e, i) => <Cell key={i} fill={e.color} />)}
                   </Pie>
-                  <Tooltip formatter={(v: number) => fmtBRL(v)} />
+                  <Tooltip formatter={(value) => fmtBRL(Number(value))} />
                 </PieChart>
               </ResponsiveContainer>
 
