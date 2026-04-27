@@ -117,14 +117,29 @@ class OrcamentoAnalyzer:
             }
 
             precos = {}
+            precos_a = {}
+            precos_b = {}
             for forn in fornecedores:
                 match = df[(df["Item"] == item_id) & (df["FornecedorNome"] == forn)]
-                if not match.empty and pd.notna(match.iloc[0]["Preco"]):
-                    precos[forn] = round(float(match.iloc[0]["Preco"]), 2)
+                if not match.empty:
+                    cell = match.iloc[0]
+                    precos[forn] = (
+                        round(float(cell["Preco"]), 2) if pd.notna(cell.get("Preco")) else None
+                    )
+                    precos_a[forn] = (
+                        round(float(cell["ValorA"]), 2) if pd.notna(cell.get("ValorA")) else None
+                    )
+                    precos_b[forn] = (
+                        round(float(cell["ValorB"]), 2) if pd.notna(cell.get("ValorB")) else None
+                    )
                 else:
                     precos[forn] = None
+                    precos_a[forn] = None
+                    precos_b[forn] = None
 
             row_data["precos"] = precos
+            row_data["precos_a"] = precos_a
+            row_data["precos_b"] = precos_b
 
             # Find cheapest fornecedor for this item
             valid_precos = {k: v for k, v in precos.items() if v is not None and v > 0}
