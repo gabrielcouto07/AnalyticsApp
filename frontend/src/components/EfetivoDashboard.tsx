@@ -4,7 +4,7 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine, ReferenceDot,
   BarChart, Bar,
 } from "recharts"
-import { templatesApiUrl } from "../api/client"
+import { API_BASE_URL, templatesApiUrl } from "../api/client"
 
 const COLORS = [
   "#4f8ef7", "#34c97e", "#f5a623", "#e05263",
@@ -68,6 +68,25 @@ interface AnomalyPoint {
   valor: number
 }
 
+type EfetivoTab = "visao-geral" | "por-filial" | "evolucao" | "detalhamento"
+type DetailSortKey = "filial" | "fornecedor" | "cargo" | "periodo" | "dia" | "quantidade"
+
+interface WorkRow {
+  filial: string
+  fornecedor: string
+  cargo: string
+  periodo: string
+  mes: number
+  dia: number
+  quantidade: number
+}
+
+interface BranchRow {
+  filial: string
+  funcionarios: number
+  percentage: number
+}
+
 // ─── Tooltip ──────────────────────────────────────────────────────────────────
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -107,6 +126,13 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
   const [filterFuncao, setFilterFuncao] = useState<string>("all")
   const [showAllDias, setShowAllDias]   = useState(false)
   const [hiddenFornecedores, setHiddenFornecedores] = useState<string[]>([])
+  const [activeTab, setActiveTab] = useState<EfetivoTab>("visao-geral")
+  const [filterFilial, setFilterFilial] = useState<string[]>([])
+  const [filterCargo, setFilterCargo] = useState<string[]>([])
+  const [detailSort, setDetailSort] = useState<{ key: DetailSortKey; direction: "asc" | "desc" }>({
+    key: "quantidade",
+    direction: "desc",
+  })
 
   useEffect(() => {
     const load = async () => {
@@ -171,6 +197,22 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
     load()
   }, [sessionId])
 
+  const handleExport = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/export/${sessionId}`)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = "efetivo_export.xlsx"
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error("Erro ao exportar Efetivo", e)
+    }
+  }
+
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60vh", flexDirection: "column", gap: 16 }}>
       <div style={{ width: 40, height: 40, borderRadius: "50%", border: "3px solid #334155", borderTopColor: "#4f8ef7", animation: "spin 0.8s linear infinite" }} />
@@ -225,17 +267,110 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
     return { fornecedor: forn, total }
   }).sort((a, b) => b.total - a.total)
 
+  const obraLabel = summary?.obra?.trim() || "Obra não identificada"
+  const workRows: WorkRow[] = months.flatMap((month) =>
+    (month.funcao_detail ?? [])
+      .filter((row) => Number(row.quantidade) > 0)
+      .map((row) => ({
+        filial: obraLabel,
+        fornecedor: row.fornecedor || "-",
+        cargo: row.funcao || "-",
+        periodo: month.mes_nome || String(month.mes),
+        mes: month.mes,
+        dia: row.dia,
+        quantidade: Number(row.quantidade) || 0,
+      })),
+  )
+
+  const filialOptions = Array.from(new Set(workRows.map((row) => row.filial).filter(Boolean))).sort()
+  const cargoOptions = Array.from(new Set(workRows.map((row) => row.cargo).filter(Boolean))).sort()
+  const filteredWorkRows = workRows.filter((row) => {
+    const filialOk = filterFilial.length === 0 || filterFilial.includes(row.filial)
+    const cargoOk = filterCargo.length === 0 || filterCargo.includes(row.cargo)
+    return filialOk && cargoOk
+  })
+  const totalFuncionarios = filteredWorkRows.reduce((sum, row) => sum + row.quantidade, 0)
+  const totalForCompleteness = Math.max(filteredWorkRows.length, 1)
+  const completenessFields: Array<keyof WorkRow> = ["filial", "fornecedor", "cargo", "periodo", "dia", "quantidade"]
+  const completeCells = filteredWorkRows.reduce((sum, row) => (
+    sum + completenessFields.filter((field) => row[field] !== null && row[field] !== undefined && String(row[field]).trim() !== "").length
+  ), 0)
+  const completeness = filteredWorkRows.length
+    ? Math.round((completeCells / (totalForCompleteness * completenessFields.length)) * 100)
+    : 0
+  const branchRows: BranchRow[] = Array.from(
+    filteredWorkRows.reduce((acc, row) => {
+      acc.set(row.filial, (acc.get(row.filial) ?? 0) + row.quantidade)
+      return acc
+    }, new Map<string, number>()),
+  )
+    .map(([filial, funcionarios]) => ({
+      filial,
+      funcionarios,
+      percentage: totalFuncionarios ? Number(((funcionarios / totalFuncionarios) * 100).toFixed(1)) : 0,
+    }))
+    .sort((a, b) => b.funcionarios - a.funcionarios)
+
+  const evolutionData = Array.from(
+    filteredWorkRows.reduce((acc, row) => {
+      const existing = acc.get(row.mes) ?? { periodo: row.periodo, mes: row.mes, funcionarios: 0 }
+      existing.funcionarios += row.quantidade
+      acc.set(row.mes, existing)
+      return acc
+    }, new Map<number, { periodo: string; mes: number; funcionarios: number }>()),
+  )
+    .map(([, value]) => value)
+    .sort((a, b) => a.mes - b.mes)
+
+  const sortedDetailRows = [...filteredWorkRows].sort((a, b) => {
+    const left = a[detailSort.key]
+    const right = b[detailSort.key]
+    const direction = detailSort.direction === "asc" ? 1 : -1
+    if (typeof left === "number" && typeof right === "number") {
+      return (left - right) * direction
+    }
+    return String(left).localeCompare(String(right), "pt-BR") * direction
+  })
+
+  const selectMultiValues = (options: HTMLOptionsCollection): string[] =>
+    Array.from(options).filter((option) => option.selected).map((option) => option.value)
+
+  const setSort = (key: DetailSortKey) => {
+    setDetailSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }))
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+        <div>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#f1f5f9" }}>
           🏗️ Controle de Efetivo — {summary?.obra}
         </h2>
         <p style={{ margin: "4px 0 0", fontSize: 13, color: "#94a3b8" }}>
           {summary?.ano} · {summary?.meses_cobertos} {summary?.meses_cobertos === 1 ? "mês" : "meses"} · {summary?.unique_fornecedores} fornecedores · {summary?.unique_funcoes} funções
         </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleExport}
+          style={{
+            background: "#0b4f3a",
+            color: "#fff",
+            border: "1px solid rgba(203,187,160,0.35)",
+            borderRadius: 8,
+            padding: "8px 16px",
+            fontWeight: 700,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          ⬇ Exportar
+        </button>
       </div>
 
       {warnings.length > 0 && (
@@ -245,6 +380,102 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
       )}
 
       {/* ── KPI Cards ──────────────────────────────────────────────────── */}
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: 24, gap: 16 }}>
+        {([
+          { id: "visao-geral" as const, label: "Visão Geral" },
+          { id: "por-filial" as const, label: "Por Filial" },
+          { id: "evolucao" as const, label: "Evolução" },
+          { id: "detalhamento" as const, label: "Detalhamento" },
+        ]).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              border: "none",
+              background: "transparent",
+              borderBottom: activeTab === tab.id ? "2px solid #0b4f3a" : "2px solid transparent",
+              color: activeTab === tab.id ? "#0b4f3a" : "#64748b",
+              fontWeight: activeTab === tab.id ? 700 : 600,
+              padding: "0 2px 10px",
+              cursor: "pointer",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {(activeTab === "visao-geral" || activeTab === "por-filial") && (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: "1px solid rgba(11,79,58,0.12)", borderRadius: 12, padding: 16 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 200, color: "#0f172a", fontSize: 12, fontWeight: 700 }}>
+            Filial
+            <select
+              multiple
+              value={filterFilial}
+              onChange={(event) => setFilterFilial(selectMultiValues(event.currentTarget.options))}
+              style={{ ...filterSelectStyle, minHeight: 72 }}
+            >
+              {filialOptions.map((filial) => <option key={filial} value={filial}>{filial}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220, color: "#0f172a", fontSize: 12, fontWeight: 700 }}>
+            Cargo / Função
+            <select
+              multiple
+              value={filterCargo}
+              onChange={(event) => setFilterCargo(selectMultiValues(event.currentTarget.options))}
+              style={{ ...filterSelectStyle, minHeight: 72 }}
+            >
+              {cargoOptions.map((cargo) => <option key={cargo} value={cargo}>{cargo}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterFilial([])
+              setFilterCargo([])
+            }}
+            style={{ background: "#cbbba0", color: "#0b4f3a", border: "none", borderRadius: 8, padding: "9px 14px", fontWeight: 800, cursor: "pointer" }}
+          >
+            Limpar Filtros
+          </button>
+        </div>
+      )}
+
+      {activeTab === "visao-geral" && (
+        <>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {[
+              { label: "Total Funcionários", value: totalFuncionarios.toLocaleString("pt-BR") },
+              { label: "Filiais/Obras Ativas", value: String(new Set(filteredWorkRows.map((row) => row.filial)).size) },
+              { label: "Cargos Distintos", value: String(new Set(filteredWorkRows.map((row) => row.cargo)).size) },
+              { label: "% Dados Completos", value: `${completeness}%` },
+            ].map((card) => (
+              <div key={card.label} style={kpiCardStyle}>
+                <p style={kpiLabelStyle}>{card.label}</p>
+                <p style={kpiValueStyle}>{card.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div style={lightCardStyle}>
+            <h3 style={lightTitleStyle}>Headcount por Filial / Obra</h3>
+            {branchRows.length === 0 ? (
+              <p style={emptyStateStyle}>Não há dados de filial ou obra para os filtros selecionados.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={branchRows} layout="vertical" margin={{ top: 8, right: 20, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                  <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} />
+                  <YAxis type="category" dataKey="filial" width={180} tick={{ fill: "#0f172a", fontSize: 11 }} />
+                  <Tooltip contentStyle={{ borderRadius: "8px" }} />
+                  <Bar dataKey="funcionarios" fill="#0b4f3a" radius={[0, 6, 6, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
         {[
           { label: "Total Diárias", value: summary?.total_diarias.toLocaleString("pt-BR"), color: "#4f8ef7", icon: "📋", trend: trendArrow(trendTotal) },
@@ -490,6 +721,128 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
           </div>
         </>
       )}
+
+        </>
+      )}
+
+      {activeTab === "por-filial" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={lightCardStyle}>
+            <h3 style={lightTitleStyle}>Headcount por Filial / Obra</h3>
+            {branchRows.length === 0 ? (
+              <p style={emptyStateStyle}>Não foi encontrada uma coluna de Filial ou Obra para agrupamento.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={branchRows} layout="vertical" margin={{ top: 8, right: 20, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                  <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} />
+                  <YAxis type="category" dataKey="filial" width={180} tick={{ fill: "#0f172a", fontSize: 11 }} />
+                  <Tooltip contentStyle={{ borderRadius: "8px" }} />
+                  <Bar dataKey="funcionarios" fill="#0b4f3a" radius={[0, 6, 6, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div style={lightCardStyle}>
+            <h3 style={lightTitleStyle}>Detalhe por Filial / Obra</h3>
+            {branchRows.length === 0 ? (
+              <p style={emptyStateStyle}>Nenhum agrupamento disponível para os filtros selecionados.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={lightThStyle}>Filial/Obra</th>
+                      <th style={{ ...lightThStyle, textAlign: "right" }}>Funcionários</th>
+                      <th style={{ ...lightThStyle, textAlign: "right" }}>% do Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {branchRows.map((row) => (
+                      <tr key={row.filial}>
+                        <td style={lightTdStyle}>{row.filial}</td>
+                        <td style={{ ...lightTdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{row.funcionarios.toLocaleString("pt-BR")}</td>
+                        <td style={{ ...lightTdStyle, textAlign: "right" }}>{row.percentage.toLocaleString("pt-BR")}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "evolucao" && (
+        <div style={lightCardStyle}>
+          <h3 style={lightTitleStyle}>Evolução do Headcount</h3>
+          {evolutionData.length < 2 ? (
+            <p style={emptyStateStyle}>Não foi encontrada uma coluna de data/competência para evolução.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={evolutionData} margin={{ top: 8, right: 20, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="periodo" tick={{ fill: "#64748b", fontSize: 11 }} />
+                <YAxis tick={{ fill: "#64748b", fontSize: 11 }} allowDecimals={false} />
+                <Tooltip contentStyle={{ borderRadius: "8px" }} />
+                <Line type="monotone" dataKey="funcionarios" stroke="#0b4f3a" strokeWidth={3} dot={{ r: 4, fill: "#0b4f3a" }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      )}
+
+      {activeTab === "detalhamento" && (
+        <div style={lightCardStyle}>
+          <h3 style={lightTitleStyle}>Detalhamento dos Registros do ERP</h3>
+          {sortedDetailRows.length === 0 ? (
+            <p style={emptyStateStyle}>Nenhum registro encontrado para detalhamento.</p>
+          ) : (
+            <>
+              <div style={{ overflowX: "auto", maxHeight: 520 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      {[
+                        ["filial", "Filial/Obra"],
+                        ["fornecedor", "Fornecedor"],
+                        ["cargo", "Cargo/Função"],
+                        ["periodo", "Período"],
+                        ["dia", "Dia"],
+                        ["quantidade", "Qtd"],
+                      ].map(([key, label]) => (
+                        <th key={key} style={lightThStyle}>
+                          <button type="button" onClick={() => setSort(key as DetailSortKey)} style={sortButtonStyle}>
+                            {label}
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedDetailRows.slice(0, 500).map((row, index) => (
+                      <tr key={`${row.filial}-${row.fornecedor}-${row.cargo}-${row.periodo}-${row.dia}-${index}`}>
+                        <td style={lightTdStyle}>{row.filial}</td>
+                        <td style={lightTdStyle}>{row.fornecedor}</td>
+                        <td style={lightTdStyle}>{row.cargo}</td>
+                        <td style={lightTdStyle}>{row.periodo}</td>
+                        <td style={lightTdStyle}>{row.dia}</td>
+                        <td style={{ ...lightTdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{row.quantidade}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {sortedDetailRows.length > 500 && (
+                <p style={{ margin: "12px 0 0", color: "#64748b", fontSize: 12 }}>
+                  Exibindo os primeiros 500 registros de {sortedDetailRows.length.toLocaleString("pt-BR")}.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -521,5 +874,88 @@ const selectStyle: React.CSSProperties = {
   color: "var(--erp-text)",
   padding: "6px 10px",
   fontSize: 12,
+  cursor: "pointer",
+}
+
+const filterSelectStyle: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.18)",
+  borderRadius: 8,
+  color: "#0f172a",
+  padding: "8px 10px",
+  fontSize: 12,
+}
+
+const lightCardStyle: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.12)",
+  borderRadius: 12,
+  padding: 20,
+  boxShadow: "0 2px 8px rgba(11,79,58,0.08)",
+}
+
+const lightTitleStyle: React.CSSProperties = {
+  margin: "0 0 16px",
+  fontSize: 16,
+  fontWeight: 800,
+  color: "#0f172a",
+}
+
+const kpiCardStyle: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.12)",
+  borderRadius: 12,
+  padding: "16px 20px",
+  flex: 1,
+  minWidth: 140,
+}
+
+const kpiLabelStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 11,
+  color: "#64748b",
+  textTransform: "uppercase",
+  letterSpacing: 0.5,
+  fontWeight: 800,
+}
+
+const kpiValueStyle: React.CSSProperties = {
+  margin: "4px 0 0",
+  fontSize: 28,
+  fontWeight: 800,
+  color: "#0b4f3a",
+}
+
+const lightThStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "10px 12px",
+  borderBottom: "1px solid #e2e8f0",
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#64748b",
+  textTransform: "uppercase",
+  letterSpacing: 0.5,
+  whiteSpace: "nowrap",
+}
+
+const lightTdStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  borderBottom: "1px solid #e2e8f0",
+  color: "#0f172a",
+}
+
+const emptyStateStyle: React.CSSProperties = {
+  margin: 0,
+  color: "#64748b",
+  fontSize: 13,
+}
+
+const sortButtonStyle: React.CSSProperties = {
+  border: "none",
+  background: "transparent",
+  padding: 0,
+  color: "inherit",
+  font: "inherit",
+  fontWeight: 800,
   cursor: "pointer",
 }

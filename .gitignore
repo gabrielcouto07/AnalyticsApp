@@ -53,3 +53,6 @@ temp_clone/
 uploads/
 session_data/
 
+**/_pycache_pycache_/
+**/*.pyc
+

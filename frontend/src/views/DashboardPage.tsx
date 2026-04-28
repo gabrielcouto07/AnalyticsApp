@@ -1,38 +1,46 @@
-import React from 'react';
-import { useSessionStore } from '../store/session';
-import { EfetivoDashboard, OrcamentoDashboard, CustosDashboard } from '../components';
+"use client"
+
+import React from "react"
+import { useSessionStore } from "../store/session"
+import {
+  AnomaliasDashboard,
+  ClusteringDashboard,
+  CustosDashboard,
+  EfetivoDashboard,
+  ExportarView,
+  OrcamentoDashboard,
+  ProfilerDashboard,
+  SegmentacaoDashboard,
+  TendenciasDashboard,
+} from "../components"
 
 export const DashboardPage: React.FC = () => {
-  const sessionId = useSessionStore((state) => state.sessionId);
-  const selectedTemplate = useSessionStore((state) => state.selectedTemplate);
+  const sessionId = useSessionStore((state) => state.sessionId)
+  const activeView = useSessionStore((state) => state.activeView)
 
-  if (!sessionId) return null;
+  if (!sessionId) return null
 
-  if (!selectedTemplate) {
-    return (
-      <div className="p-8 text-center text-gray-300">
-        <p className="text-2xl font-semibold mb-2">
-          Template nao identificado automaticamente.
-        </p>
-        <p className="text-sm text-gray-400">
-          Faca upload de um arquivo de Custos, Efetivo ou Orcamento para continuar.
-        </p>
-      </div>
-    );
-  }
-
-  if (selectedTemplate === 'efetivo') return <EfetivoDashboard sessionId={sessionId} />;
-  if (selectedTemplate === 'orcamento') return <OrcamentoDashboard sessionId={sessionId} />;
-  if (selectedTemplate === 'custos') return <CustosDashboard sessionId={sessionId} />;
+  if (activeView === "efetivo") return <EfetivoDashboard sessionId={sessionId} />
+  if (activeView === "custos") return <CustosDashboard sessionId={sessionId} />
+  if (activeView === "orcamento") return <OrcamentoDashboard sessionId={sessionId} />
+  if (activeView === "anomalias") return <AnomaliasDashboard sessionId={sessionId} />
+  if (activeView === "tendencias") return <TendenciasDashboard sessionId={sessionId} />
+  if (activeView === "segmentacao") return <SegmentacaoDashboard sessionId={sessionId} />
+  if (activeView === "clustering") return <ClusteringDashboard sessionId={sessionId} />
+  if (activeView === "profiler") return <ProfilerDashboard sessionId={sessionId} />
+  if (activeView === "exportar") return <ExportarView sessionId={sessionId} />
 
   return (
-    <div className="p-8 text-center text-gray-300">
-      <p className="text-2xl font-semibold mb-2">
-        Template <span>&quot;{selectedTemplate}&quot;</span> não suportado.
-      </p>
-      <p className="text-sm text-gray-400">
-        Apenas Custos, Efetivo e Orçamento estão disponíveis.
-      </p>
+    <div
+      style={{
+        background: "white",
+        border: "1px solid rgba(11,79,58,0.12)",
+        borderRadius: 12,
+        padding: 20,
+        color: "#64748b",
+      }}
+    >
+      Vista não suportada: <strong>{activeView}</strong>
     </div>
-  );
-};
+  )
+}

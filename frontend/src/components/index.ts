@@ -1,5 +1,12 @@
-export { UploadZone } from './UploadZone'
-export { TemplateSelection } from './TemplateSelection'
-export { EfetivoDashboard } from './EfetivoDashboard'
-export { OrcamentoDashboard } from './OrcamentoDashboard'
-export { CustosDashboard } from './CustosDashboard'
+export { EfetivoDashboard } from "./EfetivoDashboard"
+export { CustosDashboard } from "./CustosDashboard"
+export { OrcamentoDashboard } from "./OrcamentoDashboard"
+export { TemplateSelection } from "./TemplateSelection"
+export { UploadZone } from "./UploadZone"
+
+export { AnomaliasDashboard } from "./AnomaliasDashboard"
+export { TendenciasDashboard } from "./TendenciasDashboard"
+export { SegmentacaoDashboard } from "./SegmentacaoDashboard"
+export { ClusteringDashboard } from "./ClusteringDashboard"
+export { ProfilerDashboard } from "./ProfilerDashboard"
+export { ExportarView } from "./ExportarView"

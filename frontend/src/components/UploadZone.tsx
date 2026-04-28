@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react"
 import { uploadFile } from "../api/analytics"
-import { useSession } from "../store/session"
+import { useSessionStore } from "../store/session"
 
 export function UploadZone() {
   const [dragging, setDragging] = useState(false)
@@ -8,7 +8,7 @@ export function UploadZone() {
   const [error, setError] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [fileHint, setFileHint] = useState<string | null>(null)
-  const setSession = useSession(s => s.setSession)
+  const setSession = useSessionStore(s => s.setSession)
 
   const ALLOWED_EXTENSIONS = ["xlsx", "xls", "xlsm", "csv", "txt", "json"]
   const MAX_FILE_SIZE = 100 * 1024 * 1024
