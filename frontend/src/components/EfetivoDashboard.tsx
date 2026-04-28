@@ -37,6 +37,7 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
   const [warnings, setWarnings] = useState<string[]>([])
   const [filterForn, setFilterForn] = useState<string>("all")
   const [filterFuncao, setFilterFuncao] = useState<string>("all")
+  const [diaIndex, setDiaIndex] = useState(0)
   const [showAllDias, setShowAllDias] = useState(false)
   const [hiddenFornecedores, setHiddenFornecedores] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<EfetivoTab>("visao-geral")
@@ -223,6 +224,7 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
     setActiveMes(mes)
     setFilterForn("all")
     setFilterFuncao("all")
+    setDiaIndex(0)
     setShowAllDias(false)
     setHiddenFornecedores([])
   }
@@ -295,6 +297,8 @@ export const EfetivoDashboard: React.FC<{ sessionId: string }> = ({ sessionId })
           setFilterForn={setFilterForn}
           filterFuncao={filterFuncao}
           setFilterFuncao={setFilterFuncao}
+          diaIndex={diaIndex}
+          setDiaIndex={setDiaIndex}
           showAllDias={showAllDias}
           setShowAllDias={setShowAllDias}
           hiddenFornecedores={hiddenFornecedores}

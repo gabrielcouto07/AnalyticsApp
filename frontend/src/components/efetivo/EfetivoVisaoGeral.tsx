@@ -16,7 +16,7 @@ import {
 } from "recharts"
 
 import { type AnomalyPoint, type MonthData, type Summary, type TrendData } from "./types"
-import { lightCardStyle, selectStyle, tdStyle, thStyle } from "./styles"
+import { filterSelectStyle, lightCardStyle, selectStyle, tdStyle, thStyle } from "./styles"
 
 const COLORS = [
   "#4f8ef7", "#34c97e", "#f5a623", "#e05263",
@@ -41,7 +41,9 @@ const MONTH_MAP: Record<string, number> = {
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null
+
   const total = payload.reduce((sum: number, entry: any) => sum + (entry.value || 0), 0)
+
   return (
     <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 10, padding: "10px 14px", fontSize: 12 }}>
       <p style={{ color: "#94a3b8", marginBottom: 6, fontWeight: 700 }}>Dia {label}</p>
@@ -68,12 +70,21 @@ interface Props {
   setFilterForn: React.Dispatch<React.SetStateAction<string>>
   filterFuncao: string
   setFilterFuncao: React.Dispatch<React.SetStateAction<string>>
+  diaIndex: number
+  setDiaIndex: React.Dispatch<React.SetStateAction<number>>
   showAllDias: boolean
   setShowAllDias: React.Dispatch<React.SetStateAction<boolean>>
   hiddenFornecedores: string[]
   setHiddenFornecedores: React.Dispatch<React.SetStateAction<string[]>>
   onMonthSelect: (mes: number) => void
   trendArrow: (trend: TrendData | null) => string
+}
+
+const dayButtonStyle: React.CSSProperties = {
+  ...selectStyle,
+  border: "1px solid #475569",
+  fontWeight: 700,
+  minWidth: 180,
 }
 
 export function EfetivoVisaoGeral({
@@ -87,6 +98,8 @@ export function EfetivoVisaoGeral({
   setFilterForn,
   filterFuncao,
   setFilterFuncao,
+  diaIndex,
+  setDiaIndex,
   showAllDias,
   setShowAllDias,
   hiddenFornecedores,
@@ -120,7 +133,13 @@ export function EfetivoVisaoGeral({
   }
 
   const dias = Object.keys(funcaoPorDia).map(Number).sort((a, b) => a - b)
-  const diasVisiveis = showAllDias ? dias : dias.slice(0, 7)
+  const diaIndexAjustado = Math.min(diaIndex, Math.max(dias.length - 1, 0))
+  const diasVisiveis = showAllDias ? dias : dias[diaIndexAjustado] !== undefined ? [dias[diaIndexAjustado]] : []
+  const diaEmFoco = diasVisiveis[0]
+  const totalDiasVisiveis = diasVisiveis.reduce(
+    (sum, dia) => sum + funcaoPorDia[dia].reduce((inner, row) => inner + row.quantidade, 0),
+    0,
+  )
 
   const anomalyDaySet = new Set<number>()
   for (const point of anomalyPoints) {
@@ -142,7 +161,7 @@ export function EfetivoVisaoGeral({
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         {[
           { label: "Total Diárias", value: summary ? summary.total_diarias.toLocaleString("pt-BR") : "—", color: "#4f8ef7", icon: "📋", trend: trendArrow(trendTotal) },
-          { label: "Dias Ativos", value: summary?.dias_ativos, color: "#34c97e", icon: "📅" },
+          { label: "Dias Ativos", value: summary?.dias_ativos, color: "#34c97e", icon: "📆" },
           { label: "Média Diária", value: summary?.media_diaria, color: "#f5a623", icon: "📊", trend: trendArrow(trendMedia) },
           { label: "Fornecedores", value: summary?.unique_fornecedores, color: "#a78bfa", icon: "🏢" },
           { label: "Funções", value: summary?.unique_funcoes, color: "#06b6d4", icon: "👷" },
@@ -161,13 +180,7 @@ export function EfetivoVisaoGeral({
           <button
             key={month.mes}
             type="button"
-            onClick={() => {
-              onMonthSelect(month.mes)
-              setFilterForn("all")
-              setFilterFuncao("all")
-              setShowAllDias(false)
-              setHiddenFornecedores([])
-            }}
+            onClick={() => onMonthSelect(month.mes)}
             style={{
               border: "none",
               background: "transparent",
@@ -185,8 +198,15 @@ export function EfetivoVisaoGeral({
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: "1px solid rgba(11,79,58,0.12)", borderRadius: 12, padding: 16 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 200, color: "#0f172a", fontSize: 12, fontWeight: 700 }}>
-          Filial
-          <select value={filterForn} onChange={(event) => setFilterForn(event.target.value)} style={{ ...selectStyle, minHeight: 72 }}>
+          Fornecedor
+          <select
+            value={filterForn}
+            onChange={(event) => {
+              setFilterForn(event.target.value)
+              setDiaIndex(0)
+            }}
+            style={{ ...filterSelectStyle, minHeight: 72 }}
+          >
             <option value="all">Todos fornecedores</option>
             {fornecedores.map((fornecedor) => (
               <option key={fornecedor} value={fornecedor}>
@@ -197,7 +217,14 @@ export function EfetivoVisaoGeral({
         </label>
         <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220, color: "#0f172a", fontSize: 12, fontWeight: 700 }}>
           Cargo / Função
-          <select value={filterFuncao} onChange={(event) => setFilterFuncao(event.target.value)} style={{ ...selectStyle, minHeight: 72 }}>
+          <select
+            value={filterFuncao}
+            onChange={(event) => {
+              setFilterFuncao(event.target.value)
+              setDiaIndex(0)
+            }}
+            style={{ ...filterSelectStyle, minHeight: 72 }}
+          >
             <option value="all">Todas funções</option>
             {Array.from(new Set(funcaoDetail.map((row) => row.funcao))).map((funcao) => (
               <option key={funcao} value={funcao}>
@@ -213,7 +240,7 @@ export function EfetivoVisaoGeral({
           📈 Serviços Presentes por Dia — {currentMonth.mes_nome}
         </h3>
         <p style={{ margin: "0 0 16px", fontSize: 12, color: "#94a3b8" }}>
-          Trabalhadores por dia por fornecedor
+          Headcount diário por fornecedor — clique na legenda para ocultar
         </p>
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={dailyPivot} margin={{ top: 4, right: 24, left: 0, bottom: 0 }}>
@@ -272,7 +299,7 @@ export function EfetivoVisaoGeral({
             <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} />
             <YAxis type="category" dataKey="fornecedor" width={180} tick={{ fill: "#f1f5f9", fontSize: 11 }} />
             <Tooltip />
-            <Bar dataKey="total" radius={[0, 6, 6, 0]} fill="#4f8ef7" />
+            <Bar dataKey="total" radius={[0, 6, 6, 0]} fill="#4f8ef7" label={{ position: "right", fill: "#94a3b8", fontSize: 11 }} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -292,57 +319,97 @@ export function EfetivoVisaoGeral({
         {dias.length === 0 ? (
           <p style={{ color: "#64748b", fontSize: 13 }}>Nenhum dado para os filtros selecionados.</p>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>Dia</th>
-                  <th style={thStyle}>Fornecedor</th>
-                  <th style={thStyle}>Serviço / Função</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Qtd</th>
-                </tr>
-              </thead>
-              <tbody>
-                {diasVisiveis.map((dia) =>
-                  funcaoPorDia[dia].map((row, index) => {
-                    const colorIndex = fornecedores.indexOf(row.fornecedor)
-                    const color = COLORS[colorIndex >= 0 ? colorIndex % COLORS.length : index % COLORS.length]
-                    return (
-                      <tr key={`${dia}-${row.fornecedor}-${row.funcao}`} style={{ background: dia % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
-                        {index === 0 && (
-                          <td
-                            rowSpan={funcaoPorDia[dia].length}
-                            style={{ ...tdStyle, fontWeight: 800, color: "#94a3b8", verticalAlign: "middle", fontSize: 14, borderRight: "1px solid #334155" }}
-                          >
-                            {String(dia).padStart(2, "0")}
-                          </td>
-                        )}
-                        <td style={{ ...tdStyle, color, fontWeight: 600 }}>{row.fornecedor}</td>
-                        <td style={{ ...tdStyle, color: "#f1f5f9" }}>{row.funcao}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color }}>{row.quantidade}</td>
-                      </tr>
-                    )
-                  }),
-                )}
-              </tbody>
-              <tfoot>
-                <tr style={{ borderTop: "2px solid #334155" }}>
-                  <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#f1f5f9" }}>Total no mês</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#f5a623" }}>
-                    {dias.reduce((sum, dia) => sum + funcaoPorDia[dia].reduce((inner, row) => inner + row.quantidade, 0), 0)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
+          <>
+            {!showAllDias && diaEmFoco !== undefined && (
+              <p style={{ margin: "0 0 12px", fontSize: 12, color: "#94a3b8" }}>
+                Dia {String(diaEmFoco).padStart(2, "0")} de {dias.length} dias
+              </p>
+            )}
 
-        {dias.length > 7 && (
-          <div style={{ position: "sticky", bottom: 0, marginTop: 10, paddingTop: 8, background: "linear-gradient(180deg, rgba(30,41,59,0), rgba(30,41,59,0.9) 35%)" }}>
-            <button type="button" onClick={() => setShowAllDias((value) => !value)} style={{ ...selectStyle, width: "100%", fontWeight: 700 }}>
-              {showAllDias ? "Recolher" : `Mostrar todos os ${dias.length} dias`}
-            </button>
-          </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ cursor: "default" }}>
+                    <th style={thStyle}>Dia</th>
+                    <th style={thStyle}>Fornecedor</th>
+                    <th style={thStyle}>Serviço / Função</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>Qtd</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {diasVisiveis.map((dia) =>
+                    funcaoPorDia[dia].map((row, index) => {
+                      const colorIndex = fornecedores.indexOf(row.fornecedor)
+                      const color = COLORS[colorIndex >= 0 ? colorIndex % COLORS.length : index % COLORS.length]
+                      return (
+                        <tr key={`${dia}-${row.fornecedor}-${row.funcao}`} style={{ background: dia % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent", cursor: "default" }}>
+                          {index === 0 && (
+                            <td
+                              rowSpan={funcaoPorDia[dia].length}
+                              style={{ ...tdStyle, fontWeight: 800, color: "#94a3b8", verticalAlign: "middle", fontSize: 14, borderRight: "1px solid #334155" }}
+                            >
+                              {String(dia).padStart(2, "0")}
+                            </td>
+                          )}
+                          <td style={{ ...tdStyle, color, fontWeight: 600 }}>{row.fornecedor}</td>
+                          <td style={{ ...tdStyle, color: "#f1f5f9" }}>{row.funcao}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color }}>{row.quantidade}</td>
+                        </tr>
+                      )
+                    }),
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid #334155", cursor: "default" }}>
+                    <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#f1f5f9" }}>
+                      {showAllDias ? "Total no mês" : "Total do dia"}
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#f5a623" }}>
+                      {totalDiasVisiveis}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+              {showAllDias ? (
+                <button type="button" onClick={() => setShowAllDias(false)} style={{ ...dayButtonStyle, minWidth: 220 }}>
+                  ⬆ Recolher
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setDiaIndex((index) => Math.max(index - 1, 0))}
+                    disabled={diaIndexAjustado <= 0}
+                    style={{
+                      ...dayButtonStyle,
+                      opacity: diaIndexAjustado <= 0 ? 0.55 : 1,
+                      cursor: diaIndexAjustado <= 0 ? "default" : "pointer",
+                    }}
+                  >
+                    ◀ Dia anterior
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiaIndex((index) => Math.min(index + 1, dias.length - 1))}
+                    disabled={diaIndexAjustado >= dias.length - 1}
+                    style={{
+                      ...dayButtonStyle,
+                      opacity: diaIndexAjustado >= dias.length - 1 ? 0.55 : 1,
+                      cursor: diaIndexAjustado >= dias.length - 1 ? "default" : "pointer",
+                    }}
+                  >
+                    ▶ Próximo dia
+                  </button>
+                  <button type="button" onClick={() => setShowAllDias(true)} style={dayButtonStyle}>
+                    Mostrar todos os {dias.length} {dias.length === 1 ? "dia" : "dias"}
+                  </button>
+                </>
+              )}
+            </div>
+          </>
         )}
       </div>
 
@@ -353,7 +420,7 @@ export function EfetivoVisaoGeral({
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr>
+              <tr style={{ cursor: "default" }}>
                 <th style={thStyle}>Dia</th>
                 {fornecedores.map((fornecedor, index) => (
                   <th key={fornecedor} style={{ ...thStyle, color: COLORS[index % COLORS.length] }}>{fornecedor}</th>
@@ -365,7 +432,7 @@ export function EfetivoVisaoGeral({
               {dailyPivot.map((row, index) => {
                 const total = fornecedores.reduce((sum, fornecedor) => sum + (Number(row[fornecedor]) || 0), 0)
                 return (
-                  <tr key={row.Dia} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
+                  <tr key={row.Dia} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent", cursor: "default" }}>
                     <td style={{ ...tdStyle, fontWeight: 700, color: "#94a3b8" }}>
                       {String(row.Dia).padStart(2, "0")}
                     </td>

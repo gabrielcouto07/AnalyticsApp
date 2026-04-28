@@ -1,0 +1,170 @@
+RESUMO TECNICO - PREVISAO/TENDENCIA E VISÃO FUTURA DO APP
+
+1. O que o app faz hoje na parte de "previsao"
+
+Hoje o app ainda nao executa uma previsao temporal completa no sentido de projetar
+automaticamente os proximos dias ou meses com um modelo dedicado de forecast.
+O que existe hoje e uma camada de analise de tendencia, apoiada por deteccao
+de anomalias, para indicar se a serie esta subindo, caindo ou se mantendo estavel.
+
+O nucleo atual esta em:
+- backend/services/advanced_analytics.py
+- classe TrendAnalyzer
+- metodo detect_trend(series, window)
+
+O algoritmo atual funciona assim:
+- recebe uma serie numerica ja agregada no tempo
+- remove valores invalidos e mantem somente numeros
+- cria um eixo temporal simples com indices 0, 1, 2, 3...
+- aplica regressao linear simples com scipy_stats.linregress
+- calcula a inclinacao da reta (slope)
+- calcula o r_squared, que mede o quanto a reta explica a serie
+- classifica a direcao:
+  up = crescimento
+  down = queda
+  flat = estabilidade
+- classifica a forca:
+  fraca quando r_squared < 0.3
+  moderada quando r_squared < 0.6
+  forte quando r_squared >= 0.6
+- calcula a media recente com base na janela configurada (window)
+
+Em paralelo, o app tambem marca dias fora do padrao usando IQR
+(intervalo interquartil) para identificar anomalias no total diario.
+Isso ajuda a destacar picos e vales que merecem leitura operacional.
+
+Conclusao importante:
+o sistema atual faz leitura de tendencia, nao previsao futura robusta.
+Ele responde "para onde a serie esta indo" e "quais pontos estao fora do padrao",
+mas ainda nao responde com profundidade "quanto teremos no proximo mes" com banda
+de confianca, cenario otimista/pessimista ou impacto cruzado com outros modulos.
+
+
+2. Resumo geral da obra analisada hoje
+
+Arquivo de referencia:
+- 11.2 - Efetivo_2026.xlsx
+
+Resumo da obra:
+- Obra: Obra_RIL
+- Ano: 2026
+- Meses cobertos: 4
+- Periodo ativo observado: 2026-01-05 ate 2026-04-17
+- Registros brutos gerados pelo parser: 4.351
+- Linhas com trabalho efetivo (> 0): 983
+- Total de diarias: 2.502,5
+- Dias ativos: 71
+- Media diaria: 35,2
+- Fornecedores no conjunto bruto: 15
+- Funcoes no conjunto bruto: 19
+
+Pontos relevantes:
+- Pico diario: 54 trabalhadores em 2026-04-15
+- Vale diario: 8 trabalhadores em 2026-02-26
+- Mes mais forte: Marco, com 859,5 diarias
+- Mes mais fraco: Fevereiro, com 359,5 diarias
+
+Top fornecedores por volume:
+- Mbrum Construcoes LTDA: 579,0
+- Verticale Engenharia LTDA: 528,5
+- J&C: 409,0
+- SCO Construcoes LTDA: 310,5
+- DMC: 210,5
+
+Top funcoes por volume:
+- Servente: 884,0
+- Pedreiro: 685,0
+- Ajudante: 253,0
+- Poceiro: 156,0
+- Meio Oficial: 151,5
+
+Leitura executiva:
+- a obra teve concentracao forte em servente e pedreiro, o que sugere fase de
+  execucao pesada e operacao de campo intensiva
+- fevereiro aparenta um vale operacional importante, que pode indicar mudanca
+  de frente, pausa, reorganizacao ou atraso
+- marco acelera de forma relevante, mostrando retomada ou ampliacao de equipes
+- abril continua alto, mas abaixo de marco, sugerindo estabilizacao apos pico
+
+
+3. Ponto mais importante para a evolucao do produto
+
+O futuro correto deste app nao e apenas "ter mais dashboards".
+O passo mais importante e suportar uma analise composta por multiplas planilhas
+ao mesmo tempo, sem perder a leitura individual de cada dominio.
+
+Exemplo alvo:
+- 1 planilha de Efetivo
+- 1 planilha de NFs/Custos
+- 1 planilha de Orcamento
+
+O sistema precisa entregar duas camadas simultaneas:
+
+Camada A - dashboards separados por dominio
+- Dashboard de Efetivo
+- Dashboard de Custos/NFs
+- Dashboard de Orcamento
+
+Camada B - camada de correlacao integrada
+- cruzar efetivo vs custo realizado
+- cruzar efetivo vs orcamento previsto
+- cruzar fornecedor de mao de obra vs fornecedor financeiro
+- medir custo por equipe, custo por etapa, custo por pico de efetivo
+- detectar desvios onde efetivo sobe, mas producao ou gasto nao acompanham
+
+
+4. Como eu estruturaria essa evolucao
+
+Arquitetura recomendada:
+- manter parsers especializados por tipo de planilha
+- criar uma camada canonica de entidades compartilhadas
+- salvar sessoes compostas, nao apenas sessoes isoladas
+- separar claramente:
+  ingestao
+  normalizacao
+  correlacao
+  dashboards
+
+Entidades canonicas que devem existir:
+- obra
+- periodo
+- fornecedor
+- centro de custo
+- etapa/frente
+- data
+- valor realizado
+- valor orcado
+- headcount/quantidade de pessoas
+
+Sessao futura ideal:
+- uma sessao principal da obra
+- subdatasets anexados: efetivo, custos, orcamento
+- relacoes de chave entre eles
+- cache de agregacoes por modulo e por correlacao
+
+Beneficio disso:
+- cada dashboard continua independente
+- a camada integrada passa a responder perguntas executivas reais
+- o sistema fica pronto para analise de produtividade, desvio orcamentario e
+  desempenho por fornecedor dentro de uma mesma obra
+
+
+5. Recomendacao objetiva para a proxima fase
+
+Prioridade 1:
+- formalizar um modelo de dados integrado por obra e periodo
+
+Prioridade 2:
+- permitir upload multiplo controlado por tipo de template
+
+Prioridade 3:
+- criar endpoints de correlacao entre efetivo, custos e orcamento
+
+Prioridade 4:
+- manter dashboards especializados por dominio, sem misturar a navegacao base
+
+Resumo final:
+o dashboard de Efetivo atual ja esta virando uma boa camada de leitura
+operacional. O proximo salto real de valor do produto esta em correlacionar
+essas leituras com custo e orcamento dentro da mesma obra, usando uma sessao
+composta e um modelo canonico compartilhado.

@@ -3,7 +3,7 @@ import type React from "react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
 import { type BranchRow, type WorkRow } from "./types"
-import { emptyStateStyle, lightCardStyle, lightTdStyle, lightThStyle, lightTitleStyle, filterSelectStyle } from "./styles"
+import { emptyStateStyle, filterSelectStyle, lightCardStyle, lightTdStyle, lightThStyle, lightTitleStyle } from "./styles"
 
 interface Props {
   branchRows: BranchRow[]
@@ -37,7 +37,7 @@ export function EfetivoFilial({
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: "1px solid rgba(11,79,58,0.12)", borderRadius: 12, padding: 16 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 200, color: "#0f172a", fontSize: 12, fontWeight: 700 }}>
-          Filial
+          Fornecedor
           <select multiple value={filterFilial} onChange={(event) => setFilterFilial(selectMultiValues(event.currentTarget.options))} style={{ ...filterSelectStyle, minHeight: 72 }}>
             {filialOptions.map((filial) => <option key={filial} value={filial}>{filial}</option>)}
           </select>
@@ -99,7 +99,7 @@ export function EfetivoFilial({
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
-                <tr>
+                <tr style={{ cursor: "default" }}>
                   <th style={lightThStyle}>Filial/Obra</th>
                   <th style={{ ...lightThStyle, textAlign: "right" }}>Funcionários</th>
                   <th style={{ ...lightThStyle, textAlign: "right" }}>% do Total</th>
@@ -107,7 +107,7 @@ export function EfetivoFilial({
               </thead>
               <tbody>
                 {branchRows.map((row) => (
-                  <tr key={row.filial}>
+                  <tr key={row.filial} style={{ cursor: "default" }}>
                     <td style={lightTdStyle}>{row.filial}</td>
                     <td style={{ ...lightTdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{row.funcionarios.toLocaleString("pt-BR")}</td>
                     <td style={{ ...lightTdStyle, textAlign: "right" }}>{row.percentage.toLocaleString("pt-BR")}%</td>

@@ -20,7 +20,7 @@ export function EfetivoDetalhamento({ sortedDetailRows, detailSort, setSort }: P
           <div style={{ overflowX: "auto", maxHeight: 520 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
-                <tr>
+                <tr style={{ cursor: "default" }}>
                   {[
                     ["filial", "Filial/Obra"],
                     ["fornecedor", "Fornecedor"],
@@ -40,7 +40,7 @@ export function EfetivoDetalhamento({ sortedDetailRows, detailSort, setSort }: P
               </thead>
               <tbody>
                 {sortedDetailRows.slice(0, 500).map((row, index) => (
-                  <tr key={`${row.filial}-${row.fornecedor}-${row.cargo}-${row.periodo}-${row.dia}-${index}`}>
+                  <tr key={`${row.filial}-${row.fornecedor}-${row.cargo}-${row.periodo}-${row.dia}-${index}`} style={{ cursor: "default" }}>
                     <td style={lightTdStyle}>{row.filial}</td>
                     <td style={lightTdStyle}>{row.fornecedor}</td>
                     <td style={lightTdStyle}>{row.cargo}</td>
