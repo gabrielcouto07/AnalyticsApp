@@ -1,6 +1,21 @@
-import { useCallback, useState } from "react"
+import { useCallback, useState, type DragEvent } from "react"
+
 import { uploadFile } from "../api/analytics"
 import { useSessionStore } from "../store/session"
+
+const ALLOWED_EXTENSIONS = ["xlsx", "xls", "xlsm", "csv", "txt", "json"]
+const MAX_FILE_SIZE = 100 * 1024 * 1024
+
+function validateFile(file: File): string | null {
+  const extension = file.name.split(".").pop()?.toLowerCase()
+  if (!extension || !ALLOWED_EXTENSIONS.includes(extension)) {
+    return `Formato invalido. Use: ${ALLOWED_EXTENSIONS.join(", ")}`
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    return "Arquivo excede o limite de 100MB"
+  }
+  return null
+}
 
 export function UploadZone() {
   const [dragging, setDragging] = useState(false)
@@ -8,21 +23,8 @@ export function UploadZone() {
   const [error, setError] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [fileHint, setFileHint] = useState<string | null>(null)
-  const setSession = useSessionStore(s => s.setSession)
-
-  const ALLOWED_EXTENSIONS = ["xlsx", "xls", "xlsm", "csv", "txt", "json"]
-  const MAX_FILE_SIZE = 100 * 1024 * 1024
-
-  const validateFile = (file: File): string | null => {
-    const extension = file.name.split(".").pop()?.toLowerCase()
-    if (!extension || !ALLOWED_EXTENSIONS.includes(extension)) {
-      return `Formato inválido. Use: ${ALLOWED_EXTENSIONS.join(", ")}`
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      return "Arquivo excede o limite de 100MB"
-    }
-    return null
-  }
+  const setSession = useSessionStore((state) => state.setSession)
+  const closeUpload = useSessionStore((state) => state.closeUpload)
 
   const handle = useCallback(async (file: File) => {
     const validationError = validateFile(file)
@@ -35,6 +37,7 @@ export function UploadZone() {
     setUploadProgress(0)
     setLoading(true)
     setError(null)
+
     try {
       const upload = await uploadFile(file, setUploadProgress)
       setSession({
@@ -44,25 +47,33 @@ export function UploadZone() {
         columns: upload.columns,
         col_types: upload.col_types,
         template: upload.template ?? null,
+        detected_schema: upload.detected_schema ?? upload.schema_types ?? [],
+        schema_types: upload.schema_types ?? upload.detected_schema ?? [],
       })
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || "Erro ao processar arquivo")
+      closeUpload()
+    } catch (uploadError: any) {
+      setError(uploadError?.response?.data?.detail || "Erro ao processar arquivo")
     } finally {
       setUploadProgress(100)
       setLoading(false)
     }
-  }, [setSession])
+  }, [closeUpload, setSession])
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault()
+  const onDrop = (event: DragEvent) => {
+    event.preventDefault()
     setDragging(false)
-    const file = e.dataTransfer.files[0]
-    if (file) handle(file)
+    const file = event.dataTransfer.files[0]
+    if (file) {
+      void handle(file)
+    }
   }
 
   return (
     <label
-      onDragOver={e => { e.preventDefault(); setDragging(true) }}
+      onDragOver={(event) => {
+        event.preventDefault()
+        setDragging(true)
+      }}
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
       style={{
@@ -80,58 +91,67 @@ export function UploadZone() {
         opacity: loading ? 0.7 : 1,
         pointerEvents: loading ? "none" : "auto",
         padding: "40px 20px",
-        backdropFilter: "blur(6px)"
+        backdropFilter: "blur(6px)",
       }}
     >
       <input
         type="file"
         style={{ display: "none" }}
-        accept=".xlsx,.xls,.xlsm,.csv,.txt,.json"
-        onChange={e => e.target.files?.[0] && handle(e.target.files[0])}
+        accept=".xlsx,.xls,.xlsm,.csv,.json,.txt"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (file) {
+            void handle(file)
+          }
+        }}
       />
-      
-      {/* Icon with pulsing effect */}
-      <div style={{
-        fontSize: "56px",
-        marginBottom: "16px",
-        animation: loading ? "spin 1.5s linear infinite" : "float 3s ease-in-out infinite",
-        display: "inline-block"
-      }}>
+
+      <div
+        style={{
+          fontSize: "56px",
+          marginBottom: "16px",
+          animation: loading ? "spin 1.5s linear infinite" : "float 3s ease-in-out infinite",
+          display: "inline-block",
+        }}
+      >
         {loading ? "⚙️" : "📤"}
       </div>
 
-      {/* Main text */}
-      <p style={{
-        fontSize: "18px",
-        fontWeight: "700",
-        color: "#0f172a",
-        margin: "0 0 8px 0",
-        letterSpacing: "-0.3px"
-      }}>
+      <p
+        style={{
+          fontSize: "18px",
+          fontWeight: "700",
+          color: "#0f172a",
+          margin: "0 0 8px 0",
+          letterSpacing: "-0.3px",
+        }}
+      >
         {loading ? "Processing your data..." : "Drop your file here"}
       </p>
 
-      {/* Subtitle */}
-      <p style={{
-        fontSize: "14px",
-        color: "#475569",
-        margin: "0 0 16px 0",
-        fontWeight: "400"
-      }}>
+      <p
+        style={{
+          fontSize: "14px",
+          color: "#475569",
+          margin: "0 0 16px 0",
+          fontWeight: "400",
+        }}
+      >
         {loading ? "Uploading and analyzing..." : "or click to select from your computer"}
       </p>
 
-      {/* Supported formats */}
-      <div style={{
-        display: "flex",
-        gap: "8px",
-        justifyContent: "center",
-        flexWrap: "wrap",
-        marginBottom: "8px"
-      }}>
-        {["XLSX", "XLSM", "CSV", "JSON"].map(fmt => (
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          justifyContent: "center",
+          flexWrap: "wrap",
+          marginBottom: "8px",
+        }}
+      >
+        {["XLSX", "CSV", "JSON", "TXT"].map((format) => (
           <span
-            key={fmt}
+            key={format}
             style={{
               fontSize: "11px",
               fontWeight: "600",
@@ -140,20 +160,21 @@ export function UploadZone() {
               color: "#0b4f3a",
               borderRadius: "12px",
               textTransform: "uppercase",
-              letterSpacing: "0.5px"
+              letterSpacing: "0.5px",
             }}
           >
-            {fmt}
+            {format}
           </span>
         ))}
       </div>
 
-      {/* File size hint */}
-      <p style={{
-        fontSize: "12px",
-        color: "#475569",
-        margin: 0
-      }}>
+      <p
+        style={{
+          fontSize: "12px",
+          color: "#475569",
+          margin: 0,
+        }}
+      >
         Max 100MB
       </p>
 
@@ -182,18 +203,19 @@ export function UploadZone() {
         </div>
       )}
 
-      {/* Error message */}
       {error && (
-        <div style={{
-          marginTop: "16px",
-          padding: "10px 14px",
-          backgroundColor: "rgba(248, 113, 113, 0.1)",
-          border: "1px solid rgba(248, 113, 113, 0.3)",
-          borderRadius: "8px",
-          display: "flex",
-          alignItems: "center",
-          gap: "8px"
-        }}>
+        <div
+          style={{
+            marginTop: "16px",
+            padding: "10px 14px",
+            backgroundColor: "rgba(248, 113, 113, 0.1)",
+            border: "1px solid rgba(248, 113, 113, 0.3)",
+            borderRadius: "8px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+          }}
+        >
           <span style={{ fontSize: "16px" }}>⚠️</span>
           <p style={{ fontSize: "12px", color: "#fca5a5", margin: 0 }}>
             {error}
@@ -206,6 +228,7 @@ export function UploadZone() {
           0%, 100% { transform: translateY(0px) }
           50% { transform: translateY(-12px) }
         }
+
         @keyframes spin {
           from { transform: rotate(0deg) }
           to { transform: rotate(360deg) }

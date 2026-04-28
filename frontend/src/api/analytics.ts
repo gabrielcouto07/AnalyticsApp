@@ -9,6 +9,8 @@ export interface UploadResponse {
   col_types: Record<string, string>;
   preview: Record<string, unknown>[];
   template: string | null;
+  detected_schema: string[];
+  schema_types?: string[];
 }
 
 export async function uploadFile(

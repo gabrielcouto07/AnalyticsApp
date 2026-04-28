@@ -2,6 +2,7 @@
 
 import { useSessionStore } from "../store/session"
 import { UploadZone } from "../components/UploadZone"
+import { UploadFlowModal } from "../components/UploadFlowModal"
 import { Sidebar } from "../components/layout/Sidebar"
 import { DashboardPage } from "../views"
 
@@ -20,6 +21,8 @@ const VIEW_TITLES: Record<string, string> = {
 export default function Page() {
   const sessionId = useSessionStore((state) => state.sessionId)
   const activeView = useSessionStore((state) => state.activeView)
+  const isUploadOpen = useSessionStore((state) => state.isUploadOpen)
+  const closeUpload = useSessionStore((state) => state.closeUpload)
   const title = VIEW_TITLES[activeView] ?? "Dashboard ERP"
 
   if (!sessionId) {
@@ -82,38 +85,41 @@ export default function Page() {
   }
 
   return (
-    <div style={{ color: "#0f172a", minHeight: "100vh", display: "flex", flexDirection: "row" }}>
-      <div
-        style={{
-          width: "280px",
-          height: "100vh",
-          borderRight: "1px solid rgba(11,79,58,0.2)",
-          overflowY: "auto",
-          backgroundColor: "#0b4f3a",
-          flexShrink: 0,
-        }}
-      >
-        <Sidebar />
-      </div>
-
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+    <>
+      <div style={{ color: "#0f172a", minHeight: "100vh", display: "flex", flexDirection: "row" }}>
         <div
           style={{
-            backgroundColor: "rgba(255,255,255,0.86)",
-            backdropFilter: "blur(8px)",
-            borderBottom: "1px solid rgba(11,79,58,0.16)",
-            padding: "16px 24px",
+            width: "280px",
+            height: "100vh",
+            borderRight: "1px solid rgba(11,79,58,0.2)",
+            overflowY: "auto",
+            backgroundColor: "#0b4f3a",
             flexShrink: 0,
           }}
         >
-          <h2 style={{ margin: 0, color: "#0f172a", fontSize: "18px", fontWeight: 700 }}>
-            {title}
-          </h2>
+          <Sidebar />
         </div>
-        <div style={{ flex: 1, overflow: "auto", padding: "24px" }}>
-          <DashboardPage />
+
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+          <div
+            style={{
+              backgroundColor: "rgba(255,255,255,0.86)",
+              backdropFilter: "blur(8px)",
+              borderBottom: "1px solid rgba(11,79,58,0.16)",
+              padding: "16px 24px",
+              flexShrink: 0,
+            }}
+          >
+            <h2 style={{ margin: 0, color: "#0f172a", fontSize: "18px", fontWeight: 700 }}>
+              {title}
+            </h2>
+          </div>
+          <div style={{ flex: 1, overflow: "auto", padding: "24px" }}>
+            <DashboardPage />
+          </div>
         </div>
       </div>
-    </div>
+      {isUploadOpen && <UploadFlowModal onClose={closeUpload} />}
+    </>
   )
 }

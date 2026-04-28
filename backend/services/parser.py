@@ -9,6 +9,7 @@ import chardet
 import numpy as np
 import pandas as pd
 import pdfplumber
+from utils.file_reader import read_file_bytes
 
 try:
     import camelot
@@ -826,12 +827,8 @@ def load_dataframe(file_bytes: bytes, filename: str, audit: Optional[Any] = None
             },
             "info",
         )
-    elif name.endswith(".csv"):
-        df = _load_csv(file_bytes, filename)
-    elif name.endswith(".txt"):
-        df = _load_txt(file_bytes)
-    elif name.endswith(".json"):
-        df = _load_json(file_bytes)
+    elif name.endswith((".csv", ".txt", ".json")):
+        df = read_file_bytes(file_bytes, ext)
     elif name.endswith(".pdf"):
         df = _load_pdf(file_bytes)
     elif name.endswith((".sql", ".sql.txt")):

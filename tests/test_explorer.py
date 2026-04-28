@@ -1,28 +1,17 @@
-"""Test explorer endpoint"""
-import requests
-import json
+from __future__ import annotations
 
-# Upload data/samples/test_data_full.csv
-with open('data/samples/test_data_full.csv', 'rb') as f:
-    resp = requests.post('http://localhost:8001/api/upload', files={'file': f})
 
-data = resp.json()
-sid = data['session_id']
-col_types = data['col_types']
+def test_available_views_includes_explorer(client, sample_data_path):
+    with sample_data_path.open("rb") as handle:
+        upload = client.post("/api/upload", files={"file": handle})
 
-print('Session:', sid)
-print('Col Types:', col_types)
+    assert upload.status_code == 200
+    session_id = upload.json()["session_id"]
 
-numeric_cols = col_types.get('numeric', [])
-if len(numeric_cols) >= 2:
-    # Test explorer
-    payload = {'x_column': numeric_cols[0], 'y_column': numeric_cols[1]}
-    resp = requests.post(f'http://localhost:8001/api/charts/{sid}/explorer', json=payload)
-    result = resp.json()
-    print('\n✅ Explorer Success!')
-    print(f'Correlation: {result["statistics"]["correlation"]}')
-    print(f'R²: {result["statistics"]["r_squared"]}')
-    print(f'Points: {result["statistics"]["count"]}')
-    print(f'Trend: {result["statistics"]["trend"]["equation"]}')
-else:
-    print(f'Need 2+ numeric columns, found {len(numeric_cols)}')
+    response = client.get(f"/api/data/{session_id}/views/available")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert "explorer" in payload["available_views"]
+    assert "explorer" in payload["views"]
+    assert payload["views"]["explorer"]["label"] == "Data Explorer"

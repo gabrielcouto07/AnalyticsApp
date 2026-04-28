@@ -1,53 +1,34 @@
 "use client"
 
 import { useSessionStore } from "../../store/session"
+import { getVisibleNavSections } from "./navigation"
 
-type NavSection = {
-  title: string
-  items: Array<{
-    id: string
-    label: string
-    icon: string
-  }>
+function formatSchemaLabel(value: string) {
+  if (value === "generic") return "Generico"
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
 }
 
-const NAV_SECTIONS: NavSection[] = [
-  {
-    title: "DASHBOARDS",
-    items: [
-      { id: "efetivo", label: "Efetivo", icon: "📊" },
-      { id: "custos", label: "Custos", icon: "💰" },
-      { id: "orcamento", label: "Orçamento", icon: "📋" },
-    ],
-  },
-  {
-    title: "ANALYTICS",
-    items: [
-      { id: "anomalias", label: "Detecção de Anomalias", icon: "🔍" },
-      { id: "tendencias", label: "Tendências & Previsão", icon: "📈" },
-      { id: "segmentacao", label: "Segmentação", icon: "🧩" },
-      { id: "clustering", label: "Clustering / PCA", icon: "🗂️" },
-    ],
-  },
-  {
-    title: "DADOS",
-    items: [
-      { id: "profiler", label: "Data Profiler", icon: "🔬" },
-      { id: "exportar", label: "Exportar", icon: "📤" },
-    ],
-  },
-]
-
 export function Sidebar() {
-  const sessionId = useSessionStore((state) => state.sessionId)
+  const sessions = useSessionStore((state) => state.sessions)
+  const activeSessionId = useSessionStore((state) => state.activeSessionId)
   const filename = useSessionStore((state) => state.filename)
+  const format = useSessionStore((state) => state.format)
   const rowCount = useSessionStore((state) => state.rowCount)
   const colCount = useSessionStore((state) => state.colCount)
+  const schemaTypes = useSessionStore((state) => state.schemaTypes)
   const activeView = useSessionStore((state) => state.activeView)
   const setActiveView = useSessionStore((state) => state.setActiveView)
-  const clearSession = useSessionStore((state) => state.clearSession)
+  const switchSession = useSessionStore((state) => state.switchSession)
+  const removeSession = useSessionStore((state) => state.removeSession)
+  const openUpload = useSessionStore((state) => state.openUpload)
 
-  const hasSession = Boolean(sessionId)
+  const sessionEntries = Object.values(sessions)
+  const visibleSections = getVisibleNavSections(schemaTypes)
+  const hasSession = Boolean(activeSessionId)
+  const schemaLabel = schemaTypes.length > 0 ? schemaTypes.map(formatSchemaLabel).join(" + ") : "Generico"
 
   return (
     <div
@@ -82,7 +63,7 @@ export function Sidebar() {
                 letterSpacing: "0.5px",
               }}
             >
-              Gestão de obra
+              Gestao de obra
             </p>
           </div>
         </div>
@@ -98,7 +79,7 @@ export function Sidebar() {
           gap: "4px",
         }}
       >
-        {NAV_SECTIONS.map((section) => (
+        {visibleSections.map((section) => (
           <div key={section.title}>
             <p
               style={{
@@ -114,6 +95,7 @@ export function Sidebar() {
             </p>
             {section.items.map((item) => {
               const isActive = activeView === item.id
+
               return (
                 <button
                   key={item.id}
@@ -129,8 +111,7 @@ export function Sidebar() {
                     gap: "10px",
                     padding: "10px 12px",
                     border: "none",
-                    borderLeft: isActive ? "3px solid #cbbba0" : "3px solid transparent",
-                    borderRadius: "0 8px 8px 0",
+                    borderRadius: "8px",
                     background: isActive ? "rgba(255,255,255,0.18)" : "transparent",
                     color: isActive ? "#fff" : "#cbd5e1",
                     fontSize: "13px",
@@ -169,26 +150,131 @@ export function Sidebar() {
         >
           ARQUIVO
         </p>
-        <p
-          title={filename ?? ""}
-          style={{
-            margin: "0 0 4px",
-            fontSize: "12px",
-            fontWeight: 700,
-            color: "#e2e8f0",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {filename || "Nenhum arquivo"}
-        </p>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, minWidth: 0 }}>
+          <p
+            title={filename ?? ""}
+            style={{
+              margin: 0,
+              flex: 1,
+              minWidth: 0,
+              fontSize: "12px",
+              fontWeight: 700,
+              color: "#e2e8f0",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {filename || "Nenhum arquivo"}
+          </p>
+          {format && (
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 800,
+                padding: "4px 8px",
+                borderRadius: "999px",
+                backgroundColor: "rgba(203,187,160,0.18)",
+                color: "#cbbba0",
+                border: "1px solid rgba(203,187,160,0.25)",
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+                flexShrink: 0,
+              }}
+            >
+              {format}
+            </span>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+          <span
+            style={{
+              fontSize: "10px",
+              fontWeight: 800,
+              padding: "4px 8px",
+              borderRadius: "999px",
+              backgroundColor: "rgba(31,122,90,0.18)",
+              color: "#d1fae5",
+              border: "1px solid rgba(34,197,94,0.25)",
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+            }}
+          >
+            {schemaLabel}
+          </span>
+        </div>
+
         <p style={{ margin: "0 0 12px", fontSize: "11px", color: "#cbd5e1", fontWeight: 500 }}>
-          {rowCount.toLocaleString("pt-BR")} linhas x {colCount.toLocaleString("pt-BR")} colunas
+          {hasSession
+            ? `${rowCount.toLocaleString("pt-BR")} linhas x ${colCount.toLocaleString("pt-BR")} colunas`
+            : "Aguardando upload"}
         </p>
+
+        {sessionEntries.length > 1 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {sessionEntries.map((entry) => {
+              const isActive = entry.sessionId === activeSessionId
+
+              return (
+                <div
+                  key={entry.sessionId}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    borderRadius: 999,
+                    overflow: "hidden",
+                    border: isActive ? "1px solid rgba(203,187,160,0.45)" : "1px solid rgba(255,255,255,0.14)",
+                    background: isActive ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.07)",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => switchSession(entry.sessionId)}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#fff",
+                      fontSize: 11,
+                      fontWeight: isActive ? 800 : 600,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                      maxWidth: 150,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={entry.filename}
+                  >
+                    {entry.filename}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeSession(entry.sessionId)}
+                    aria-label={`Remover sessao ${entry.filename}`}
+                    style={{
+                      border: "none",
+                      background: "rgba(15,23,42,0.2)",
+                      color: "#f8fafc",
+                      padding: "0 9px",
+                      height: 28,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 800,
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
         <button
           type="button"
-          onClick={clearSession}
+          onClick={openUpload}
           style={{
             width: "100%",
             padding: "8px 12px",

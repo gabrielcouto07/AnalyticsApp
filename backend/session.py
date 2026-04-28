@@ -12,17 +12,24 @@ class Session:
     cache_invalidated: bool = False  # Flag para invalidar cache de charts
     audit: Any = None  # AuditTrail opcional associado à sessão
     template_type: Optional[str] = None  # e.g. "efetivo" for custom-parsed files
+    schema_types: list[str] = field(default_factory=list)
     extras: dict[str, Any] = field(default_factory=dict)  # e.g. {"consolidado": df, "custos_meta": {...}}
 
 
 _sessions: dict[str, Session] = {}
 
 
-def create_session(df: pd.DataFrame, template_type: Optional[str] = None, extras: dict = None) -> str:
+def create_session(
+    df: pd.DataFrame,
+    template_type: Optional[str] = None,
+    extras: dict = None,
+    schema_types: Optional[list[str]] = None,
+) -> str:
     session_id = str(uuid.uuid4())
     _sessions[session_id] = Session(
         df=df.copy(),
         template_type=template_type,
+        schema_types=schema_types or [],
         extras=extras or {},
     )
     return session_id
@@ -91,4 +98,5 @@ def get_session_info(session_id: str) -> Optional[dict]:
         "filter_count": filter_count,
         "active_filters": session.active_filters,
         "cache_invalidated": session.cache_invalidated,
+        "schema_types": session.schema_types,
     }

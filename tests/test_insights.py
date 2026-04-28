@@ -1,41 +1,30 @@
-import requests
-import json
+from __future__ import annotations
 
-# Upload data/samples/test_data.csv
-print("📤 Uploading test_data.csv...")
-with open('data/samples/test_data.csv', 'rb') as f:
-    resp = requests.post('http://localhost:8001/api/upload', files={'file': f})
+import pandas as pd
 
-if resp.status_code != 200:
-    print(f"❌ Upload failed: {resp.status_code}")
-    print(resp.text)
-    exit(1)
 
-data = resp.json()
-session_id = data['session_id']
-print(f"✅ Session ID: {session_id}")
+def test_insights_endpoint_returns_summary(client, tmp_path):
+    csv_path = tmp_path / "insights_sample.csv"
+    pd.DataFrame(
+        {
+            "data": pd.date_range("2024-01-01", periods=24, freq="D"),
+            "valor": list(range(1, 25)),
+            "valor_duplicado": [value * 2 for value in range(1, 25)],
+            "categoria": ["A", "B", "A", "C"] * 6,
+        }
+    ).to_csv(csv_path, index=False)
 
-# Get insights
-print("\n💡 Fetching insights...")
-resp = requests.get(f'http://localhost:8001/api/charts/{session_id}/insights')
+    with csv_path.open("rb") as handle:
+        upload = client.post("/api/upload", files={"file": handle})
 
-if resp.status_code != 200:
-    print(f"❌ Insights request failed: {resp.status_code}")
-    print(resp.text)
-    exit(1)
+    assert upload.status_code == 200
+    session_id = upload.json()["session_id"]
 
-insights = resp.json()
-print(f"✅ Insights retrieved!")
+    insights_response = client.get(f"/api/data/{session_id}/insights")
+    assert insights_response.status_code == 200
 
-print("\n📊 Data Quality Score:", insights['summary']['data_quality_score'])
-print("📈 Total Issues:", insights['summary']['issue_count'])
-print("📝 Recommendations:", len(insights['recommendations']))
-
-print("\n🔍 Issues Found:")
-for issue in insights['issues']:
-    print(f"  - [{issue['severity'].upper()}] {issue['title']}")
-    print(f"    → {issue['description']}")
-
-print("\n💡 Recommendations:")
-for rec in insights['recommendations']:
-    print(f"  • {rec}")
+    payload = insights_response.json()["insights"]
+    assert isinstance(payload, list)
+    assert payload
+    assert all(isinstance(item, dict) for item in payload)
+    assert any("severity" in item for item in payload)
