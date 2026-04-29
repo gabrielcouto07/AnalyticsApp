@@ -28,7 +28,9 @@ export function Sidebar() {
   const sessionEntries = Object.values(sessions)
   const visibleSections = getVisibleNavSections(schemaTypes)
   const hasSession = Boolean(activeSessionId)
-  const schemaLabel = schemaTypes.length > 0 ? schemaTypes.map(formatSchemaLabel).join(" + ") : "Generico"
+  const schemaLabel =
+    schemaTypes.length > 0 ? schemaTypes.map(formatSchemaLabel).join(" + ") : "Sem schema detectado"
+  const hasDashboardItems = visibleSections.some((section) => section.title === "DASHBOARDS")
 
   return (
     <div
@@ -50,9 +52,7 @@ export function Sidebar() {
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <span style={{ fontSize: "24px" }}>📊</span>
           <div>
-            <p style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#fff" }}>
-              ERP Analytics
-            </p>
+            <p style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#fff" }}>ERP Analytics</p>
             <p
               style={{
                 margin: "4px 0 0",
@@ -79,6 +79,25 @@ export function Sidebar() {
           gap: "4px",
         }}
       >
+        {!hasDashboardItems && hasSession && (
+          <div
+            style={{
+              margin: "8px",
+              padding: "14px",
+              borderRadius: "12px",
+              border: "1px solid rgba(203,187,160,0.2)",
+              background: "rgba(255,255,255,0.06)",
+            }}
+          >
+            <p style={{ margin: 0, fontSize: "12px", fontWeight: 700, color: "#fff" }}>
+              Faca upload de um arquivo compativel
+            </p>
+            <p style={{ margin: "6px 0 0", fontSize: "11px", lineHeight: 1.5, color: "#cbd5e1" }}>
+              Nenhum dashboard especifico foi liberado para esta sessao. Os modulos de Analytics e Dados continuam disponiveis.
+            </p>
+          </div>
+        )}
+
         {visibleSections.map((section) => (
           <div key={section.title}>
             <p
@@ -225,7 +244,9 @@ export function Sidebar() {
                     alignItems: "center",
                     borderRadius: 999,
                     overflow: "hidden",
-                    border: isActive ? "1px solid rgba(203,187,160,0.45)" : "1px solid rgba(255,255,255,0.14)",
+                    border: isActive
+                      ? "1px solid rgba(203,187,160,0.45)"
+                      : "1px solid rgba(255,255,255,0.14)",
                     background: isActive ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.07)",
                   }}
                 >
@@ -264,7 +285,7 @@ export function Sidebar() {
                       fontWeight: 800,
                     }}
                   >
-                    ×
+                    x
                   </button>
                 </div>
               )

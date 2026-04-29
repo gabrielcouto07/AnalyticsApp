@@ -1,6 +1,11 @@
-import json as _json
+from __future__ import annotations
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+import json as _json
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from ..session import create_session, get_session
 from ..services.analytics import calculate_kpis
@@ -9,186 +14,200 @@ from ..services.custos_template import detect_custos_file
 from ..services.efetivo_parser import parse_efetivo_file
 from ..services.efetivo_template import detect_efetivo_file
 from ..services.orcamento_parser import parse_orcamento_file
-from ..services.orcamento_template import detect_orcamento_file
-from ..services.parser import get_col_types, load_dataframe, normalize_col_name
-from utils.file_reader import read_file_bytes
-
-
-def _safe_preview(df):
-    """Return preview records with NaN/inf replaced by None (JSON null)."""
-    return _json.loads(df.head(10).to_json(orient="records", default_handler=str, force_ascii=False))
-
-
-def _detect_schema_types(df):
-    normalized_columns = {normalize_col_name(col) for col in df.columns}
-    schema_types: list[str] = []
-
-    if "valor" in normalized_columns and any(
-        key in normalized_columns for key in {"centro_de_custo", "centro_custo"}
-    ):
-        schema_types.append("custos")
-
-    if any("fornecedor" in column for column in normalized_columns) or any(
-        "cargo" in column and "func" in column for column in normalized_columns
-    ):
-        schema_types.append("efetivo")
-
-    if not schema_types:
-        return ["generic"]
-
-    return schema_types
-def _merge_schema_types(template_type: str | None, detected_schema: list[str]) -> list[str]:
-    merged = list(detected_schema or [])
-    if template_type and template_type not in merged and template_type != "generic":
-        merged.insert(0, template_type)
-    if not merged:
-        return ["generic"]
-    if len(merged) > 1 and "generic" in merged:
-        merged = [schema for schema in merged if schema != "generic"]
-    return list(dict.fromkeys(merged))
+from ..services.parser import detect_format, get_col_types, load_dataframe, load_file_bundle
+from ..services.schema_detector import detect_schema
 
 
 router = APIRouter(prefix="/api", tags=["upload"])
+
+
+def _safe_preview(df: pd.DataFrame) -> list[dict[str, Any]]:
+    return _json.loads(df.head(10).to_json(orient="records", default_handler=str, force_ascii=False))
+
+
+def _pick_template_type(schema_types: list[str]) -> str:
+    for candidate in ("efetivo", "custos", "orcamento"):
+        if candidate in schema_types:
+            return candidate
+    return "generic"
+
+
+def _has_records(dataframe: Any) -> bool:
+    return isinstance(dataframe, pd.DataFrame) and not dataframe.empty
+
+
+def _first_non_empty(dataframes: list[pd.DataFrame | None]) -> pd.DataFrame:
+    for dataframe in dataframes:
+        if isinstance(dataframe, pd.DataFrame) and not dataframe.empty:
+            return dataframe
+    return pd.DataFrame()
+
+
+def _build_structured_extras(workbook_bytes: bytes, filename: str) -> dict[str, Any]:
+    custos_result = parse_custos_file(workbook_bytes, filename)
+    orcamento_result = parse_orcamento_file(workbook_bytes, filename)
+    meta = custos_result.get("meta") or {}
+    structured_data = {
+        "nfs": custos_result.get("nfs"),
+        "consolidado": custos_result.get("consolidado"),
+        "resumo": custos_result.get("resumo"),
+        "orcado_realizado": custos_result.get("orcado_realizado"),
+        "orcamento": {
+            "budget": orcamento_result.get("flat"),
+            "mapas": orcamento_result.get("mapas"),
+        },
+        "resumo_meta": meta,
+    }
+    return {
+        "structured_data": structured_data,
+        "custos_meta": meta,
+        "resumo_meta": meta,
+        "nfs": custos_result.get("nfs"),
+        "consolidado": custos_result.get("consolidado"),
+        "resumo": custos_result.get("resumo"),
+        "flat": orcamento_result.get("flat"),
+        "mapas": orcamento_result.get("mapas"),
+        "orcamento_budget": orcamento_result.get("flat"),
+        "orcamento_mapas": orcamento_result.get("mapas"),
+        "orcado_realizado": custos_result.get("orcado_realizado"),
+    }
 
 
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
     force_template: str | None = Query(None, pattern="^(efetivo|orcamento|custos|generic)$"),
-):
+) -> dict[str, Any]:
     allowed = {".xlsx", ".xls", ".xlsm", ".csv", ".txt", ".json", ".pdf", ".sql", ".docx"}
-    ext = "." + file.filename.split(".")[-1].lower()
+    extension = Path(file.filename or "").suffix.lower()
 
-    if ext not in allowed:
-        raise HTTPException(400, f"Formato não suportado: {ext}")
-
-    detected_schema = ["generic"]
+    if extension not in allowed:
+        raise HTTPException(status_code=400, detail=f"Formato nao suportado: {extension}")
 
     try:
         content = await file.read()
-        custos_result = None
+        detected_format = detect_format(file.filename or "arquivo", content)
 
-        def _parse_generic():
-            print(f"[UPLOAD DEBUG] Using standard parser for '{file.filename}'")
-            parsed_df, parsed_sheets, _ = load_dataframe(content, file.filename)
-            return parsed_df, parsed_sheets, None
+        if extension in {".xlsx", ".xls", ".xlsm", ".csv", ".txt", ".json"}:
+            primary_df, sheets, detected_sheets, detected_format = load_file_bundle(content, file.filename or "arquivo")
+        else:
+            primary_df, _, _ = load_dataframe(content, file.filename or "arquivo")
+            sheet_name = Path(file.filename or "arquivo").stem or "Sheet1"
+            sheets = {sheet_name: primary_df.copy()}
+            detected_sheets = [sheet_name]
 
-        if force_template == "custos":
-            custos_result = parse_custos_file(content, file.filename)
-            df = custos_result["nfs"]
-            if df.empty:
-                df = custos_result["consolidado"]
-            if df.empty:
-                raise HTTPException(422, "Custos file parsed but returned no records")
-            template_type = "custos"
-            available_sheets = {}
-            detected_schema = _detect_schema_types(df)
+        schema_types = detect_schema(sheets)
+        custos_detected = extension in {".xlsx", ".xls", ".xlsm"} and detect_custos_file(content, file.filename or "")
+        template_type = _pick_template_type(schema_types)
+        session_df = primary_df
+        extras: dict[str, Any] = {}
 
-        elif force_template == "efetivo":
-            df = parse_efetivo_file(content, file.filename)
-            if df.empty:
-                raise HTTPException(422, "Efetivo file parsed but returned no records")
+        if force_template == "efetivo" or (
+            extension in {".xlsx", ".xls", ".xlsm"} and detect_efetivo_file(content, file.filename or "")
+        ):
+            parsed_df = parse_efetivo_file(content, file.filename or "")
+            if parsed_df.empty:
+                raise HTTPException(status_code=422, detail="Efetivo file parsed but returned no records")
+            session_df = parsed_df
             template_type = "efetivo"
-            available_sheets = {}
-            detected_schema = _detect_schema_types(df)
+
+        elif force_template == "orcamento" and extension in {".xlsx", ".xls", ".xlsm"} and (
+            custos_detected or "custos" in schema_types or "orcamento" in schema_types
+        ):
+            extras = _build_structured_extras(content, file.filename or "")
+            if _has_records(extras.get("nfs")) or _has_records(extras.get("consolidado")):
+                schema_types = list(dict.fromkeys(schema_types + ["custos"]))
+            if _has_records(extras.get("flat")):
+                schema_types = list(dict.fromkeys(schema_types + ["orcamento"]))
+            session_df = _first_non_empty(
+                [
+                    extras.get("flat"),
+                    extras.get("nfs"),
+                    extras.get("consolidado"),
+                    primary_df,
+                ]
+            )
+            if session_df.empty:
+                raise HTTPException(status_code=422, detail="Workbook parsed but returned no compatible records")
+            template_type = "orcamento"
 
         elif force_template == "orcamento":
-            result = parse_orcamento_file(content, file.filename)
-            df = result["flat"]
-            if df.empty:
-                raise HTTPException(422, "Orcamento file parsed but returned no records")
+            parsed = parse_orcamento_file(content, file.filename or "")
+            session_df = parsed["flat"]
+            if session_df.empty:
+                raise HTTPException(status_code=422, detail="Orcamento file parsed but returned no records")
+            extras = {
+                "flat": parsed.get("flat"),
+                "mapas": parsed.get("mapas"),
+            }
             template_type = "orcamento"
-            available_sheets = {}
-            detected_schema = _detect_schema_types(df)
 
-        elif ext in {".csv", ".txt", ".json"}:
-            df = read_file_bytes(content, ext)
-            available_sheets = {}
-            detected_schema = _detect_schema_types(df)
-            template_type = detected_schema[0] if detected_schema[0] != "generic" else "generic"
-
-        elif force_template == "generic":
-            df, available_sheets, template_type = _parse_generic()
-            detected_schema = _detect_schema_types(df)
-            if template_type == "generic" and detected_schema[0] != "generic":
-                template_type = detected_schema[0]
-
-        elif ext in {".xlsx", ".xls", ".xlsm"}:
-            if detect_custos_file(content, file.filename):
-                print(f"[UPLOAD DEBUG] Custos detection successful for '{file.filename}'")
-                custos_result = parse_custos_file(content, file.filename)
-                df = custos_result["nfs"]
-                if df.empty:
-                    df = custos_result["consolidado"]
-                if df.empty:
-                    raise HTTPException(422, "Custos file parsed but returned no records")
+        elif force_template == "custos" or (
+            extension in {".xlsx", ".xls", ".xlsm"} and (custos_detected or "custos" in schema_types or "orcamento" in schema_types)
+        ):
+            extras = _build_structured_extras(content, file.filename or "")
+            if _has_records(extras.get("nfs")) or _has_records(extras.get("consolidado")):
+                schema_types = list(dict.fromkeys(schema_types + ["custos"]))
+            if _has_records(extras.get("flat")):
+                schema_types = list(dict.fromkeys(schema_types + ["orcamento"]))
+            session_df = _first_non_empty(
+                [
+                    extras.get("nfs"),
+                    extras.get("flat"),
+                    extras.get("consolidado"),
+                    primary_df,
+                ]
+            )
+            if session_df.empty:
+                raise HTTPException(status_code=422, detail="Workbook parsed but returned no compatible records")
+            if force_template == "custos":
                 template_type = "custos"
-                available_sheets = {}
+            elif force_template == "orcamento":
+                template_type = "orcamento"
+            elif "custos" in schema_types:
+                template_type = "custos"
+            elif "orcamento" in schema_types:
+                template_type = "orcamento"
 
-            elif (is_efetivo := detect_efetivo_file(content, file.filename)):
-                print(f"[UPLOAD DEBUG] Efetivo detection for '{file.filename}': {is_efetivo}")
-                try:
-                    df = parse_efetivo_file(content, file.filename)
-                    print(f"[UPLOAD DEBUG] Efetivo parsed: shape={df.shape}, empty={df.empty}")
-                    if df.empty:
-                        raise HTTPException(422, "Efetivo file parsed but returned no records")
-                    template_type = "efetivo"
-                    available_sheets = {}
-                except Exception as e:
-                    print(f"[UPLOAD ERROR] Efetivo parsing failed: {e}")
-                    raise
-
-            elif detect_orcamento_file(content, file.filename):
-                try:
-                    result = parse_orcamento_file(content, file.filename)
-                    df = result["flat"]
-                    print(f"[UPLOAD DEBUG] Orcamento parsed: shape={df.shape}")
-                    if df.empty:
-                        raise HTTPException(422, "Orcamento file parsed but returned no records")
-                    template_type = "orcamento"
-                    available_sheets = {}
-                except Exception as e:
-                    print(f"[UPLOAD ERROR] Orcamento parsing failed: {e}")
-                    raise
-
-            else:
-                df, available_sheets, template_type = _parse_generic()
-                detected_schema = _detect_schema_types(df)
-                if template_type == "generic" and detected_schema[0] != "generic":
-                    template_type = detected_schema[0]
-
-        else:
-            df, available_sheets, template_type = _parse_generic()
-            detected_schema = _detect_schema_types(df)
-            if template_type == "generic" and detected_schema[0] != "generic":
-                template_type = detected_schema[0]
+        if session_df.empty:
+            raise HTTPException(status_code=422, detail="Arquivo processado sem registros")
 
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(422, f"Erro ao processar arquivo: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Erro ao processar arquivo: {exc}") from exc
 
-    detected_schema = _merge_schema_types(template_type, detected_schema)
-    col_types = {str(k): v for k, v in get_col_types(df).items()}
+    merged_schema_types = list(dict.fromkeys(([template_type] if template_type != "generic" else []) + schema_types))
+    if not merged_schema_types:
+        merged_schema_types = ["generic"]
+    if len(merged_schema_types) > 1 and "generic" in merged_schema_types:
+        merged_schema_types = [schema for schema in merged_schema_types if schema != "generic"]
 
-    extras = {}
-    if template_type == "custos" and custos_result is not None:
-        extras["consolidado"] = custos_result["consolidado"]
-        extras["custos_meta"] = custos_result["meta"]
-
-    session_id = create_session(df, template_type=template_type, extras=extras, schema_types=detected_schema)
+    col_types = {str(key): value for key, value in get_col_types(session_df).items()}
+    session_id = create_session(
+        session_df,
+        sheets=sheets,
+        filename=file.filename or "",
+        detected_sheets=detected_sheets,
+        template_type=template_type,
+        extras=extras,
+        schema_types=merged_schema_types,
+    )
     session = get_session(session_id)
     if session is not None:
-        calculate_kpis(df)
+        calculate_kpis(session_df)
 
     return {
         "session_id": session_id,
         "filename": file.filename,
-        "rows": int(len(df)),
-        "columns": int(len(df.columns)),
+        "rows": int(len(session_df)),
+        "columns": int(len(session_df.columns)),
         "col_types": col_types,
-        "available_sheets": available_sheets or {},
         "template": template_type,
-        "detected_schema": detected_schema,
-        "preview": _safe_preview(df),
+        "format": detected_format,
+        "schema_types": merged_schema_types,
+        "detected_schema": merged_schema_types,
+        "detected_sheets": detected_sheets,
+        "available_sheets": detected_sheets,
+        "preview": _safe_preview(session_df),
     }

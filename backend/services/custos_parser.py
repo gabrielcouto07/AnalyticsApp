@@ -19,6 +19,7 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 from io import BytesIO
 import openpyxl
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -259,11 +260,74 @@ def parse_custos_file(file_bytes: bytes, filename: str) -> Dict[str, Any]:
                 data_start=9, forn_col=3, max_empty=15, skip_values={"---"},
             )
 
+    sheet_names = list(wb.sheetnames)
     meta["Filename"] = filename
     wb.close()
 
+    try:
+        from .custos_analyzer import parse_custos_workbook_bytes
+
+        structured = parse_custos_workbook_bytes(file_bytes)
+    except Exception as exc:
+        logger.warning("[custos_parser] Optional structured sheet parsing failed: %s", exc)
+        resumo_sheet = next((sheet for sheet in sheet_names if "RESUMO" in sheet.upper()), None)
+        structured = {
+            "resumo": _parse_dynamic_table(
+                file_bytes,
+                resumo_sheet,
+                required_keywords=["consolidado", "total geral"],
+            ),
+            "orcado_realizado": pd.DataFrame(),
+        }
+
     logger.info(f"[custos_parser] Parsed NFs={len(df_nfs)} rows, Consolidado={len(df_cons)} rows")
-    return {"meta": meta, "nfs": df_nfs, "consolidado": df_cons}
+    return {
+        "meta": meta,
+        "nfs": df_nfs,
+        "consolidado": df_cons,
+        "resumo": structured.get("resumo"),
+        "orcado_realizado": structured.get("orcado_realizado"),
+    }
+
+
+def _normalize_text(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKD", _safe_str(value).lower())
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", ascii_text).strip()
+
+
+def _parse_dynamic_table(
+    file_bytes: bytes,
+    sheet_name: str | None,
+    required_keywords: list[str],
+    max_scan_rows: int = 25,
+) -> pd.DataFrame:
+    if not sheet_name:
+        return pd.DataFrame()
+
+    raw_df = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, header=None)
+    header_row = None
+
+    for row_index in range(min(len(raw_df), max_scan_rows)):
+        normalized_cells = [
+            _normalize_text(value)
+            for value in raw_df.iloc[row_index].tolist()
+            if _safe_str(value)
+        ]
+        if all(any(keyword in cell for cell in normalized_cells) for keyword in required_keywords):
+            header_row = row_index
+            break
+
+    if header_row is None:
+        return pd.DataFrame()
+
+    table = raw_df.iloc[header_row + 1 :].copy().reset_index(drop=True)
+    table.columns = [
+        _safe_str(value).replace("\n", " ").replace("\r", " ").strip() or f"COL_{index + 1}"
+        for index, value in enumerate(raw_df.iloc[header_row].tolist())
+    ]
+    table = table.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    return table.reset_index(drop=True)
 
 
 def detect_custos_file(file_bytes: bytes, filename: str) -> bool:

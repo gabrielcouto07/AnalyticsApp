@@ -1,631 +1,426 @@
-import React, { useEffect, useState } from "react"
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
-} from "recharts"
-import { templatesApiUrl } from "../api/client"
+"use client"
 
-const COLORS = [
-  "#34c97e", "#4f8ef7", "#f5a623", "#e05263",
-  "#a78bfa", "#06b6d4", "#f97316", "#ec4899",
-]
-const WINNER_COLOR = "#34c97e"
+import React, { useEffect, useMemo, useState } from "react"
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { fetchApiJson, type OrcamentoFlatResponse, type OrcamentoMapasResponse } from "../api/analytics"
+import { EmptyState } from "./layout/EmptyState"
+import { SCHEMA_REQUIRED_COLUMNS } from "./layout/schemaRequirements"
+import { useSessionStore } from "../store/session"
 
-interface Summary {
-  obra: string
-  assunto: string
-  numero: string
-  total_items: number
-  total_fornecedores: number
-  menor_preco_fornecedor: string
-  menor_preco_valor: number
-  fornecedor_totals: Record<string, number>
-  tipo_breakdown: Record<string, number>
-  fornecedores_list: string[]
+type TabId = "linhas" | "mapas"
+type SortDirection = "asc" | "desc"
+type SortState = { key: string; direction: SortDirection }
+type TableRow = Record<string, string | number | null | undefined>
+
+const PAGE_SIZE = 50
+
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
 }
 
-interface PricePivotRow {
-  item: number
-  descricao: string
-  quant: number
-  unid: string
-  tipo: string
-  precos: Record<string, number | null>
-  cheapest: string | null
-  cheapest_preco: number | null
+function parseNumber(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0
+  if (typeof value !== "string") return 0
+  const cleaned = value.replace(/\s/g, "").replace(/\./g, "").replace(",", ".").replace(/[^\d.-]/g, "")
+  const parsed = Number(cleaned)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
-interface FornecedorRank {
-  fornecedor: string
-  total_preco: number
-  items_cotados: number
-  total_items: number
-  cobertura_pct: number
-  itens_mais_barato: number
-  contato: string
-  telefone: string
-  email: string
+function compareValues(left: unknown, right: unknown) {
+  const leftNumber = parseNumber(left)
+  const rightNumber = parseNumber(right)
+  const leftLooksNumeric = typeof left === "number" || /\d/.test(String(left ?? ""))
+  const rightLooksNumeric = typeof right === "number" || /\d/.test(String(right ?? ""))
+  if (leftLooksNumeric && rightLooksNumeric) return leftNumber - rightNumber
+  return String(left ?? "").localeCompare(String(right ?? ""), "pt-BR", { numeric: true, sensitivity: "base" })
 }
 
-interface ItemAnalysis {
-  item: number
-  descricao: string
-  quant: number
-  unid: string
-  tipo: string
-  cotacoes: number
-  menor_preco: number | null
-  menor_fornecedor: string | null
-  maior_preco: number | null
-  maior_fornecedor: string | null
-  spread: number | null
-  spread_pct: number | null
+function sortRows<T extends TableRow>(rows: T[], sortState: SortState) {
+  return [...rows].sort((left, right) => {
+    const result = compareValues(left[sortState.key], right[sortState.key])
+    return sortState.direction === "asc" ? result : -result
+  })
 }
 
-interface FullReport {
-  summary: Summary
-  price_pivot: { items: number[]; fornecedores: string[]; rows: PricePivotRow[] }
-  fornecedor_ranking: FornecedorRank[]
-  item_analysis: ItemAnalysis[]
-  tipo_breakdown: { servicos: number; insumos: number }
+function paginateRows<T>(rows: T[], page: number) {
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const start = (safePage - 1) * PAGE_SIZE
+  return {
+    page: safePage,
+    totalPages,
+    rows: rows.slice(start, start + PAGE_SIZE),
+  }
 }
 
-interface VarianceRow {
-  item: number
-  descricao: string
-  menor_preco: number
-  maior_preco: number
-  delta: number
-  delta_pct: number
+function formatCurrency(value: number) {
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 }
 
-interface VarianceResponse {
-  rows: VarianceRow[]
-  total_items: number
-  avg_delta_pct: number
-}
-
-// ─── Formatters ───────────────────────────────────────────────────────────────
-
-const fmtBRL = (n: number | null | undefined): string => {
-  if (n == null || isNaN(n)) return "—"
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-}
-const fmtPct = (n: number | null | undefined): string => {
-  if (n == null || isNaN(n)) return "—"
-  return `${n.toFixed(1)}%`
-}
-
-// ─── Custom Tooltip ───────────────────────────────────────────────────────────
-
-const BarTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null
+function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (page: number) => void }) {
+  if (totalPages <= 1) return null
   return (
-    <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 10, padding: "10px 14px", fontSize: 12 }}>
-      <p style={{ color: "#f1f5f9", fontWeight: 700, marginBottom: 4 }}>{label}</p>
-      {payload.map((e: any) => (
-        <p key={e.dataKey} style={{ color: e.fill || e.color || "#94a3b8", margin: "2px 0" }}>
-          {fmtBRL(e.value)}
-        </p>
-      ))}
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
+      <span style={{ color: "#94a3b8", fontSize: 13 }}>
+        Página {page} de {totalPages}
+      </span>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="button" style={secondaryButtonStyle} onClick={() => onChange(Math.max(1, page - 1))}>
+          Anterior
+        </button>
+        <button type="button" style={secondaryButtonStyle} onClick={() => onChange(Math.min(totalPages, page + 1))}>
+          Próxima
+        </button>
+      </div>
     </div>
   )
 }
-
-// ─── Main Component ───────────────────────────────────────────────────────────
 
 export const OrcamentoDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) => {
-  const [report, setReport] = useState<FullReport | null>(null)
-  const [variance, setVariance] = useState<VarianceResponse | null>(null)
+  const schemaTypes = useSessionStore((state) => state.schemaTypes)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [warnings, setWarnings] = useState<string[]>([])
-  const [activeTab, setActiveTab] = useState<"pivot" | "ranking" | "items">("pivot")
-  const [showAllPivot, setShowAllPivot] = useState(false)
-  const [showAllRanking, setShowAllRanking] = useState(false)
-  const [showAllItems, setShowAllItems] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabId>("linhas")
+  const [flatRows, setFlatRows] = useState<OrcamentoFlatResponse>([])
+  const [mapasRows, setMapasRows] = useState<OrcamentoMapasResponse>([])
+  const [descricaoSearch, setDescricaoSearch] = useState("")
+  const [selectedItems, setSelectedItems] = useState<string[]>([])
+  const [flatSort, setFlatSort] = useState<SortState>({ key: "ITEM", direction: "asc" })
+  const [mapasSort, setMapasSort] = useState<SortState>({ key: "VALOR_MAPA", direction: "desc" })
+  const [flatPage, setFlatPage] = useState(1)
+  const [mapasPage, setMapasPage] = useState(1)
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true)
-      setError(null)
-      setWarnings([])
-      try {
-        const [analysisRes, varianceRes] = await Promise.allSettled([
-          fetch(templatesApiUrl(`/orcamento/analysis/${sessionId}`)).then(r => {
-            if (!r.ok) throw new Error(`HTTP ${r.status}`)
-            return r.json()
-          }),
-          fetch(templatesApiUrl(`/orcamento/variance/${sessionId}`)).then(r => {
-            if (!r.ok) throw new Error(`HTTP ${r.status}`)
-            return r.json()
-          }),
-        ])
+    let active = true
+    setLoading(true)
+    setError(null)
 
-        const nextWarnings: string[] = []
+    Promise.all([
+      fetchApiJson<OrcamentoFlatResponse>(`/api/orcamento/${sessionId}/flat`),
+      fetchApiJson<OrcamentoMapasResponse>(`/api/orcamento/${sessionId}/mapas`),
+    ])
+      .then(([nextFlat, nextMapas]) => {
+        if (!active) return
+        setFlatRows(nextFlat)
+        setMapasRows(nextMapas)
+      })
+      .catch((fetchError: unknown) => {
+        if (!active) return
+        setError(fetchError instanceof Error ? fetchError.message : "Erro ao carregar dados de orçamento.")
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
 
-        if (analysisRes.status === "fulfilled") {
-          setReport(analysisRes.value)
-        } else {
-          throw new Error("Falha na análise principal de orçamento.")
-        }
-
-        if (varianceRes.status === "fulfilled") {
-          setVariance(varianceRes.value)
-        } else {
-          nextWarnings.push("Métrica de variância (%) indisponível.")
-        }
-
-        setWarnings(nextWarnings)
-      } catch (e: any) {
-        setError(e?.message || "Erro ao carregar dados do Orçamento.")
-      } finally {
-        setLoading(false)
-      }
+    return () => {
+      active = false
     }
-    load()
   }, [sessionId])
 
-  // ─── Loading / Error ────────────────────────────────────────────────
+  const filteredFlat = useMemo(() => {
+    return flatRows.filter((row) => {
+      const descricao = String(row["DESCRIÇÃO"] ?? "")
+      return !descricaoSearch || normalizeText(descricao).includes(normalizeText(descricaoSearch))
+    })
+  }, [descricaoSearch, flatRows])
 
-  if (loading) return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60vh", flexDirection: "column", gap: 16 }}>
-      <div style={{ width: 40, height: 40, borderRadius: "50%", border: "3px solid #334155", borderTopColor: "#34c97e", animation: "spin 0.8s linear infinite" }} />
-      <p style={{ color: "#94a3b8" }}>Carregando Mapa de Concorrência...</p>
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-    </div>
+  const filteredMapas = useMemo(() => {
+    return mapasRows.filter((row) => {
+      const item = String(row.ITEM ?? "")
+      return selectedItems.length === 0 || selectedItems.includes(item)
+    })
+  }, [mapasRows, selectedItems])
+
+  const totalOrcamento = useMemo(
+    () => filteredFlat.reduce((sum, row) => sum + parseNumber(row["CUSTO TOTAL"]), 0),
+    [filteredFlat],
   )
 
-  if (error || !report) return (
-    <div style={{ padding: 24, color: "#fca5a5", background: "rgba(248,113,113,0.1)", borderRadius: 12, border: "1px solid rgba(248,113,113,0.3)" }}>
-      ⚠️ {error || "Nenhum dado encontrado."}
-    </div>
-  )
+  const topMapasChart = useMemo(() => {
+    const grouped = new Map<string, number>()
+    for (const row of filteredMapas) {
+      const mapa = String(row.MAPA ?? "")
+      grouped.set(mapa, (grouped.get(mapa) ?? 0) + parseNumber(row.VALOR_MAPA))
+    }
+    return Array.from(grouped.entries())
+      .map(([mapa, valor]) => ({ mapa, valor }))
+      .sort((left, right) => right.valor - left.valor)
+      .slice(0, 15)
+  }, [filteredMapas])
 
-  const { summary, price_pivot, fornecedor_ranking, item_analysis, tipo_breakdown } = report
-  const varianceMap = new Map<number, VarianceRow>()
-  for (const row of variance?.rows ?? []) varianceMap.set(row.item, row)
+  const itemOptions = useMemo(() => {
+    return Array.from(new Set(mapasRows.map((row) => String(row.ITEM ?? "").trim()).filter(Boolean))).sort((left, right) =>
+      left.localeCompare(right, "pt-BR", { numeric: true, sensitivity: "base" }),
+    )
+  }, [mapasRows])
 
-  const downloadCsv = (filename: string, headers: string[], rows: Array<Array<string | number>>) => {
-    const lines = [headers.join(","), ...rows.map(r => r.map(cell => {
-      const text = String(cell ?? "")
-      return text.includes(",") ? `"${text.replaceAll('"', '""')}"` : text
-    }).join(","))]
-    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
+  const sortedFlat = useMemo(() => sortRows(filteredFlat as TableRow[], flatSort), [filteredFlat, flatSort])
+  const sortedMapas = useMemo(() => sortRows(filteredMapas as TableRow[], mapasSort), [filteredMapas, mapasSort])
+  const pagedFlat = paginateRows(sortedFlat, flatPage)
+  const pagedMapas = paginateRows(sortedMapas, mapasPage)
+
+  const handleSort = (current: SortState, setSort: (next: SortState) => void, key: string) => {
+    setSort({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    })
   }
 
-  // Chart data: fornecedor totals as bar chart
-  const fornTotalData = Object.entries(summary.fornecedor_totals)
-    .filter(([name]) => name)
-    .map(([name, total]) => ({ name, total }))
-    .sort((a, b) => a.total - b.total)
+  if (loading) {
+    return <div style={{ color: "#cbd5e1" }}>Carregando dashboard de orçamento...</div>
+  }
 
-  // Pie data: tipo breakdown
-  const tipoPieData = [
-    { name: "Serviço", value: tipo_breakdown.servicos, color: "#4f8ef7" },
-    { name: "Insumo", value: tipo_breakdown.insumos, color: "#f5a623" },
-  ].filter(d => d.value > 0)
+  if (error || (flatRows.length === 0 && mapasRows.length === 0)) {
+    return (
+      <EmptyState
+        schemaRequired="orcamento"
+        requiredColumns={SCHEMA_REQUIRED_COLUMNS.orcamento}
+        uploadedSchemas={schemaTypes}
+      />
+    )
+  }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-
-      {/* ── Header ───────────────────────────────────────────────── */}
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#f1f5f9" }}>
-          💰 Mapa de Concorrência — {summary.assunto}
-        </h2>
-        <p style={{ margin: "4px 0 0", fontSize: 13, color: "#94a3b8" }}>
-          {summary.obra} · Nº {summary.numero} · {summary.total_items} itens · {summary.total_fornecedores} fornecedores
+        <h2 style={{ margin: 0, fontSize: 24, color: "#f8fafc" }}>Orçamento</h2>
+        <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 14 }}>
+          Linhas orçamentárias e mapas de compra derivados do arquivo enviado.
         </p>
       </div>
 
-      {warnings.length > 0 && (
-        <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(251,191,36,0.4)", background: "rgba(251,191,36,0.08)", color: "#fcd34d", fontSize: 12 }}>
-          ⚠️ Algumas análises não foram carregadas: {warnings.join(" ")}
-        </div>
-      )}
-
-      {/* ── KPI Cards ────────────────────────────────────────────── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {[
-          { label: "Total Itens", value: summary.total_items, color: "#4f8ef7", icon: "📦" },
-          { label: "Fornecedores", value: summary.total_fornecedores, color: "#a78bfa", icon: "🏢" },
-          { label: "Menor Preço", value: fmtBRL(summary.menor_preco_valor), color: "#34c97e", icon: "🏆", sub: summary.menor_preco_fornecedor },
-          { label: "Serviços", value: tipo_breakdown.servicos, color: "#06b6d4", icon: "🔧" },
-          { label: "Insumos", value: tipo_breakdown.insumos, color: "#f5a623", icon: "📋" },
-        ].map(({ label, value, color, icon, sub }) => (
-          <div key={label} style={{ background: "rgba(30,41,59,0.7)", border: `1px solid ${color}30`, borderRadius: 12, padding: "16px 18px" }}>
-            <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>{icon} {label}</p>
-            <p style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 800, color }}>{value}</p>
-            {sub && <p style={{ margin: "4px 0 0", fontSize: 11, color: "#64748b" }}>{sub}</p>}
-          </div>
-        ))}
-      </div>
-
-      {/* ── Charts Row ───────────────────────────────────────────── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 16 }}>
-        {/* Bar: Totals per Fornecedor */}
-        <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-            📊 Preço Total por Fornecedor
-          </h3>
-          <ResponsiveContainer width="100%" height={Math.max(180, fornTotalData.length * 48)}>
-            <BarChart data={fornTotalData} layout="vertical" margin={{ top: 0, right: 80, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-              <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={v => fmtBRL(v)} />
-              <YAxis type="category" dataKey="name" tick={{ fill: "#f1f5f9", fontSize: 11 }} width={180} />
-              <Tooltip content={<BarTooltip />} />
-              <Bar dataKey="total" radius={[0, 6, 6, 0]} label={{ position: "right", fill: "#94a3b8", fontSize: 11, formatter: (value) => fmtBRL(Number(value)) }}>
-                {fornTotalData.map((entry, i) => (
-                  <Cell key={i} fill={entry.name === summary.menor_preco_fornecedor ? WINNER_COLOR : COLORS[i % COLORS.length]} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Pie: Tipo */}
-        <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-            🔧 Tipo de Item
-          </h3>
-          <ResponsiveContainer width="100%" height={180}>
-            <PieChart>
-              <Pie data={tipoPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={40} outerRadius={70}
-                label={({ name, value }) => `${name}: ${value}`} labelLine={false}>
-                {tipoPieData.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value) => Number(value)} />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* ── Tab Navigation ────────────────────────────────────────── */}
-      <div style={{ display: "flex", gap: 8 }}>
-        {([
-          { id: "pivot" as const, label: "📋 Comparativo de Preços" },
-          { id: "ranking" as const, label: "🏆 Ranking Fornecedores" },
-          { id: "items" as const, label: "📦 Análise por Item" },
-        ]).map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
-            padding: "8px 18px", borderRadius: 20, border: "none", cursor: "pointer",
-            fontSize: 13, fontWeight: 700,
-            background: activeTab === tab.id ? "#4f8ef7" : "rgba(30,41,59,0.8)",
-            color: activeTab === tab.id ? "#fff" : "#94a3b8",
-            transition: "all 0.15s",
-          }}>
+          { id: "linhas" as const, label: "Linhas de Orçamento" },
+          { id: "mapas" as const, label: "Mapas de Compra" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              ...tabButtonStyle,
+              background: activeTab === tab.id ? "#cbbba0" : "#1e293b",
+              color: activeTab === tab.id ? "#0b4f3a" : "#f8fafc",
+            }}
+          >
             {tab.label}
           </button>
         ))}
       </div>
 
-      {/* ══════════════════════════════════════════════════════════ */}
-      {/* TAB: Price Comparison Pivot                               */}
-      {/* ══════════════════════════════════════════════════════════ */}
-      {activeTab === "pivot" && (
-        <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-            Comparativo de Preços — Item × Fornecedor
-          </h3>
-          <p style={{ margin: "0 0 16px", fontSize: 12, color: "#64748b" }}>
-            Células verdes = menor preço para o item
-          </p>
-          <button
-            onClick={() => downloadCsv(
-              `orcamento_pivot_${sessionId}.csv`,
-              ["item", "descricao", "tipo", "qtd", "delta_pct", ...price_pivot.fornecedores],
-              price_pivot.rows.map((row) => {
-                const varianceRow = varianceMap.get(row.item)
-                return [
-                  row.item,
-                  row.descricao,
-                  row.tipo,
-                  row.quant,
-                  varianceRow?.delta_pct ?? "",
-                  ...price_pivot.fornecedores.map((f) => row.precos[f] ?? ""),
-                ]
-              }),
-            )}
-            style={{ ...tdStyle, marginBottom: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
-          >
-            Exportar CSV
-          </button>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>#</th>
-                  <th style={{ ...thStyle, minWidth: 200, textAlign: "left" }}>Descrição</th>
-                  <th style={thStyle}>Qtd</th>
-                  <th style={thStyle}>Tipo</th>
-                  <th style={thStyle}>Δ%</th>
-                  {price_pivot.fornecedores.map(f => (
-                    <th key={f} style={{ ...thStyle, minWidth: 120, color: "#4f8ef7" }}>{f}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(showAllPivot ? price_pivot.rows : price_pivot.rows.slice(0, 12)).map((row, idx) => (
-                  <tr key={row.item} style={{ background: idx % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
-                    <td style={{ ...tdStyle, fontWeight: 700, color: "#64748b", textAlign: "center" }}>{row.item}</td>
-                    <td style={{ ...tdStyle, color: "#f1f5f9", maxWidth: 280 }} title={row.descricao}>
-                      {row.descricao.length > 55 ? row.descricao.slice(0, 55) + "…" : row.descricao}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: "center", color: "#94a3b8" }}>{row.quant || "—"}</td>
-                    <td style={{ ...tdStyle, textAlign: "center" }}>
-                      <span style={{
-                        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
-                        background: row.tipo === "Serviço" ? "rgba(79,142,247,0.15)" : "rgba(245,166,35,0.15)",
-                        color: row.tipo === "Serviço" ? "#4f8ef7" : "#f5a623",
-                      }}>{row.tipo}</span>
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: (varianceMap.get(row.item)?.delta_pct ?? 0) > 25 ? "#e05263" : "#34c97e" }}>
-                      {varianceMap.get(row.item)?.delta_pct != null ? fmtPct(varianceMap.get(row.item)?.delta_pct) : "—"}
-                    </td>
-                    {price_pivot.fornecedores.map(forn => {
-                      const preco = row.precos[forn]
-                      const isCheapest = row.cheapest === forn && preco != null
-                      return (
-                        <td key={forn} style={{
-                          ...tdStyle, textAlign: "right", fontWeight: 600,
-                          color: preco == null ? "#334155" : isCheapest ? WINNER_COLOR : "#f1f5f9",
-                          background: isCheapest ? "rgba(52,201,126,0.08)" : "transparent",
-                        }}>
-                          {preco != null ? fmtBRL(preco) : "—"}
+      {activeTab === "linhas" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(1, minmax(0, 1fr))", gap: 12 }}>
+            <div style={metricCardStyle}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase" }}>Orçamento Total</div>
+              <div style={{ marginTop: 10, fontSize: 24, fontWeight: 800, color: "#f8fafc" }}>{formatCurrency(totalOrcamento)}</div>
+            </div>
+          </div>
+
+          <section style={panelStyle}>
+            <div style={filterRowStyle}>
+              <input
+                type="text"
+                value={descricaoSearch}
+                onChange={(event) => {
+                  setDescricaoSearch(event.target.value)
+                  setFlatPage(1)
+                }}
+                placeholder="Filtrar por descrição"
+                style={inputStyle}
+              />
+            </div>
+
+            <h3 style={panelTitleStyle}>Tabela de Linhas</h3>
+            <div style={{ overflowX: "auto" }}>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    {["ITEM", "SUBITEM", "DESCRIÇÃO", "UNID", "QTD", "CUSTO UNITÁRIO", "CUSTO TOTAL"].map((column) => (
+                      <th key={column} style={thStyle}>
+                        <button type="button" onClick={() => handleSort(flatSort, setFlatSort, column)} style={sortButtonStyle}>
+                          {column}
+                        </button>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedFlat.rows.map((row, index) => (
+                    <tr key={`${row.ITEM}-${row.SUBITEM}-${index}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.28)" : "transparent" }}>
+                      {["ITEM", "SUBITEM", "DESCRIÇÃO", "UNID", "QTD", "CUSTO UNITÁRIO", "CUSTO TOTAL"].map((column) => (
+                        <td key={column} style={tdStyle}>
+                          {column === "QTD"
+                            ? parseNumber(row[column]).toLocaleString("pt-BR")
+                            : column === "CUSTO UNITÁRIO" || column === "CUSTO TOTAL"
+                              ? formatCurrency(parseNumber(row[column]))
+                              : String(row[column] ?? "-")}
                         </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-              {/* Totals footer */}
-              <tfoot>
-                <tr style={{ borderTop: "2px solid #334155" }}>
-                  <td colSpan={5} style={{ ...tdStyle, fontWeight: 700, color: "#f1f5f9" }}>TOTAL</td>
-                  {price_pivot.fornecedores.map(forn => {
-                    const total = summary.fornecedor_totals[forn] ?? 0
-                    const isWinner = forn === summary.menor_preco_fornecedor
-                    return (
-                      <td key={forn} style={{
-                        ...tdStyle, textAlign: "right", fontWeight: 800, fontSize: 13,
-                        color: isWinner ? WINNER_COLOR : "#f5a623",
-                        background: isWinner ? "rgba(52,201,126,0.08)" : "transparent",
-                      }}>
-                        {fmtBRL(total)}
-                        {isWinner && <span style={{ marginLeft: 6, fontSize: 14 }}>🏆</span>}
-                      </td>
-                    )
-                  })}
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-          {price_pivot.rows.length > 12 && (
-            <div style={{ marginTop: 10 }}>
-              <button onClick={() => setShowAllPivot(v => !v)} style={{ ...tdStyle, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
-                {showAllPivot ? "Recolher" : `Mostrar tudo (${price_pivot.rows.length})`}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════ */}
-      {/* TAB: Fornecedor Ranking                                   */}
-      {/* ══════════════════════════════════════════════════════════ */}
-      {activeTab === "ranking" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <button
-            onClick={() => downloadCsv(
-              `orcamento_ranking_${sessionId}.csv`,
-              ["fornecedor", "total_preco", "items_cotados", "cobertura_pct", "itens_mais_barato"],
-              fornecedor_ranking.map((f) => [f.fornecedor, f.total_preco, f.items_cotados, f.cobertura_pct, f.itens_mais_barato]),
-            )}
-            style={{ ...tdStyle, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
-          >
-            Exportar CSV
-          </button>
-          {(showAllRanking ? fornecedor_ranking : fornecedor_ranking.slice(0, 8)).map((forn, idx) => {
-            const isWinner = forn.fornecedor === summary.menor_preco_fornecedor
-            const borderColor = isWinner ? WINNER_COLOR : COLORS[idx % COLORS.length]
-            return (
-              <div key={forn.fornecedor} style={{
-                background: "rgba(30,41,59,0.7)", border: `1px solid ${borderColor}40`,
-                borderLeft: `4px solid ${borderColor}`, borderRadius: 14, padding: "20px 24px",
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-                  {/* Left: name + contact */}
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ fontSize: 20 }}>{isWinner ? "🏆" : `#${idx + 1}`}</span>
-                      <h4 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#f1f5f9" }}>
-                        {forn.fornecedor || "(Sem nome)"}
-                      </h4>
-                      {isWinner && (
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 10, background: "rgba(52,201,126,0.15)", color: WINNER_COLOR }}>
-                          MENOR PREÇO
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "#94a3b8" }}>
-                      {forn.contato && <span>👤 {forn.contato}</span>}
-                      {forn.telefone && <span>📞 {forn.telefone}</span>}
-                      {forn.email && <span>✉️ {forn.email}</span>}
-                    </div>
-                  </div>
-                  {/* Right: total price */}
-                  <div style={{ textAlign: "right" }}>
-                    <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Total</p>
-                    <p style={{ margin: "4px 0 0", fontSize: 22, fontWeight: 800, color: borderColor }}>
-                      {fmtBRL(forn.total_preco)}
-                    </p>
-                  </div>
-                </div>
-                {/* Stats row */}
-                <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
-                  {[
-                    { label: "Itens Cotados", value: `${forn.items_cotados}/${forn.total_items}` },
-                    { label: "Cobertura", value: fmtPct(forn.cobertura_pct) },
-                    { label: "Itens Mais Barato", value: forn.itens_mais_barato },
-                  ].map(s => (
-                    <div key={s.label} style={{ background: "rgba(15,23,42,0.4)", borderRadius: 8, padding: "8px 12px" }}>
-                      <p style={{ margin: 0, fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 600 }}>{s.label}</p>
-                      <p style={{ margin: "4px 0 0", fontSize: 16, fontWeight: 700, color: "#f1f5f9" }}>{s.value}</p>
-                    </div>
+                      ))}
+                    </tr>
                   ))}
-                </div>
-              </div>
-            )
-          })}
-          {fornecedor_ranking.length > 8 && (
-            <button onClick={() => setShowAllRanking(v => !v)} style={{ ...tdStyle, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
-              {showAllRanking ? "Recolher" : `Mostrar tudo (${fornecedor_ranking.length})`}
-            </button>
-          )}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={pagedFlat.page} totalPages={pagedFlat.totalPages} onChange={setFlatPage} />
+          </section>
         </div>
       )}
 
-      {/* ══════════════════════════════════════════════════════════ */}
-      {/* TAB: Item Analysis                                        */}
-      {/* ══════════════════════════════════════════════════════════ */}
-      {activeTab === "items" && (
-        <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-            Análise por Item — Spread de Preços
-          </h3>
-          <p style={{ margin: "0 0 16px", fontSize: 12, color: "#64748b" }}>
-            Diferença entre menor e maior cotação por item
-          </p>
-          <button
-            onClick={() => downloadCsv(
-              `orcamento_items_${sessionId}.csv`,
-              ["item", "descricao", "tipo", "cotacoes", "menor_preco", "maior_preco", "spread_pct", "executado_pct"],
-              item_analysis.map((item) => [
-                item.item,
-                item.descricao,
-                item.tipo,
-                item.cotacoes,
-                item.menor_preco ?? "",
-                item.maior_preco ?? "",
-                item.spread_pct ?? "",
-                Math.round((item.cotacoes / Math.max(summary.total_fornecedores, 1)) * 100),
-              ]),
-            )}
-            style={{ ...tdStyle, marginBottom: 10, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}
-          >
-            Exportar CSV
-          </button>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>#</th>
-                  <th style={{ ...thStyle, textAlign: "left", minWidth: 180 }}>Descrição</th>
-                  <th style={thStyle}>Tipo</th>
-                  <th style={thStyle}>Cotações</th>
-                  <th style={{ ...thStyle, color: WINNER_COLOR }}>Menor Preço</th>
-                  <th style={thStyle}>Fornecedor</th>
-                  <th style={{ ...thStyle, color: "#e05263" }}>Maior Preço</th>
-                  <th style={thStyle}>Fornecedor</th>
-                  <th style={thStyle}>Spread</th>
-                  <th style={thStyle}>Spread %</th>
-                  <th style={thStyle}>% Executado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(showAllItems ? item_analysis : item_analysis.slice(0, 15)).map((item, idx) => (
-                  <tr key={item.item} style={{ background: idx % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent" }}>
-                    <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: "#64748b" }}>{item.item}</td>
-                    <td style={{ ...tdStyle, color: "#f1f5f9" }} title={item.descricao}>
-                      {item.descricao.length > 45 ? item.descricao.slice(0, 45) + "…" : item.descricao}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: "center" }}>
-                      <span style={{
-                        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
-                        background: item.tipo === "Serviço" ? "rgba(79,142,247,0.15)" : "rgba(245,166,35,0.15)",
-                        color: item.tipo === "Serviço" ? "#4f8ef7" : "#f5a623",
-                      }}>{item.tipo}</span>
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: "center", color: "#94a3b8" }}>{item.cotacoes}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: WINNER_COLOR }}>
-                      {item.menor_preco != null ? fmtBRL(item.menor_preco) : "—"}
-                    </td>
-                    <td style={{ ...tdStyle, fontSize: 11, color: "#94a3b8" }}>{item.menor_fornecedor || "—"}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#e05263" }}>
-                      {item.maior_preco != null ? fmtBRL(item.maior_preco) : "—"}
-                    </td>
-                    <td style={{ ...tdStyle, fontSize: 11, color: "#94a3b8" }}>{item.maior_fornecedor || "—"}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#f5a623" }}>
-                      {item.spread != null ? fmtBRL(item.spread) : "—"}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>
-                      {item.spread_pct != null ? (
-                        <span style={{
-                          fontWeight: 700,
-                          color: item.spread_pct > 50 ? "#e05263" : item.spread_pct > 20 ? "#f5a623" : "#34c97e",
-                        }}>
-                          {fmtPct(item.spread_pct)}
-                        </span>
-                      ) : "—"}
-                    </td>
-                    <td style={{ ...tdStyle, minWidth: 140 }}>
-                      {(() => {
-                        const progress = Math.min(100, Math.round((item.cotacoes / Math.max(summary.total_fornecedores, 1)) * 100))
-                        return (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <div style={{ flex: 1, height: 8, borderRadius: 999, background: "rgba(148,163,184,0.25)" }}>
-                              <div style={{ width: `${progress}%`, height: "100%", borderRadius: 999, background: progress >= 80 ? "#34c97e" : progress >= 50 ? "#f5a623" : "#e05263" }} />
-                            </div>
-                            <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{progress}%</span>
-                          </div>
-                        )
-                      })()}
-                    </td>
-                  </tr>
+      {activeTab === "mapas" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <section style={panelStyle}>
+            <div style={filterRowStyle}>
+              <select
+                multiple
+                value={selectedItems}
+                onChange={(event) => {
+                  setSelectedItems(Array.from(event.target.selectedOptions, (option) => option.value))
+                  setMapasPage(1)
+                }}
+                style={{ ...inputStyle, minHeight: 120 }}
+              >
+                {itemOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
                 ))}
-              </tbody>
-            </table>
-          </div>
-          {item_analysis.length > 15 && (
-            <div style={{ marginTop: 10 }}>
-              <button onClick={() => setShowAllItems(v => !v)} style={{ ...tdStyle, borderRadius: 8, border: "1px solid #334155", cursor: "pointer", fontWeight: 700 }}>
-                {showAllItems ? "Recolher" : `Mostrar tudo (${item_analysis.length})`}
-              </button>
+              </select>
             </div>
-          )}
+
+            <h3 style={panelTitleStyle}>Top 15 Mapas por Valor</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={topMapasChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.16)" />
+                <XAxis dataKey="mapa" tick={{ fill: "#cbd5e1", fontSize: 12 }} />
+                <YAxis tick={{ fill: "#cbd5e1", fontSize: 12 }} tickFormatter={(value: number) => `R$ ${(value / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
+                <Bar dataKey="valor" fill="#cbbba0" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </section>
+
+          <section style={panelStyle}>
+            <h3 style={panelTitleStyle}>Tabela de Mapas</h3>
+            <div style={{ overflowX: "auto" }}>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    {["ITEM", "SUBITEM", "MAPA", "VALOR_MAPA"].map((column) => (
+                      <th key={column} style={thStyle}>
+                        <button type="button" onClick={() => handleSort(mapasSort, setMapasSort, column)} style={sortButtonStyle}>
+                          {column}
+                        </button>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedMapas.rows.map((row, index) => (
+                    <tr key={`${row.ITEM}-${row.MAPA}-${index}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.28)" : "transparent" }}>
+                      <td style={tdStyle}>{String(row.ITEM ?? "-")}</td>
+                      <td style={tdStyle}>{String(row.SUBITEM ?? "-")}</td>
+                      <td style={tdStyle}>{String(row.MAPA ?? "-")}</td>
+                      <td style={tdStyle}>{formatCurrency(parseNumber(row.VALOR_MAPA))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={pagedMapas.page} totalPages={pagedMapas.totalPages} onChange={setMapasPage} />
+          </section>
         </div>
       )}
     </div>
   )
 }
 
-// ─── Shared styles ────────────────────────────────────────────────────────────
+const tabButtonStyle: React.CSSProperties = {
+  border: "1px solid rgba(203,187,160,0.28)",
+  borderRadius: 999,
+  padding: "10px 16px",
+  fontWeight: 800,
+  cursor: "pointer",
+}
+
+const metricCardStyle: React.CSSProperties = {
+  background: "#1e293b",
+  borderRadius: 16,
+  border: "1px solid rgba(203,187,160,0.18)",
+  padding: "18px 16px",
+}
+
+const panelStyle: React.CSSProperties = {
+  background: "#1e293b",
+  borderRadius: 20,
+  border: "1px solid rgba(203,187,160,0.18)",
+  padding: 18,
+}
+
+const panelTitleStyle: React.CSSProperties = {
+  margin: "0 0 14px",
+  fontSize: 18,
+  fontWeight: 800,
+  color: "#f8fafc",
+}
+
+const filterRowStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 10,
+  flexWrap: "wrap",
+  marginBottom: 16,
+}
+
+const inputStyle: React.CSSProperties = {
+  borderRadius: 12,
+  border: "1px solid rgba(148,163,184,0.26)",
+  padding: "10px 12px",
+  background: "#0f172a",
+  color: "#f8fafc",
+  minWidth: 220,
+}
+
+const tableStyle: React.CSSProperties = {
+  width: "100%",
+  borderCollapse: "collapse",
+}
 
 const thStyle: React.CSSProperties = {
-  textAlign: "center",
-  padding: "8px 12px",
-  borderBottom: "1px solid var(--erp-border)",
-  fontSize: 11,
-  fontWeight: 700,
-  color: "var(--erp-muted)",
+  textAlign: "left",
+  padding: "12px 10px",
+  fontSize: 12,
+  color: "#94a3b8",
   textTransform: "uppercase",
-  letterSpacing: "0.5px",
-  whiteSpace: "nowrap",
+  borderBottom: "1px solid rgba(148,163,184,0.18)",
 }
 
 const tdStyle: React.CSSProperties = {
-  padding: "7px 12px",
-  borderBottom: "1px solid rgba(51,65,85,0.4)",
-  color: "var(--erp-text)",
+  padding: "12px 10px",
+  fontSize: 14,
+  color: "#f8fafc",
+  borderBottom: "1px solid rgba(148,163,184,0.12)",
+}
+
+const sortButtonStyle: React.CSSProperties = {
+  border: "none",
+  background: "transparent",
+  color: "inherit",
+  font: "inherit",
+  cursor: "pointer",
+  padding: 0,
+}
+
+const secondaryButtonStyle: React.CSSProperties = {
+  border: "1px solid rgba(203,187,160,0.22)",
+  background: "#0f172a",
+  color: "#f8fafc",
+  borderRadius: 10,
+  padding: "8px 12px",
+  fontWeight: 700,
+  cursor: "pointer",
 }

@@ -1,33 +1,382 @@
-"""
-CustosAnalyzer — Analytics for Planilha Controle de Custos Consolidados.
+from __future__ import annotations
 
-Works on two DataFrames:
-  - nfs: NFs Entrada de Dados (all invoices)
-  - consolidado: Planilha Consolidado (current period report)
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+import re
+import unicodedata
 
-Provides:
-  - Summary KPIs
-  - Fornecedor ranking by total value
-  - Natureza breakdown
-  - Monthly timeline
-  - Consolidado period report
-  - Payment method analysis
-"""
-
-import pandas as pd
 import numpy as np
-from typing import Dict, List, Any
+import pandas as pd
+
+
+_EXCEL_ERRORS = re.compile(r"^#|^ERRORREF|^ERRORNA|^ERROR", re.IGNORECASE)
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.strip().lower())
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", ascii_text).strip()
+
+
+def _clean_excel_frame(df: pd.DataFrame) -> pd.DataFrame:
+    working = df.copy()
+    working = working.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if working.empty:
+        return working
+
+    renamed_columns: list[str] = []
+    for index, column in enumerate(working.columns):
+        if isinstance(column, str):
+            text = column.strip()
+            renamed_columns.append(text or f"COL_{index + 1}")
+        elif pd.notna(column):
+            renamed_columns.append(str(column).strip() or f"COL_{index + 1}")
+        else:
+            renamed_columns.append(f"COL_{index + 1}")
+
+    working.columns = renamed_columns
+    return working.reset_index(drop=True)
+
+
+def _clean_error_cells(df: pd.DataFrame) -> pd.DataFrame:
+    cleaned = df.copy()
+    for column in cleaned.select_dtypes(include="object").columns:
+        cleaned[column] = cleaned[column].apply(
+            lambda value: np.nan
+            if isinstance(value, str) and _EXCEL_ERRORS.match(value.strip())
+            else value
+        )
+    return cleaned
+
+
+def _match_sheet_name(sheet_names: list[str], candidates: list[str]) -> str | None:
+    normalized_names = {_normalize_text(name): name for name in sheet_names}
+    for candidate in candidates:
+        normalized_candidate = _normalize_text(candidate)
+        for normalized_name, original_name in normalized_names.items():
+            if normalized_candidate in normalized_name:
+                return original_name
+    return None
+
+
+def _find_column(df: pd.DataFrame, candidates: list[str], required: bool = False) -> str | None:
+    normalized_map = {_normalize_text(str(column)): column for column in df.columns}
+    for candidate in candidates:
+        normalized_candidate = _normalize_text(candidate)
+        if normalized_candidate in normalized_map:
+            return normalized_map[normalized_candidate]
+    if required:
+        raise KeyError(f"Coluna esperada nao encontrada: {', '.join(candidates)}")
+    return None
+
+
+def _read_sheet(workbook_bytes: bytes, sheet_name: str | None, header: int) -> pd.DataFrame | None:
+    if sheet_name is None:
+        return None
+    dataframe = pd.read_excel(BytesIO(workbook_bytes), sheet_name=sheet_name, header=header)
+    dataframe = _clean_error_cells(dataframe)
+    dataframe = _clean_excel_frame(dataframe)
+    return dataframe if not dataframe.empty else None
+
+
+def _read_sheet_raw(workbook_bytes: bytes, sheet_name: str | None) -> pd.DataFrame | None:
+    if sheet_name is None:
+        return None
+    dataframe = pd.read_excel(BytesIO(workbook_bytes), sheet_name=sheet_name, header=None)
+    dataframe = _clean_error_cells(dataframe)
+    return dataframe
+
+
+def _coerce_numeric_column(df: pd.DataFrame | None, column_name: str) -> pd.DataFrame | None:
+    if df is None or column_name not in df.columns:
+        return df
+    working = df.copy()
+    working[column_name] = pd.to_numeric(working[column_name], errors="coerce")
+    return working
+
+
+def _coerce_datetime_column(df: pd.DataFrame | None, column_name: str) -> pd.DataFrame | None:
+    if df is None or column_name not in df.columns:
+        return df
+    working = df.copy()
+    default_parsed = pd.to_datetime(working[column_name], errors="coerce")
+    dayfirst_parsed = pd.to_datetime(working[column_name], errors="coerce", dayfirst=True)
+    working[column_name] = default_parsed.fillna(dayfirst_parsed)
+    return working
+
+
+def _first_content_columns(df: pd.DataFrame) -> list[str]:
+    content_columns: list[str] = []
+    for column in df.columns:
+        text = str(column).strip()
+        if not text or text.lower().startswith("unnamed"):
+            continue
+        content_columns.append(column)
+    return content_columns
+
+
+def _extract_sheet_metadata(raw_df: pd.DataFrame | None) -> dict[str, Any]:
+    if raw_df is None or raw_df.empty:
+        return {}
+
+    metadata: dict[str, Any] = {
+        "obra_nome": "",
+        "cliente": "",
+        "taxa_adm_pct": 0.0,
+        "data_inicio": None,
+    }
+
+    for _, row in raw_df.iterrows():
+        values = [str(value).strip() for value in row.tolist() if pd.notna(value) and str(value).strip()]
+        if not values:
+            continue
+
+        normalized_values = [_normalize_text(value) for value in values]
+        joined = " | ".join(values)
+        normalized_joined = _normalize_text(joined)
+
+        for index, normalized_value in enumerate(normalized_values):
+            next_value = values[index + 1] if index + 1 < len(values) else ""
+            if normalized_value == "obra" and next_value and not metadata["obra_nome"]:
+                metadata["obra_nome"] = next_value
+            if normalized_value == "cliente" and next_value and not metadata["cliente"]:
+                metadata["cliente"] = next_value
+            if normalized_value.startswith("taxa adm") and metadata["taxa_adm_pct"] == 0.0:
+                match = re.search(r"(\d+(?:[.,]\d+)?)", next_value or joined)
+                if match:
+                    metadata["taxa_adm_pct"] = float(match.group(1).replace(",", "."))
+            if normalized_value == "inicio" and metadata["data_inicio"] is None:
+                parsed_values = pd.to_datetime(pd.Series([next_value] + values), errors="coerce", dayfirst=True).dropna()
+                if not parsed_values.empty:
+                    metadata["data_inicio"] = parsed_values.iloc[0].date().isoformat()
+
+        if "obra" in normalized_joined and not metadata["obra_nome"]:
+            metadata["obra_nome"] = values[-1]
+        if "cliente" in normalized_joined and not metadata["cliente"]:
+            metadata["cliente"] = values[-1]
+        if "taxa adm" in normalized_joined and metadata["taxa_adm_pct"] == 0.0:
+            match = re.search(r"(\d+(?:[.,]\d+)?)", joined)
+            if match:
+                metadata["taxa_adm_pct"] = float(match.group(1).replace(",", "."))
+        if "inicio" in normalized_joined and metadata["data_inicio"] is None:
+            parsed_values = pd.to_datetime(pd.Series(values), errors="coerce", dayfirst=True).dropna()
+            if not parsed_values.empty:
+                metadata["data_inicio"] = parsed_values.iloc[0].date().isoformat()
+
+    return metadata
+
+
+def _prepare_nfs_dataframe(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    if df is None or df.empty:
+        return df
+    working = df.copy()
+    fornecedor_col = _find_column(working, ["FORNECEDOR"], required=True)
+    valor_col = _find_column(working, ["VALOR"], required=True)
+    data_col = _find_column(working, ["DATA VENCTO"], required=False)
+
+    working = _coerce_numeric_column(working, str(valor_col))
+    working = _coerce_numeric_column(working, "SALDO PLANILHA")
+    if data_col:
+        working = _coerce_datetime_column(working, str(data_col))
+
+    working = working[working[fornecedor_col].notna()]
+    working = working[working[fornecedor_col].astype(str).str.strip() != "---"]
+    working = working[working[valor_col].notna() & (working[valor_col] != 0)]
+    return working.reset_index(drop=True)
+
+
+def _prepare_consolidado_dataframe(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    if df is None or df.empty:
+        return df
+    working = df.copy()
+    fornecedor_col = _find_column(working, ["FORNECEDOR"], required=True)
+    consolidado_col = _find_column(working, ["N CONSOLIDADO", "Nº CONSOLIDADO", "N CONSOLIDADO"], required=False)
+    valor_col = _find_column(working, ["VALOR"], required=False)
+    data_col = _find_column(working, ["DATA VENCTO"], required=False)
+
+    if valor_col:
+        working = _coerce_numeric_column(working, str(valor_col))
+    if data_col:
+        working = _coerce_datetime_column(working, str(data_col))
+
+    if consolidado_col:
+        working = working[working[consolidado_col].notna()]
+    working = working[~working[fornecedor_col].astype(str).str.startswith("---")]
+    if valor_col:
+        working = working[working[valor_col].notna() & (working[valor_col] != 0)]
+    return working.reset_index(drop=True)
+
+
+def parse_orcamento_sheet(df_raw: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    content_columns = _first_content_columns(df_raw)
+    if len(content_columns) < 10:
+        return {"budget": pd.DataFrame(), "mapas": pd.DataFrame()}
+
+    budget_cols = content_columns[:9]
+    mapa_cols = content_columns[9:]
+
+    budget_df = df_raw.loc[:, budget_cols].copy()
+    descricao_col = _find_column(budget_df, ["DESCRICAO", "DESCRIÇÃO"], required=False)
+    if descricao_col:
+        budget_df = budget_df.dropna(subset=[descricao_col])
+
+    mapas_df = (
+        df_raw.loc[:, list(budget_cols[:3]) + list(mapa_cols)]
+        .melt(id_vars=list(budget_cols[:3]), var_name="mapa_num", value_name="valor_alocado")
+    )
+    mapas_df["valor_alocado"] = pd.to_numeric(mapas_df["valor_alocado"], errors="coerce")
+    mapas_df = mapas_df.dropna(subset=["valor_alocado"])
+    mapas_df = mapas_df[mapas_df["valor_alocado"] != 0].copy()
+    mapas_df["mapa_num"] = (
+        mapas_df["mapa_num"]
+        .astype(str)
+        .str.extract(r"(\d+)", expand=False)
+    )
+    mapas_df = mapas_df.dropna(subset=["mapa_num"])
+    mapas_df["mapa_num"] = mapas_df["mapa_num"].astype(int)
+
+    return {
+        "budget": budget_df.reset_index(drop=True),
+        "mapas": mapas_df.reset_index(drop=True),
+    }
+
+
+def parse_orcado_realizado_sheet(df_raw: pd.DataFrame) -> pd.DataFrame:
+    month_columns = [column for column in df_raw.columns if str(column).strip().isdigit()]
+    if not month_columns:
+        return pd.DataFrame()
+
+    melted = df_raw.melt(
+        id_vars=[column for column in df_raw.columns if column not in month_columns],
+        value_vars=month_columns,
+        var_name="mes",
+        value_name="realizado",
+    )
+    melted["mes"] = pd.to_numeric(melted["mes"], errors="coerce").astype("Int64")
+    melted["realizado"] = pd.to_numeric(melted["realizado"], errors="coerce")
+    melted = melted.dropna(subset=["mes", "realizado"]).reset_index(drop=True)
+    return melted
+
+
+def _build_structured_payload(
+    sheets: dict[str, pd.DataFrame],
+    resumo_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    sheet_names = list(sheets.keys())
+    nfs_sheet = _match_sheet_name(sheet_names, ["PLANILHA NFs - Entrada de Dados", "PLANILHA NFs", "NFs"])
+    orcamento_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇAMENTO - Entrada de", "PLANILHA ORCAMENTO"])
+    orcado_realizado_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇADOxREALIZADO", "PLANILHA ORCADOxREALIZADO"])
+    consolidado_sheet = _match_sheet_name(sheet_names, ["PLANILHA CONSOLIDADO", "CONSOLIDADO"])
+    resumo_sheet = _match_sheet_name(sheet_names, ["RESUMO CONSOLIDADOS - CLIENTE", "RESUMO CONSOLIDADOS"])
+
+    nfs_df = _prepare_nfs_dataframe(sheets.get(nfs_sheet)) if nfs_sheet else None
+    consolidado_df = _prepare_consolidado_dataframe(sheets.get(consolidado_sheet)) if consolidado_sheet else None
+
+    resumo_df = sheets.get(resumo_sheet).copy() if resumo_sheet and resumo_sheet in sheets else None
+    if resumo_df is not None and not resumo_df.empty:
+        resumo_df = _clean_error_cells(resumo_df)
+        for candidates in [
+            ["MATERIAL/SERVICO", "MATERIAL/SERVIÇO"],
+            ["MAO OBRA EMPREITADA", "MÃO OBRA EMPREITADA"],
+            ["MAO OBRA TEMPO", "MÃO OBRA TEMPO"],
+            ["STAFF"],
+            ["SERVICO SEM TAXA ADM", "SERVIÇO SEM TAXA ADM"],
+            ["TOTAL"],
+            ["TAXA ADMINISTRACAO", "TAXA ADMINISTRAÇÃO"],
+            ["%"],
+            ["TOTAL GERAL"],
+        ]:
+            column_name = _find_column(resumo_df, candidates, required=False)
+            if column_name:
+                resumo_df = _coerce_numeric_column(resumo_df, column_name)
+        for candidates in [["DATA VENCTO"], ["DATA RECBTO"]]:
+            column_name = _find_column(resumo_df, candidates, required=False)
+            if column_name:
+                resumo_df = _coerce_datetime_column(resumo_df, column_name)
+
+    orcamento_raw = sheets.get(orcamento_sheet).copy() if orcamento_sheet and orcamento_sheet in sheets else None
+    if isinstance(orcamento_raw, pd.DataFrame):
+        orcamento_raw = _clean_error_cells(orcamento_raw)
+    orcamento = parse_orcamento_sheet(orcamento_raw) if isinstance(orcamento_raw, pd.DataFrame) and not orcamento_raw.empty else {"budget": None, "mapas": None}
+
+    orcado_realizado_raw = sheets.get(orcado_realizado_sheet).copy() if orcado_realizado_sheet and orcado_realizado_sheet in sheets else None
+    if isinstance(orcado_realizado_raw, pd.DataFrame):
+        orcado_realizado_raw = _clean_error_cells(orcado_realizado_raw)
+    orcado_realizado = (
+        parse_orcado_realizado_sheet(orcado_realizado_raw)
+        if isinstance(orcado_realizado_raw, pd.DataFrame) and not orcado_realizado_raw.empty
+        else None
+    )
+
+    return {
+        "nfs": nfs_df,
+        "orcamento": {
+            "budget": orcamento["budget"] if isinstance(orcamento, dict) else None,
+            "mapas": orcamento["mapas"] if isinstance(orcamento, dict) else None,
+        },
+        "orcado_realizado": orcado_realizado,
+        "consolidado": consolidado_df,
+        "resumo": resumo_df,
+        "resumo_meta": resumo_meta or {},
+    }
+
+
+def build_structured_from_sheets(
+    sheets: dict[str, pd.DataFrame],
+    resumo_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _build_structured_payload(sheets, resumo_meta=resumo_meta)
+
+
+def _parse_custos_workbook_bytes(workbook_bytes: bytes) -> dict[str, Any]:
+    workbook = pd.ExcelFile(BytesIO(workbook_bytes))
+    sheet_names = workbook.sheet_names
+
+    nfs_sheet = _match_sheet_name(sheet_names, ["PLANILHA NFs - Entrada de Dados", "PLANILHA NFs", "NFs"])
+    orcamento_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇAMENTO - Entrada de", "PLANILHA ORCAMENTO"])
+    orcado_realizado_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇADOxREALIZADO", "PLANILHA ORCADOxREALIZADO"])
+    consolidado_sheet = _match_sheet_name(sheet_names, ["PLANILHA CONSOLIDADO", "CONSOLIDADO"])
+    resumo_sheet = _match_sheet_name(sheet_names, ["RESUMO CONSOLIDADOS - CLIENTE", "RESUMO CONSOLIDADOS"])
+
+    nfs_df = _read_sheet(workbook_bytes, nfs_sheet, header=7)
+    orcamento_df = _read_sheet(workbook_bytes, orcamento_sheet, header=8)
+    orcado_realizado_df = _read_sheet(workbook_bytes, orcado_realizado_sheet, header=10)
+    consolidado_df = _read_sheet(workbook_bytes, consolidado_sheet, header=5)
+    resumo_df = _read_sheet(workbook_bytes, resumo_sheet, header=9)
+    resumo_raw = _read_sheet_raw(workbook_bytes, resumo_sheet)
+
+    sheets: dict[str, pd.DataFrame] = {}
+    if nfs_sheet and isinstance(nfs_df, pd.DataFrame):
+        sheets[nfs_sheet] = nfs_df
+    if orcamento_sheet and isinstance(orcamento_df, pd.DataFrame):
+        sheets[orcamento_sheet] = orcamento_df
+    if orcado_realizado_sheet and isinstance(orcado_realizado_df, pd.DataFrame):
+        sheets[orcado_realizado_sheet] = orcado_realizado_df
+    if consolidado_sheet and isinstance(consolidado_df, pd.DataFrame):
+        sheets[consolidado_sheet] = consolidado_df
+    if resumo_sheet and isinstance(resumo_df, pd.DataFrame):
+        sheets[resumo_sheet] = resumo_df
+
+    return _build_structured_payload(sheets, resumo_meta=_extract_sheet_metadata(resumo_raw))
+
+
+def parse_custos_workbook_bytes(workbook_bytes: bytes) -> dict[str, Any]:
+    return _parse_custos_workbook_bytes(workbook_bytes)
+
+
+def parse_custos_workbook(path: str) -> dict[str, Any]:
+    return _parse_custos_workbook_bytes(Path(path).read_bytes())
 
 
 class CustosAnalyzer:
-
-    def __init__(self, nfs: pd.DataFrame, consolidado: pd.DataFrame, meta: Dict[str, Any] = None):
+    def __init__(self, nfs: pd.DataFrame, consolidado: pd.DataFrame, meta: dict[str, Any] | None = None):
         self.nfs = nfs.copy()
         self.cons = consolidado.copy()
         self.meta = meta or {}
         self._ensure_types()
 
-    def _ensure_types(self):
+    def _ensure_types(self) -> None:
         for df in (self.nfs, self.cons):
             for col in ("Valor", "ValorItem", "SaldoPlanilha", "ApropriValor"):
                 if col in df.columns:
@@ -36,9 +385,7 @@ class CustosAnalyzer:
                 if col in df.columns:
                     df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # ─── Summary ──────────────────────────────────────────────────────
-
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         nfs = self.nfs
         total_valor = float(nfs["Valor"].sum()) if "Valor" in nfs.columns else 0
         total_nfs = len(nfs)
@@ -47,11 +394,9 @@ class CustosAnalyzer:
 
         avg_nf = total_valor / total_nfs if total_nfs > 0 else 0
 
-        # Date range
         data_min = nfs["DataVencto"].min() if "DataVencto" in nfs.columns and nfs["DataVencto"].notna().any() else None
         data_max = nfs["DataVencto"].max() if "DataVencto" in nfs.columns and nfs["DataVencto"].notna().any() else None
 
-        # Consolidado current period
         cons_total = float(self.cons["Valor"].sum()) if "Valor" in self.cons.columns else 0
         cons_count = len(self.cons)
 
@@ -64,196 +409,172 @@ class CustosAnalyzer:
             "valor_medio_nf": round(avg_nf, 2),
             "unique_fornecedores": unique_forn,
             "unique_consolidados": unique_cons,
-            "data_inicio": str(data_min.date()) if data_min and pd.notna(data_min) else "",
-            "data_fim": str(data_max.date()) if data_max and pd.notna(data_max) else "",
+            "data_inicio": str(data_min.date()) if data_min is not None and pd.notna(data_min) else "",
+            "data_fim": str(data_max.date()) if data_max is not None and pd.notna(data_max) else "",
             "consolidado_atual": {
                 "total_nfs": cons_count,
                 "total_valor": round(cons_total, 2),
             },
         }
 
-    # ─── Fornecedor Ranking ───────────────────────────────────────────
-
-    def get_fornecedor_ranking(self, limit: int = 20) -> List[Dict[str, Any]]:
-        nfs = self.nfs
-        if nfs.empty or "Fornecedor" not in nfs.columns:
+    def get_fornecedor_ranking(self, limit: int = 20) -> list[dict[str, Any]]:
+        if self.nfs.empty or "Fornecedor" not in self.nfs.columns:
             return []
-        agg = nfs.groupby("Fornecedor").agg(
-            total_valor=("Valor", "sum"),
-            qtd_nfs=("NF", "count"),
-            naturezas=("Natureza", "nunique") if "Natureza" in nfs.columns else ("Fornecedor", "count"),
-        ).reset_index().sort_values("total_valor", ascending=False).head(limit)
-
-        total_geral = nfs["Valor"].sum()
+        grouped = (
+            self.nfs.groupby("Fornecedor")
+            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"))
+            .reset_index()
+            .sort_values("total_valor", ascending=False)
+            .head(limit)
+        )
+        total_geral = float(self.nfs["Valor"].sum()) if "Valor" in self.nfs.columns else 0.0
         return [
             {
-                "fornecedor": str(r["Fornecedor"]),
-                "total_valor": round(float(r["total_valor"]), 2),
-                "qtd_nfs": int(r["qtd_nfs"]),
-                "pct_total": round(float(r["total_valor"]) / total_geral * 100, 1) if total_geral > 0 else 0,
+                "fornecedor": str(row["Fornecedor"]),
+                "total_valor": round(float(row["total_valor"]), 2),
+                "qtd_nfs": int(row["qtd_nfs"]),
+                "pct_total": round(float(row["total_valor"]) / total_geral * 100, 1) if total_geral > 0 else 0.0,
             }
-            for _, r in agg.iterrows()
+            for _, row in grouped.iterrows()
         ]
 
-    # ─── Natureza / Mapa Breakdown ────────────────────────────────────
-
-    def get_natureza_breakdown(self) -> List[Dict[str, Any]]:
-        nfs = self.nfs
-        col = "MapaPrecos" if "MapaPrecos" in nfs.columns else "Natureza"
-        if nfs.empty or col not in nfs.columns:
+    def get_natureza_breakdown(self) -> list[dict[str, Any]]:
+        if self.nfs.empty or "Natureza" not in self.nfs.columns:
             return []
-        agg = nfs.groupby(col).agg(
-            total_valor=("Valor", "sum"),
-            qtd_nfs=("NF", "count"),
-        ).reset_index().sort_values("total_valor", ascending=False)
-
+        grouped = (
+            self.nfs.groupby("Natureza")
+            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"))
+            .reset_index()
+            .sort_values("total_valor", ascending=False)
+        )
         return [
             {
-                "natureza": str(r[col]),
-                "total_valor": round(float(r["total_valor"]), 2),
-                "qtd_nfs": int(r["qtd_nfs"]),
+                "natureza": str(row["Natureza"]),
+                "total_valor": round(float(row["total_valor"]), 2),
+                "qtd_nfs": int(row["qtd_nfs"]),
             }
-            for _, r in agg.iterrows() if str(r[col]).strip()
+            for _, row in grouped.iterrows()
         ]
 
-    # ─── Payment Method ───────────────────────────────────────────────
-
-    def get_pagamento_breakdown(self) -> List[Dict[str, Any]]:
-        nfs = self.nfs
-        if nfs.empty or "CondPagto" not in nfs.columns:
+    def get_pagamento_breakdown(self) -> list[dict[str, Any]]:
+        if self.nfs.empty or "CondPagto" not in self.nfs.columns:
             return []
-        agg = nfs.groupby("CondPagto").agg(
-            total_valor=("Valor", "sum"),
-            qtd_nfs=("NF", "count"),
-        ).reset_index().sort_values("total_valor", ascending=False)
-
+        grouped = (
+            self.nfs.groupby("CondPagto")
+            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"))
+            .reset_index()
+            .sort_values("total_valor", ascending=False)
+        )
         return [
             {
-                "metodo": str(r["CondPagto"]).strip(),
-                "total_valor": round(float(r["total_valor"]), 2),
-                "qtd_nfs": int(r["qtd_nfs"]),
+                "metodo": str(row["CondPagto"]),
+                "total_valor": round(float(row["total_valor"]), 2),
+                "qtd_nfs": int(row["qtd_nfs"]),
             }
-            for _, r in agg.iterrows() if str(r["CondPagto"]).strip()
+            for _, row in grouped.iterrows()
         ]
 
-    # ─── Monthly Timeline ─────────────────────────────────────────────
-
-    def get_monthly_timeline(self) -> List[Dict[str, Any]]:
-        nfs = self.nfs
-        if nfs.empty or "DataVencto" not in nfs.columns:
+    def get_monthly_timeline(self) -> list[dict[str, Any]]:
+        if self.nfs.empty or "DataVencto" not in self.nfs.columns:
             return []
-        df = nfs[nfs["DataVencto"].notna()].copy()
-        if df.empty:
+        working = self.nfs[self.nfs["DataVencto"].notna()].copy()
+        if working.empty:
             return []
-        df["MesAno"] = df["DataVencto"].dt.to_period("M").astype(str)
-        agg = df.groupby("MesAno").agg(
-            total_valor=("Valor", "sum"),
-            qtd_nfs=("NF", "count"),
-            fornecedores=("Fornecedor", "nunique"),
-        ).reset_index().sort_values("MesAno")
-
+        working["MesAno"] = working["DataVencto"].dt.to_period("M").astype(str)
+        grouped = (
+            working.groupby("MesAno")
+            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"), fornecedores=("Fornecedor", "nunique"))
+            .reset_index()
+            .sort_values("MesAno")
+        )
         return [
             {
-                "mes": str(r["MesAno"]),
-                "total_valor": round(float(r["total_valor"]), 2),
-                "qtd_nfs": int(r["qtd_nfs"]),
-                "fornecedores": int(r["fornecedores"]),
+                "mes": str(row["MesAno"]),
+                "total_valor": round(float(row["total_valor"]), 2),
+                "qtd_nfs": int(row["qtd_nfs"]),
+                "fornecedores": int(row["fornecedores"]),
             }
-            for _, r in agg.iterrows()
+            for _, row in grouped.iterrows()
         ]
 
-    # ─── Per-Consolidado Breakdown ────────────────────────────────────
-
-    def get_consolidado_breakdown(self) -> List[Dict[str, Any]]:
-        nfs = self.nfs
-        if nfs.empty or "NumConsolidado" not in nfs.columns:
+    def get_consolidado_breakdown(self) -> list[dict[str, Any]]:
+        if self.nfs.empty or "NumConsolidado" not in self.nfs.columns:
             return []
-        agg = nfs.groupby("NumConsolidado").agg(
-            total_valor=("Valor", "sum"),
-            qtd_nfs=("NF", "count"),
-            fornecedores=("Fornecedor", "nunique"),
-        ).reset_index().sort_values("NumConsolidado")
-
+        grouped = (
+            self.nfs.groupby("NumConsolidado")
+            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"), fornecedores=("Fornecedor", "nunique"))
+            .reset_index()
+            .sort_values("NumConsolidado")
+        )
         return [
             {
-                "consolidado": str(r["NumConsolidado"]),
-                "total_valor": round(float(r["total_valor"]), 2),
-                "qtd_nfs": int(r["qtd_nfs"]),
-                "fornecedores": int(r["fornecedores"]),
+                "consolidado": str(row["NumConsolidado"]),
+                "total_valor": round(float(row["total_valor"]), 2),
+                "qtd_nfs": int(row["qtd_nfs"]),
+                "fornecedores": int(row["fornecedores"]),
             }
-            for _, r in agg.iterrows()
-            if str(r["NumConsolidado"]).strip() and str(r["NumConsolidado"]).strip() != "0"
+            for _, row in grouped.iterrows()
         ]
 
-    # ─── Top NFs ──────────────────────────────────────────────────────
-
-    def get_top_nfs(self, limit: int = 20) -> List[Dict[str, Any]]:
-        nfs = self.nfs
-        if nfs.empty:
+    def get_top_nfs(self, limit: int = 20) -> list[dict[str, Any]]:
+        if self.nfs.empty:
             return []
-        top = nfs.nlargest(limit, "Valor") if "Valor" in nfs.columns else nfs.head(limit)
+        top = self.nfs.nlargest(limit, "Valor") if "Valor" in self.nfs.columns else self.nfs.head(limit)
         return [
             {
-                "fornecedor": str(r.get("Fornecedor", "")),
-                "nf": str(r.get("NF", "")),
-                "mapa": str(r.get("MapaPrecos", "")),
-                "valor": round(float(r.get("Valor", 0)), 2) if pd.notna(r.get("Valor")) else 0,
-                "data_vencto": str(r["DataVencto"].date()) if pd.notna(r.get("DataVencto")) else "",
-                "cond_pagto": str(r.get("CondPagto", "")),
-                "consolidado": str(r.get("NumConsolidado", "")),
+                "fornecedor": str(row.get("Fornecedor", "")),
+                "nf": str(row.get("NF", "")),
+                "mapa": str(row.get("MapaPrecos", "")),
+                "valor": round(float(row.get("Valor", 0)), 2) if pd.notna(row.get("Valor")) else 0.0,
+                "data_vencto": str(row["DataVencto"].date()) if pd.notna(row.get("DataVencto")) else "",
+                "cond_pagto": str(row.get("CondPagto", "")),
+                "consolidado": str(row.get("NumConsolidado", "")),
             }
-            for _, r in top.iterrows()
+            for _, row in top.iterrows()
         ]
 
-    # ─── Consolidado Period Detail ────────────────────────────────────
-
-    def get_consolidado_detail(self) -> List[Dict[str, Any]]:
-        cons = self.cons
-        if cons.empty:
+    def get_consolidado_detail(self) -> list[dict[str, Any]]:
+        if self.cons.empty:
             return []
         return [
             {
-                "num": str(r.get("NumConsolidado", "")),
-                "fornecedor": str(r.get("Fornecedor", "")),
-                "nf": str(r.get("NF", "")),
-                "mapa": str(r.get("Mapa", "")),
-                "natureza": str(r.get("Natureza", "")),
-                "cond_pagto": str(r.get("CondPagto", "")),
-                "data_vencto": str(r["DataVencto"].date()) if pd.notna(r.get("DataVencto")) else "",
-                "valor": round(float(r.get("Valor", 0)), 2) if pd.notna(r.get("Valor")) else 0,
+                "num": str(row.get("NumConsolidado", "")),
+                "fornecedor": str(row.get("Fornecedor", "")),
+                "nf": str(row.get("NF", "")),
+                "mapa": str(row.get("Mapa", "")),
+                "natureza": str(row.get("Natureza", "")),
+                "cond_pagto": str(row.get("CondPagto", "")),
+                "data_vencto": str(row["DataVencto"].date()) if pd.notna(row.get("DataVencto")) else "",
+                "valor": round(float(row.get("Valor", 0)), 2) if pd.notna(row.get("Valor")) else 0.0,
             }
-            for _, r in cons.iterrows()
+            for _, row in self.cons.iterrows()
         ]
 
-    # ─── All NFS rows (for DB persistence) ───────────────────────────────
-
-    def get_all_nfs(self) -> List[Dict[str, Any]]:
-        """Return ALL rows from the NFs Entrada de Dados sheet, for DB storage."""
-        nfs = self.nfs
-        if nfs.empty:
+    def get_all_nfs(self) -> list[dict[str, Any]]:
+        if self.nfs.empty:
             return []
-        result = []
-        for _, r in nfs.iterrows():
-            forn = str(r.get("Fornecedor") or "").strip()
-            if not forn:
+        result: list[dict[str, Any]] = []
+        for _, row in self.nfs.iterrows():
+            fornecedor = str(row.get("Fornecedor") or "").strip()
+            if not fornecedor:
                 continue
-            valor = r.get("Valor")
-            dt = r.get("DataVencto")
-            result.append({
-                "fornecedor":      forn,
-                "nf":              str(r.get("NF") or ""),
-                "num_consolidado": str(r.get("NumConsolidado") or ""),
-                "mapa":            str(r.get("MapaPrecos") or ""),
-                "natureza":        str(r.get("Natureza") or ""),
-                "cond_pagto":      str(r.get("CondPagto") or ""),
-                "data_vencto":     str(dt.date()) if pd.notna(dt) else "",
-                "valor":           round(float(valor), 2) if pd.notna(valor) else 0.0,
-            })
+            valor = row.get("Valor")
+            data_vencto = row.get("DataVencto")
+            result.append(
+                {
+                    "fornecedor": fornecedor,
+                    "nf": str(row.get("NF") or ""),
+                    "num_consolidado": str(row.get("NumConsolidado") or ""),
+                    "mapa": str(row.get("MapaPrecos") or ""),
+                    "natureza": str(row.get("Natureza") or ""),
+                    "cond_pagto": str(row.get("CondPagto") or ""),
+                    "data_vencto": str(data_vencto.date()) if pd.notna(data_vencto) else "",
+                    "valor": round(float(valor), 2) if pd.notna(valor) else 0.0,
+                }
+            )
         return result
 
-    # ─── Consolidated Report ──────────────────────────────────────────
-
-    def get_consolidated_report(self) -> Dict[str, Any]:
+    def get_consolidated_report(self) -> dict[str, Any]:
         return {
             "summary": self.get_summary(),
             "fornecedor_ranking": self.get_fornecedor_ranking(20),

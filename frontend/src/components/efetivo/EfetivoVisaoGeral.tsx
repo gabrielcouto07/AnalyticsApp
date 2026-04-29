@@ -1,459 +1,364 @@
-import type React from "react"
+import React, { useEffect, useMemo, useState } from "react"
 
 import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ReferenceDot,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts"
 
-import { type AnomalyPoint, type MonthData, type Summary, type TrendData } from "./types"
-import { filterSelectStyle, lightCardStyle, selectStyle, tdStyle, thStyle } from "./styles"
+import {
+  fetchApiJson,
+  type EfetivoAnomaliesResponse,
+  type EfetivoMonthData,
+  type EfetivoTrendResponse,
+} from "../../api/analytics"
+import { EmptyState } from "../layout/EmptyState"
+import { SCHEMA_REQUIRED_COLUMNS } from "../layout/schemaRequirements"
+import { useSessionStore } from "../../store/session"
+import { buildBranchRows, buildWorkRows, fetchEfetivoBase } from "./data"
 
-const COLORS = [
-  "#4f8ef7", "#34c97e", "#f5a623", "#e05263",
-  "#a78bfa", "#06b6d4", "#f97316", "#ec4899",
+const SERIES_COLORS = [
+  "#4f8ef7",
+  "#34c97e",
+  "#f5a623",
+  "#e05263",
+  "#a78bfa",
+  "#06b6d4",
+  "#f97316",
+  "#ec4899",
 ]
 
-const MONTH_MAP: Record<string, number> = {
-  janeiro: 1,
-  fevereiro: 2,
-  marco: 3,
-  março: 3,
-  abril: 4,
-  maio: 5,
-  junho: 6,
-  julho: 7,
-  agosto: 8,
-  setembro: 9,
-  outubro: 10,
-  novembro: 11,
-  dezembro: 12,
+function trendArrow(trend: EfetivoTrendResponse | null) {
+  if (!trend || trend.direction === "unknown") return "→"
+  if (trend.direction === "up") return trend.strength === "forte" ? "↑" : "↗"
+  if (trend.direction === "down") return trend.strength === "forte" ? "↓" : "↘"
+  return "→"
 }
 
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null
-
-  const total = payload.reduce((sum: number, entry: any) => sum + (entry.value || 0), 0)
-
+function VisaoGeralSkeleton() {
   return (
-    <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 10, padding: "10px 14px", fontSize: 12 }}>
-      <p style={{ color: "#94a3b8", marginBottom: 6, fontWeight: 700 }}>Dia {label}</p>
-      {payload.map((entry: any) => (
-        <p key={entry.dataKey} style={{ color: entry.color, margin: "2px 0" }}>
-          {entry.dataKey}: <strong>{entry.value}</strong>
-        </p>
-      ))}
-      <p style={{ color: "#f1f5f9", marginTop: 6, borderTop: "1px solid #334155", paddingTop: 4 }}>
-        Total: <strong>{total}</strong>
-      </p>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12 }}>
+        {Array.from({ length: 5 }).map((_, index) => (
+          <div key={index} style={skeletonCardStyle} />
+        ))}
+      </div>
+      <div style={panelSkeletonStyle} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div style={panelSkeletonStyle} />
+        <div style={panelSkeletonStyle} />
+      </div>
+      <style>{skeletonStyle}</style>
     </div>
   )
 }
 
-interface Props {
-  summary: Summary | null
-  months: MonthData[]
-  activeMes: number | null
-  trendTotal: TrendData | null
-  trendMedia: TrendData | null
-  anomalyPoints: AnomalyPoint[]
-  filterForn: string
-  setFilterForn: React.Dispatch<React.SetStateAction<string>>
-  filterFuncao: string
-  setFilterFuncao: React.Dispatch<React.SetStateAction<string>>
-  diaIndex: number
-  setDiaIndex: React.Dispatch<React.SetStateAction<number>>
-  showAllDias: boolean
-  setShowAllDias: React.Dispatch<React.SetStateAction<boolean>>
-  hiddenFornecedores: string[]
-  setHiddenFornecedores: React.Dispatch<React.SetStateAction<string[]>>
-  onMonthSelect: (mes: number) => void
-  trendArrow: (trend: TrendData | null) => string
-}
+export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
+  const uploadedSchemas = useSessionStore((state) => state.schemaTypes)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [months, setMonths] = useState<EfetivoMonthData[]>([])
+  const [activeMes, setActiveMes] = useState<number | null>(null)
+  const [hiddenFornecedores, setHiddenFornecedores] = useState<string[]>([])
+  const [trendTotal, setTrendTotal] = useState<EfetivoTrendResponse | null>(null)
+  const [trendMedia, setTrendMedia] = useState<EfetivoTrendResponse | null>(null)
+  const [anomalyDays, setAnomalyDays] = useState<number[]>([])
+  const [summaryText, setSummaryText] = useState({
+    obra: "",
+    totalDiarias: 0,
+    diasAtivos: 0,
+    mediaDiaria: 0,
+    fornecedores: 0,
+    funcoes: 0,
+    mesesCobertos: 0,
+  })
 
-const dayButtonStyle: React.CSSProperties = {
-  ...selectStyle,
-  border: "1px solid #475569",
-  fontWeight: 700,
-  minWidth: 180,
-}
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError(null)
 
-export function EfetivoVisaoGeral({
-  summary,
-  months,
-  activeMes,
-  trendTotal,
-  trendMedia,
-  anomalyPoints,
-  filterForn,
-  setFilterForn,
-  filterFuncao,
-  setFilterFuncao,
-  diaIndex,
-  setDiaIndex,
-  showAllDias,
-  setShowAllDias,
-  hiddenFornecedores,
-  setHiddenFornecedores,
-  onMonthSelect,
-  trendArrow,
-}: Props) {
-  const currentMonth = months.find((month) => month.mes === activeMes) ?? months[0]
+    Promise.all([
+      fetchEfetivoBase(sessionId),
+      fetchApiJson<EfetivoTrendResponse>(
+        `/api/templates/efetivo/trend/${sessionId}?column=total_trabalhadores&window=7`,
+      ),
+      fetchApiJson<EfetivoTrendResponse>(
+        `/api/templates/efetivo/trend/${sessionId}?column=fornecedores&window=7`,
+      ),
+      fetchApiJson<EfetivoAnomaliesResponse>(`/api/templates/efetivo/anomalies/${sessionId}?method=iqr`),
+    ])
+      .then(([base, totalTrend, mediaTrend, anomalies]) => {
+        if (!active) return
+        setMonths(base.months)
+        setActiveMes(base.months[0]?.mes ?? null)
+        setTrendTotal(totalTrend)
+        setTrendMedia(mediaTrend)
+        setSummaryText({
+          obra: base.summary?.obra ?? "",
+          totalDiarias: base.summary?.total_diarias ?? 0,
+          diasAtivos: base.summary?.dias_ativos ?? 0,
+          mediaDiaria: base.summary?.media_diaria ?? 0,
+          fornecedores: base.summary?.unique_fornecedores ?? 0,
+          funcoes: base.summary?.unique_funcoes ?? 0,
+          mesesCobertos: base.summary?.meses_cobertos ?? 0,
+        })
+        const days = (anomalies.points ?? [])
+          .map((point) => new Date(point.data).getDate())
+          .filter((value) => !Number.isNaN(value))
+        setAnomalyDays(days)
+      })
+      .catch((fetchError: unknown) => {
+        if (!active) return
+        setError(fetchError instanceof Error ? fetchError.message : "Erro ao carregar a visão geral do efetivo.")
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
 
-  if (!currentMonth) {
+    return () => {
+      active = false
+    }
+  }, [sessionId])
+
+  const workRows = useMemo(
+    () =>
+      buildWorkRows(
+        summaryText.obra
+          ? {
+              total_diarias: summaryText.totalDiarias,
+              unique_fornecedores: summaryText.fornecedores,
+              unique_funcoes: summaryText.funcoes,
+              dias_ativos: summaryText.diasAtivos,
+              media_diaria: summaryText.mediaDiaria,
+              obra: summaryText.obra,
+              ano: 0,
+              meses_cobertos: summaryText.mesesCobertos,
+              data_quality: { fornecedores: [], funcoes: [] },
+            }
+          : null,
+        months,
+      ),
+    [months, summaryText],
+  )
+
+  const currentMonth = months.find((month) => month.mes === activeMes) ?? months[0] ?? null
+  const branchRows = useMemo(() => buildBranchRows(workRows), [workRows])
+  const periodChart = useMemo(
+    () =>
+      months.map((month) => ({
+        periodo: month.mes_nome,
+        total: (month.funcao_detail ?? []).reduce((sum, row) => sum + Number(row.quantidade || 0), 0),
+      })),
+    [months],
+  )
+
+  const fornecedorSeries = useMemo(() => {
+    if (!currentMonth) return []
+    return (currentMonth.fornecedores ?? []).filter((fornecedor) => !hiddenFornecedores.includes(fornecedor))
+  }, [currentMonth, hiddenFornecedores])
+
+  if (loading) return <VisaoGeralSkeleton />
+
+  if (error || !currentMonth) {
     return (
-      <div style={lightCardStyle}>
-        <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Nenhum mês disponível para exibir a visão geral.</p>
-      </div>
+      <EmptyState
+        schemaRequired="efetivo"
+        requiredColumns={SCHEMA_REQUIRED_COLUMNS.efetivo}
+        uploadedSchemas={uploadedSchemas}
+      />
     )
   }
 
-  const fornecedores = currentMonth.fornecedores ?? []
-  const funcaoDetail = currentMonth.funcao_detail ?? []
-  const dailyPivot = currentMonth.daily_pivot ?? []
-  const grandMedia = summary ? summary.media_diaria : 0
-  const monthKey = (currentMonth.mes_nome || "").toLowerCase()
-  const monthNumber = currentMonth.mes ?? MONTH_MAP[monthKey] ?? 0
-
-  const funcaoPorDia: Record<number, NonNullable<MonthData["funcao_detail"]>> = {}
-  for (const row of funcaoDetail) {
-    if (filterForn !== "all" && row.fornecedor !== filterForn) continue
-    if (filterFuncao !== "all" && row.funcao !== filterFuncao) continue
-    if (!funcaoPorDia[row.dia]) funcaoPorDia[row.dia] = []
-    funcaoPorDia[row.dia].push(row)
-  }
-
-  const dias = Object.keys(funcaoPorDia).map(Number).sort((a, b) => a - b)
-  const diaIndexAjustado = Math.min(diaIndex, Math.max(dias.length - 1, 0))
-  const diasVisiveis = showAllDias ? dias : dias[diaIndexAjustado] !== undefined ? [dias[diaIndexAjustado]] : []
-  const diaEmFoco = diasVisiveis[0]
-  const totalDiasVisiveis = diasVisiveis.reduce(
-    (sum, dia) => sum + funcaoPorDia[dia].reduce((inner, row) => inner + row.quantidade, 0),
-    0,
-  )
-
-  const anomalyDaySet = new Set<number>()
-  for (const point of anomalyPoints) {
-    const dt = new Date(point.data)
-    if (!Number.isNaN(dt.getTime()) && dt.getMonth() + 1 === monthNumber) {
-      anomalyDaySet.add(dt.getDate())
-    }
-  }
-
-  const fornecedorTotals = fornecedores
-    .map((fornecedor) => ({
-      fornecedor,
-      total: dailyPivot.reduce((sum, row) => sum + (Number(row[fornecedor]) || 0), 0),
-    }))
-    .sort((a, b) => b.total - a.total)
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12 }}>
         {[
-          { label: "Total Diárias", value: summary ? summary.total_diarias.toLocaleString("pt-BR") : "—", color: "#4f8ef7", icon: "📋", trend: trendArrow(trendTotal) },
-          { label: "Dias Ativos", value: summary?.dias_ativos, color: "#34c97e", icon: "📆" },
-          { label: "Média Diária", value: summary?.media_diaria, color: "#f5a623", icon: "📊", trend: trendArrow(trendMedia) },
-          { label: "Fornecedores", value: summary?.unique_fornecedores, color: "#a78bfa", icon: "🏢" },
-          { label: "Funções", value: summary?.unique_funcoes, color: "#06b6d4", icon: "👷" },
-        ].map(({ label, value, color, icon, trend }) => (
-          <div key={label} style={{ background: "rgba(30,41,59,0.7)", border: `1px solid ${color}30`, borderRadius: 12, padding: "16px 18px", flex: 1, minWidth: 160 }}>
-            <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-              {icon} {label} {trend ? ` ${trend}` : ""}
+          { label: "Total Diárias", value: summaryText.totalDiarias.toLocaleString("pt-BR"), accent: "#4f8ef7", hint: trendArrow(trendTotal) },
+          { label: "Dias Ativos", value: summaryText.diasAtivos.toLocaleString("pt-BR"), accent: "#34c97e" },
+          { label: "Média Diária", value: summaryText.mediaDiaria.toLocaleString("pt-BR"), accent: "#f5a623", hint: trendArrow(trendMedia) },
+          { label: "Fornecedores", value: summaryText.fornecedores.toLocaleString("pt-BR"), accent: "#a78bfa" },
+          { label: "Funções", value: summaryText.funcoes.toLocaleString("pt-BR"), accent: "#06b6d4" },
+        ].map((card) => (
+          <div key={card.label} style={darkCardStyle}>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>
+              {card.label} {card.hint ?? ""}
             </p>
-            <p style={{ margin: "8px 0 0", fontSize: 26, fontWeight: 800, color }}>{value ?? "—"}</p>
+            <p style={{ margin: "8px 0 0", fontSize: 26, fontWeight: 800, color: card.accent }}>{card.value}</p>
           </div>
         ))}
       </div>
 
-      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: 24, gap: 16 }}>
-        {months.map((month) => (
-          <button
-            key={month.mes}
-            type="button"
-            onClick={() => onMonthSelect(month.mes)}
-            style={{
-              border: "none",
-              background: "transparent",
-              borderBottom: activeMes === month.mes ? "2px solid #0b4f3a" : "2px solid transparent",
-              color: activeMes === month.mes ? "#0b4f3a" : "#64748b",
-              fontWeight: activeMes === month.mes ? 700 : 600,
-              padding: "0 2px 10px",
-              cursor: "pointer",
-            }}
-          >
-            {month.mes_nome}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: "1px solid rgba(11,79,58,0.12)", borderRadius: 12, padding: 16 }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 200, color: "#0f172a", fontSize: 12, fontWeight: 700 }}>
-          Fornecedor
-          <select
-            value={filterForn}
-            onChange={(event) => {
-              setFilterForn(event.target.value)
-              setDiaIndex(0)
-            }}
-            style={{ ...filterSelectStyle, minHeight: 72 }}
-          >
-            <option value="all">Todos fornecedores</option>
-            {fornecedores.map((fornecedor) => (
-              <option key={fornecedor} value={fornecedor}>
-                {fornecedor}
-              </option>
+      <div style={lightPanelStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+          <div>
+            <h3 style={lightTitleStyle}>Headcount Diário por Fornecedor</h3>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 12 }}>
+              {summaryText.obra || "Obra não identificada"} • {currentMonth.mes_nome}
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {months.map((month) => (
+              <button
+                key={month.mes}
+                type="button"
+                onClick={() => setActiveMes(month.mes)}
+                style={{
+                  border: "1px solid rgba(11,79,58,0.16)",
+                  borderRadius: 999,
+                  background: activeMes === month.mes ? "#0b4f3a" : "#fff",
+                  color: activeMes === month.mes ? "#fff" : "#0f172a",
+                  padding: "8px 12px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                {month.mes_nome}
+              </button>
             ))}
-          </select>
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220, color: "#0f172a", fontSize: 12, fontWeight: 700 }}>
-          Cargo / Função
-          <select
-            value={filterFuncao}
-            onChange={(event) => {
-              setFilterFuncao(event.target.value)
-              setDiaIndex(0)
-            }}
-            style={{ ...filterSelectStyle, minHeight: 72 }}
-          >
-            <option value="all">Todas funções</option>
-            {Array.from(new Set(funcaoDetail.map((row) => row.funcao))).map((funcao) => (
-              <option key={funcao} value={funcao}>
-                {funcao}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+          </div>
+        </div>
 
-      <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-        <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-          📈 Serviços Presentes por Dia — {currentMonth.mes_nome}
-        </h3>
-        <p style={{ margin: "0 0 16px", fontSize: 12, color: "#94a3b8" }}>
-          Headcount diário por fornecedor — clique na legenda para ocultar
-        </p>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={dailyPivot} margin={{ top: 4, right: 24, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-            <XAxis
-              dataKey="Dia"
-              interval={0}
-              tick={{ fill: "#94a3b8", fontSize: 11 }}
-              label={{ value: "Dia", position: "insideBottom", offset: -2, fill: "#64748b", fontSize: 11 }}
-            />
-            <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend
-              wrapperStyle={{ paddingTop: 12, fontSize: 12, cursor: "pointer" }}
-              onClick={(payload: any) => {
-                const key = payload?.dataKey
-                if (!key) return
-                setHiddenFornecedores((previous) => (previous.includes(key) ? previous.filter((item) => item !== key) : [...previous, key]))
-              }}
-            />
-            <ReferenceLine
-              y={grandMedia}
-              stroke="#475569"
-              strokeDasharray="5 5"
-              label={{ value: `Média geral: ${grandMedia}`, fill: "#64748b", fontSize: 10, position: "right" }}
-            />
-            {[...anomalyDaySet].map((day) => {
-              const dayRow = dailyPivot.find((row) => Number(row.Dia) === day)
-              const total = fornecedores.reduce((sum, fornecedor) => sum + (Number(dayRow?.[fornecedor]) || 0), 0)
-              return <ReferenceDot key={`anom-${day}`} x={day} y={total} r={6} fill="#ef4444" stroke="#7f1d1d" />
-            })}
-            {fornecedores.map((fornecedor, index) => (
+        <ResponsiveContainer width="100%" height={320}>
+          <LineChart data={currentMonth.daily_pivot}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis dataKey="Dia" tick={{ fill: "#475569", fontSize: 12 }} />
+            <YAxis tick={{ fill: "#475569", fontSize: 12 }} allowDecimals={false} />
+            <Tooltip />
+            {fornecedorSeries.map((fornecedor, index) => (
               <Line
                 key={fornecedor}
                 type="monotone"
                 dataKey={fornecedor}
-                stroke={COLORS[index % COLORS.length]}
+                stroke={SERIES_COLORS[index % SERIES_COLORS.length]}
                 strokeWidth={2.5}
-                dot={{ r: 3, fill: COLORS[index % COLORS.length] }}
-                activeDot={{ r: 5 }}
+                dot={{ r: 3 }}
                 connectNulls
-                hide={hiddenFornecedores.includes(fornecedor)}
               />
+            ))}
+            {anomalyDays.map((day, index) => (
+              <ReferenceDot key={`${day}-${index}`} x={day} y={0} r={4} fill="#ef4444" stroke="#ef4444" />
             ))}
           </LineChart>
         </ResponsiveContainer>
-      </div>
 
-      <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-        <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-          📶 Totais por Fornecedor — {currentMonth.mes_nome}
-        </h3>
-        <ResponsiveContainer width="100%" height={Math.max(220, fornecedorTotals.length * 36)}>
-          <BarChart data={fornecedorTotals} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-            <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-            <YAxis type="category" dataKey="fornecedor" width={180} tick={{ fill: "#f1f5f9", fontSize: 11 }} />
-            <Tooltip />
-            <Bar dataKey="total" radius={[0, 6, 6, 0]} fill="#4f8ef7" label={{ position: "right", fill: "#94a3b8", fontSize: 11 }} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-              👷 Serviços por Dia — {currentMonth.mes_nome}
-            </h3>
-            <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>
-              Quais funções estavam presentes em cada dia
-            </p>
-          </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+          {(currentMonth.fornecedores ?? []).map((fornecedor, index) => {
+            const hidden = hiddenFornecedores.includes(fornecedor)
+            return (
+              <button
+                key={fornecedor}
+                type="button"
+                onClick={() =>
+                  setHiddenFornecedores((current) =>
+                    hidden ? current.filter((item) => item !== fornecedor) : [...current, fornecedor],
+                  )
+                }
+                style={{
+                  borderRadius: 999,
+                  border: "1px solid rgba(148,163,184,0.22)",
+                  padding: "6px 10px",
+                  background: hidden ? "rgba(148,163,184,0.08)" : "rgba(255,255,255,0.96)",
+                  color: hidden ? "#94a3b8" : "#0f172a",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: SERIES_COLORS[index % SERIES_COLORS.length],
+                    marginRight: 6,
+                  }}
+                />
+                {fornecedor}
+              </button>
+            )
+          })}
         </div>
-
-        {dias.length === 0 ? (
-          <p style={{ color: "#64748b", fontSize: 13 }}>Nenhum dado para os filtros selecionados.</p>
-        ) : (
-          <>
-            {!showAllDias && diaEmFoco !== undefined && (
-              <p style={{ margin: "0 0 12px", fontSize: 12, color: "#94a3b8" }}>
-                Dia {String(diaEmFoco).padStart(2, "0")} de {dias.length} dias
-              </p>
-            )}
-
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ cursor: "default" }}>
-                    <th style={thStyle}>Dia</th>
-                    <th style={thStyle}>Fornecedor</th>
-                    <th style={thStyle}>Serviço / Função</th>
-                    <th style={{ ...thStyle, textAlign: "right" }}>Qtd</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {diasVisiveis.map((dia) =>
-                    funcaoPorDia[dia].map((row, index) => {
-                      const colorIndex = fornecedores.indexOf(row.fornecedor)
-                      const color = COLORS[colorIndex >= 0 ? colorIndex % COLORS.length : index % COLORS.length]
-                      return (
-                        <tr key={`${dia}-${row.fornecedor}-${row.funcao}`} style={{ background: dia % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent", cursor: "default" }}>
-                          {index === 0 && (
-                            <td
-                              rowSpan={funcaoPorDia[dia].length}
-                              style={{ ...tdStyle, fontWeight: 800, color: "#94a3b8", verticalAlign: "middle", fontSize: 14, borderRight: "1px solid #334155" }}
-                            >
-                              {String(dia).padStart(2, "0")}
-                            </td>
-                          )}
-                          <td style={{ ...tdStyle, color, fontWeight: 600 }}>{row.fornecedor}</td>
-                          <td style={{ ...tdStyle, color: "#f1f5f9" }}>{row.funcao}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color }}>{row.quantidade}</td>
-                        </tr>
-                      )
-                    }),
-                  )}
-                </tbody>
-                <tfoot>
-                  <tr style={{ borderTop: "2px solid #334155", cursor: "default" }}>
-                    <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#f1f5f9" }}>
-                      {showAllDias ? "Total no mês" : "Total do dia"}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#f5a623" }}>
-                      {totalDiasVisiveis}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-              {showAllDias ? (
-                <button type="button" onClick={() => setShowAllDias(false)} style={{ ...dayButtonStyle, minWidth: 220 }}>
-                  ⬆ Recolher
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setDiaIndex((index) => Math.max(index - 1, 0))}
-                    disabled={diaIndexAjustado <= 0}
-                    style={{
-                      ...dayButtonStyle,
-                      opacity: diaIndexAjustado <= 0 ? 0.55 : 1,
-                      cursor: diaIndexAjustado <= 0 ? "default" : "pointer",
-                    }}
-                  >
-                    ◀ Dia anterior
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDiaIndex((index) => Math.min(index + 1, dias.length - 1))}
-                    disabled={diaIndexAjustado >= dias.length - 1}
-                    style={{
-                      ...dayButtonStyle,
-                      opacity: diaIndexAjustado >= dias.length - 1 ? 0.55 : 1,
-                      cursor: diaIndexAjustado >= dias.length - 1 ? "default" : "pointer",
-                    }}
-                  >
-                    ▶ Próximo dia
-                  </button>
-                  <button type="button" onClick={() => setShowAllDias(true)} style={dayButtonStyle}>
-                    Mostrar todos os {dias.length} {dias.length === 1 ? "dia" : "dias"}
-                  </button>
-                </>
-              )}
-            </div>
-          </>
-        )}
       </div>
 
-      <div style={{ background: "rgba(30,41,59,0.7)", border: "1px solid #334155", borderRadius: 14, padding: "20px 24px" }}>
-        <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
-          📋 Totais por Dia × Fornecedor — {currentMonth.mes_nome}
-        </h3>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr style={{ cursor: "default" }}>
-                <th style={thStyle}>Dia</th>
-                {fornecedores.map((fornecedor, index) => (
-                  <th key={fornecedor} style={{ ...thStyle, color: COLORS[index % COLORS.length] }}>{fornecedor}</th>
-                ))}
-                <th style={{ ...thStyle, color: "#f5a623" }}>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dailyPivot.map((row, index) => {
-                const total = fornecedores.reduce((sum, fornecedor) => sum + (Number(row[fornecedor]) || 0), 0)
-                return (
-                  <tr key={row.Dia} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.3)" : "transparent", cursor: "default" }}>
-                    <td style={{ ...tdStyle, fontWeight: 700, color: "#94a3b8" }}>
-                      {String(row.Dia).padStart(2, "0")}
-                    </td>
-                    {fornecedores.map((fornecedor, colorIndex) => {
-                      const value = Number(row[fornecedor]) || 0
-                      return (
-                        <td key={fornecedor} style={{ ...tdStyle, color: value > 0 ? COLORS[colorIndex % COLORS.length] : "#334155", fontWeight: value > 0 ? 600 : 400 }}>
-                          {value > 0 ? value : "—"}
-                        </td>
-                      )
-                    })}
-                    <td style={{ ...tdStyle, fontWeight: 700, color: total > 0 ? "#f5a623" : "#334155" }}>
-                      {total > 0 ? total : "—"}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <section style={lightPanelStyle}>
+          <h3 style={lightTitleStyle}>Headcount por Filial / Obra</h3>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={branchRows}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="filial" tick={{ fill: "#475569", fontSize: 12 }} />
+              <YAxis tick={{ fill: "#475569", fontSize: 12 }} />
+              <Tooltip />
+              <Bar dataKey="funcionarios" fill="#0b4f3a" radius={[8, 8, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </section>
+
+        <section style={lightPanelStyle}>
+          <h3 style={lightTitleStyle}>Períodos Cobertos</h3>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={periodChart}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="periodo" tick={{ fill: "#475569", fontSize: 12 }} />
+              <YAxis tick={{ fill: "#475569", fontSize: 12 }} />
+              <Tooltip />
+              <Bar dataKey="total" fill="#4f8ef7" radius={[8, 8, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </section>
       </div>
     </div>
   )
+}
+
+const darkCardStyle: React.CSSProperties = {
+  background: "rgba(30,41,59,0.7)",
+  border: "1px solid rgba(79,142,247,0.12)",
+  borderRadius: 12,
+  padding: "16px 18px",
+}
+
+const lightPanelStyle: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.12)",
+  borderRadius: 14,
+  padding: 18,
+  boxShadow: "0 8px 24px rgba(15,23,42,0.06)",
+}
+
+const lightTitleStyle: React.CSSProperties = {
+  margin: "0 0 14px",
+  fontSize: 16,
+  fontWeight: 800,
+  color: "#0f172a",
+}
+
+const skeletonStyle = `
+  @keyframes efetivo-skeleton-wave {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+`
+
+const skeletonCardStyle: React.CSSProperties = {
+  height: 110,
+  borderRadius: 16,
+  background: "linear-gradient(90deg, rgba(226,232,240,0.8), rgba(241,245,249,0.95), rgba(226,232,240,0.8))",
+  backgroundSize: "200% 100%",
+  animation: "efetivo-skeleton-wave 1.4s ease infinite",
+}
+
+const panelSkeletonStyle: React.CSSProperties = {
+  ...skeletonCardStyle,
+  height: 300,
 }

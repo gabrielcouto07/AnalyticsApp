@@ -3,6 +3,7 @@ import re
 import unicodedata
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import chardet
@@ -973,4 +974,158 @@ def load_dataframe(file_bytes: bytes, filename: str, audit: Optional[Any] = None
         )
 
     return df, available_sheets, audit
+
+
+SKIP_WORKBOOK_SHEETS = {
+    "calendario",
+    "entenda como operar",
+}
+
+
+def _sheet_has_only_empty_intro_rows(df_raw: pd.DataFrame) -> bool:
+    if df_raw.empty:
+        return True
+    intro = df_raw.head(10)
+    return bool(intro.dropna(axis=0, how="all").empty)
+
+
+def detect_format(filename: str, content: bytes) -> str:
+    extension = Path(filename).suffix.lower()
+    by_extension = {
+        ".xlsx": "xlsx",
+        ".xls": "xls",
+        ".xlsm": "xlsx",
+        ".csv": "csv",
+        ".json": "json",
+        ".txt": "txt",
+    }
+    if extension in by_extension:
+        return by_extension[extension]
+
+    if content.startswith(b"PK\x03\x04"):
+        return "xlsx"
+    if content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return "xls"
+
+    stripped = content.lstrip()
+    if stripped.startswith((b"{", b"[")):
+        return "json"
+
+    try:
+        sample = stripped[:1024].decode("utf-8", errors="ignore")
+    except Exception:
+        sample = ""
+
+    if "," in sample or ";" in sample or "\t" in sample:
+        return "csv"
+    return "txt"
+
+
+def _clean_sheet_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    working = df.copy()
+    working = working.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if working.empty:
+        return working
+
+    renamed_columns: list[str] = []
+    for index, column in enumerate(working.columns):
+        if isinstance(column, str):
+            text = column.strip()
+            renamed_columns.append(text or f"COL_{index + 1}")
+        elif pd.notna(column):
+            renamed_columns.append(str(column).strip() or f"COL_{index + 1}")
+        else:
+            renamed_columns.append(f"COL_{index + 1}")
+
+    working.columns = renamed_columns
+    return working.reset_index(drop=True)
+
+
+def _extract_sheet_with_detected_header(df_raw: pd.DataFrame) -> pd.DataFrame:
+    if df_raw.empty:
+        return pd.DataFrame()
+
+    header_row, _ = _detect_header_row(df_raw)
+    if header_row >= len(df_raw):
+        return _clean_sheet_dataframe(df_raw)
+
+    sheet = df_raw.iloc[header_row + 1 :].copy().reset_index(drop=True)
+    header_values = df_raw.iloc[header_row].tolist()
+    sheet.columns = header_values
+    return _clean_sheet_dataframe(sheet)
+
+
+def _is_ignored_sheet(sheet_name: str) -> bool:
+    normalized = (
+        unicodedata.normalize("NFKD", sheet_name.strip().lower())
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    return normalized in {
+        unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+        for value in SKIP_WORKBOOK_SHEETS
+    }
+
+
+def _pick_primary_sheet(sheets: dict[str, pd.DataFrame]) -> tuple[str | None, pd.DataFrame]:
+    for sheet_name, dataframe in sheets.items():
+        if _is_ignored_sheet(sheet_name):
+            continue
+        if not dataframe.empty:
+            return sheet_name, dataframe
+    for sheet_name, dataframe in sheets.items():
+        if not dataframe.empty:
+            return sheet_name, dataframe
+    return None, pd.DataFrame()
+
+
+def _load_excel_sheets(file_bytes: bytes) -> dict[str, pd.DataFrame]:
+    workbook = pd.read_excel(BytesIO(file_bytes), sheet_name=None, header=None)
+    sheets: dict[str, pd.DataFrame] = {}
+    for sheet_name, raw_df in workbook.items():
+        if _is_ignored_sheet(sheet_name) or _sheet_has_only_empty_intro_rows(raw_df):
+            continue
+        parsed_df = _extract_sheet_with_detected_header(raw_df)
+        if not parsed_df.empty:
+            sheets[sheet_name] = parsed_df
+    return sheets
+
+
+def _load_delimited_text(file_bytes: bytes) -> pd.DataFrame:
+    return pd.read_csv(BytesIO(file_bytes), sep=None, engine="python")
+
+
+def _load_json_flexible(file_bytes: bytes) -> pd.DataFrame:
+    raw = json.load(BytesIO(file_bytes))
+    if isinstance(raw, list):
+        return pd.json_normalize(raw)
+    if isinstance(raw, dict):
+        if all(not isinstance(value, list) for value in raw.values()):
+            return pd.DataFrame([raw])
+        for value in raw.values():
+            if isinstance(value, list):
+                return pd.json_normalize(value)
+    raise ValueError("Estrutura JSON nao suportada")
+
+
+def load_file_bundle(file_bytes: bytes, filename: str) -> tuple[pd.DataFrame, dict[str, pd.DataFrame], list[str], str]:
+    detected_format = detect_format(filename, file_bytes)
+    filename_stem = Path(filename).stem or "Sheet1"
+
+    if detected_format in {"xlsx", "xls"}:
+        sheets = _load_excel_sheets(file_bytes)
+    elif detected_format == "json":
+        dataframe = _clean_sheet_dataframe(_load_json_flexible(file_bytes))
+        sheets = {filename_stem: dataframe}
+    else:
+        dataframe = _clean_sheet_dataframe(_load_delimited_text(file_bytes))
+        sheets = {filename_stem: dataframe}
+
+    primary_sheet_name, primary_sheet = _pick_primary_sheet(sheets)
+    if primary_sheet_name is None or primary_sheet.empty:
+        raise ValueError("Nenhuma planilha com dados foi encontrada no arquivo enviado")
+
+    prepared_df = _prepare_dataframe(primary_sheet)
+    detected_sheets = list(sheets.keys())
+    return prepared_df, sheets, detected_sheets, detected_format
 

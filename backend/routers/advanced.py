@@ -11,6 +11,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
 from ..session import get_session, get_active_df
+from ..utils.json_utils import _json_safe
 from ..services.advanced_analytics import (
     analyze_anomalies,
     analyze_trends,
@@ -20,31 +21,6 @@ from ..services.advanced_analytics import (
 
 router = APIRouter(prefix="/api/advanced", tags=["advanced"])
 logger = logging.getLogger(__name__)
-
-
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_json_safe(v) for v in value]
-    if isinstance(value, pd.DataFrame):
-        return _json_safe(value.to_dict(orient="records"))
-    if isinstance(value, pd.Series):
-        return _json_safe(value.tolist())
-    if isinstance(value, np.ndarray):
-        return _json_safe(value.tolist())
-    if isinstance(value, (np.integer,)):
-        return int(value)
-    if isinstance(value, (np.floating,)):
-        value = float(value)
-    if isinstance(value, float):
-        return value if np.isfinite(value) else None
-    try:
-        if pd.api.types.is_scalar(value) and pd.isna(value):
-            return None
-    except Exception:
-        pass
-    return value
 
 
 def _get_df_or_404(session_id: str) -> pd.DataFrame:

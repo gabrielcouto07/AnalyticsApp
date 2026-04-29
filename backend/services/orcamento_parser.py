@@ -1,422 +1,149 @@
-"""
-Orcamento Parser — Extracts structured data from "Mapa de Concorrência" Excel files.
-
-Layout (consistent across all files):
-  Row 2:  "MAPA DE CONCORRÊNCIA" title (col A or B)
-  Row 6:  "FORNECEDOR 1" at col 10, "FORNECEDOR 2" at col 13, "FORNECEDOR 3" at col 16...
-          Each fornecedor block spans 3 columns: [label_col, value_col, gap]
-          → label_col = start_col (NOME, CONTATO, TELEFONE, EMAIL labels)
-          → value_col = start_col + 1 (actual values)
-  Row 8:  OBRA (C3), N.º (C8), NOME fornecedor (start_col+1 per block)
-  Row 9:  DATA (C8), CONTATO (start_col+1)
-  Row 10: ASSU. (C3), TELEFONE (start_col+1)
-  Row 11: EMAIL (start_col+1)
-  Row 13: Item headers: ITEM(C2), DESCRIÇÃO(C3), QUANT(C4), UNID(C5), ...
-          + "PREÇOS" at each fornecedor start_col
-  Row 14: Price sub-headers per fornecedor:
-          start_col = price_col_a (e.g. "VALOR UNIT." or "VALOR INICIAL")
-          start_col+1 = price_col_b (e.g. "VALOR TOTAL" or "VALOR NEGOCIADO")
-          → price_col_b is ALWAYS the "final/important" price
-  Row 17+: Item data rows until total/empty
-  Total row: has "TOTAL" or "SALDO" in col 8 or col 10
-
-Year/date from cell C8 row 9 (datetime).
-Assunto from cell C3 row 10.
-Obra from cell C3 row 8.
-"""
+from __future__ import annotations
 
 import re
-import pandas as pd
-import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
+import unicodedata
 from io import BytesIO
-import openpyxl
+from typing import Any
+
+import pandas as pd
 
 
-# ─── Fornecedor column positions ──────────────────────────────────────────────
-# FORNECEDOR 1 starts at col 10, each block is 3 cols apart
-FORNECEDOR_START_COL = 10
-FORNECEDOR_STRIDE = 3
-MAX_FORNECEDORES = 5  # scan up to 5
+def _normalize_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    ascii_text = text.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", ascii_text).strip()
 
 
-def _parse_num(v) -> Optional[float]:
-    """Parse a cell value to float. Returns None if not numeric."""
-    if v is None:
-        return None
-    if isinstance(v, (int, float)):
-        if np.isnan(v) or np.isinf(v):
-            return None
-        return float(v)
-    s = str(v).strip()
-    if s in ("", "-", "_", "NA", "nan", "None", "#REF!", "#VALUE!", "SALDO"):
-        return None
-    # Remove R$, spaces
-    s = re.sub(r"[R$\s]", "", s)
-    # BR format: 1.234,56 → 1234.56
-    if re.search(r"\d\.\d{3},\d", s):
-        s = s.replace(".", "").replace(",", ".")
-    else:
-        s = s.replace(",", ".")
-    try:
-        return float(s)
-    except (ValueError, TypeError):
-        return None
+def _clean_sheet_frame(df: pd.DataFrame) -> pd.DataFrame:
+    working = df.copy()
+    working = working.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if working.empty:
+        return working
+
+    columns: list[str] = []
+    for index, column in enumerate(working.columns):
+        text = str(column).strip() if pd.notna(column) else ""
+        columns.append(text or f"COL_{index + 1}")
+    working.columns = columns
+    return working.reset_index(drop=True)
 
 
-def _safe_str(v) -> str:
-    """Safely convert cell value to stripped string."""
-    if v is None:
-        return ""
-    s = str(v).strip()
-    if s.lower() in ("none", "nan"):
-        return ""
-    return s
+def _detect_header_row(df_raw: pd.DataFrame) -> int:
+    for row_index in range(min(len(df_raw), 20)):
+        row_values = [str(value).strip() for value in df_raw.iloc[row_index].tolist() if pd.notna(value) and str(value).strip()]
+        normalized = [_normalize_text(value) for value in row_values]
+        if "item" in normalized and any(value.startswith("descricao") for value in normalized):
+            return row_index
+    return 0
 
 
-def _find_fornecedor_blocks(ws) -> List[Dict[str, Any]]:
-    """
-    Scan row 6 to find all FORNECEDOR headers and their column positions.
-    Returns list of {index: int, start_col: int, label: str}
-    """
-    blocks = []
-    for col in range(1, ws.max_column + 1):
-        v = ws.cell(row=6, column=col).value
-        if v and "FORNECEDOR" in str(v).upper():
-            blocks.append({
-                "index": len(blocks) + 1,
-                "start_col": col,
-                "label": _safe_str(v),
-            })
-    return blocks
+def _find_column(df: pd.DataFrame, candidates: list[str], required: bool = False) -> str | None:
+    normalized_map = {_normalize_text(column): column for column in df.columns}
+    for candidate in candidates:
+        normalized_candidate = _normalize_text(candidate)
+        for normalized_name, original_name in normalized_map.items():
+            if normalized_candidate == normalized_name:
+                return original_name
+    if required:
+        raise KeyError(f"Coluna esperada nao encontrada: {', '.join(candidates)}")
+    return None
 
 
-def _extract_fornecedor_info(ws, start_col: int) -> Dict[str, str]:
-    """Extract NOME, CONTATO, TELEFONE, EMAIL for one fornecedor block."""
-    val_col = start_col + 1
-    return {
-        "Nome": _safe_str(ws.cell(row=8, column=val_col).value),
-        "Contato": _safe_str(ws.cell(row=9, column=val_col).value),
-        "Telefone": _safe_str(ws.cell(row=10, column=val_col).value),
-        "Email": _safe_str(ws.cell(row=11, column=val_col).value),
-    }
-
-
-def _extract_price_headers(ws, start_col: int) -> Tuple[str, str]:
-    """Extract the two price sub-header labels from row 14."""
-    h1 = _safe_str(ws.cell(row=14, column=start_col).value)
-    h2 = _safe_str(ws.cell(row=14, column=start_col + 1).value)
-    return h1 or "Valor A", h2 or "Valor B"
-
-
-def _extract_meta(ws) -> Dict[str, Any]:
-    """Extract file-level metadata: Obra, Assunto, Numero, Data."""
-    obra = _safe_str(ws.cell(row=8, column=3).value)
-    assunto = _safe_str(ws.cell(row=10, column=3).value)
-    numero = _safe_str(ws.cell(row=8, column=8).value)
-
-    data_val = ws.cell(row=9, column=8).value
-    data_str = ""
-    if data_val:
-        try:
-            if hasattr(data_val, "strftime"):
-                data_str = data_val.strftime("%Y-%m-%d")
-            else:
-                data_str = str(data_val)
-        except Exception:
-            data_str = str(data_val)
-
-    return {
-        "Obra": obra,
-        "Assunto": assunto,
-        "Numero": numero,
-        "Data": data_str,
-    }
-
-
-def _is_item_row(ws, row: int) -> bool:
-    """Check if a row is an item row (has numeric ITEM in col 2 and description in col 3)."""
-    item_val = ws.cell(row=row, column=2).value
-    desc_val = ws.cell(row=row, column=3).value
-    if item_val is None and desc_val is None:
-        return False
-    # Item number should be numeric
-    if item_val is not None:
-        try:
-            int(float(str(item_val)))
-            return True
-        except (ValueError, TypeError):
-            pass
-    # Sometimes item number is missing but description exists with prices
-    if desc_val and _safe_str(desc_val) not in ("", "ENDEREÇO OBRA:"):
-        # Check if any price column has a value
-        for col_offset in range(FORNECEDOR_START_COL, FORNECEDOR_START_COL + MAX_FORNECEDORES * FORNECEDOR_STRIDE, FORNECEDOR_STRIDE):
-            for sub in (0, 1):
-                pv = _parse_num(ws.cell(row=row, column=col_offset + sub).value)
-                if pv is not None:
-                    return True
-    return False
-
-
-def _is_total_row(ws, row: int) -> bool:
-    """Check if row is a total/saldo row.
-    Only col 8 (SALDO TOTAL) is reliable — fornecedor columns (10, 13, 16)
-    sometimes use 'SALDO' as a price label, not as a total indicator.
-    A total row in col 8 typically has 'TOTAL' text or a numeric sum,
-    AND has no item number in col 2.
-    """
-    item_val = ws.cell(row=row, column=2).value
-    # If col 2 has a valid item number, this is NOT a total row
-    if item_val is not None:
-        try:
-            int(float(str(item_val)))
-            return False  # valid item number → not a total row
-        except (ValueError, TypeError):
-            pass
-
-    v8 = _safe_str(ws.cell(row=row, column=8).value).upper()
-    if v8 in ("TOTAL", "SALDO", "SALDO COM DESCONTO"):
-        return True
-
-    # Also check if col 8 has a numeric value (total sum) with no item in col 2
-    if item_val is None and _parse_num(ws.cell(row=row, column=8).value) is not None:
-        desc = _safe_str(ws.cell(row=row, column=3).value)
-        if not desc or desc.upper().startswith("ENDEREÇO"):
-            return True
-
-    return False
-
-
-def parse_orcamento_file(file_bytes: bytes, filename: str) -> Dict[str, Any]:
-    """
-    Parse a Mapa de Concorrência Excel file.
-
-    Returns dict with:
-        meta: {Obra, Assunto, Numero, Data, Filename}
-        orcamento: [{Item, Descricao, Quant, Unid, Tipo}, ...]
-        fornecedores: [{Nome, Contato, Telefone, Email, PriceHeaderA, PriceHeaderB}, ...]
-        price_map: [{Item, FornecedorIndex, FornecedorNome, ValorA, ValorB}, ...]
-        flat: DataFrame with one row per (Item × Fornecedor) — ready for analytics
-    """
-    wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
-    ws = wb[wb.sheetnames[0]]
-
-    # ── Meta ──────────────────────────────────────────────────────────
-    meta = _extract_meta(ws)
-    meta["Filename"] = filename
-
-    # ── Fornecedores ──────────────────────────────────────────────────
-    forn_blocks = _find_fornecedor_blocks(ws)
-    fornecedores = []
-    for block in forn_blocks:
-        info = _extract_fornecedor_info(ws, block["start_col"])
-        price_h = _extract_price_headers(ws, block["start_col"])
-        fornecedores.append({
-            "FornecedorIndex": block["index"],
-            "Nome": info["Nome"],
-            "Contato": info["Contato"],
-            "Telefone": info["Telefone"],
-            "Email": info["Email"],
-            "PriceHeaderA": price_h[0],
-            "PriceHeaderB": price_h[1],
-            "StartCol": block["start_col"],
-        })
-
-    # ── Orçamento Items + Price Map ───────────────────────────────────
-    orcamento = []
-    price_map = []
-
-    # Items start at row 17, go until total or end
-    for row in range(17, ws.max_row + 1):
-        if _is_total_row(ws, row):
-            break
-
-        if not _is_item_row(ws, row):
+def _extract_budget_sheet(file_bytes: bytes) -> pd.DataFrame:
+    workbook = pd.read_excel(BytesIO(file_bytes), sheet_name=None, header=None)
+    for sheet_name, raw_df in workbook.items():
+        if "orc" not in _normalize_text(sheet_name):
             continue
+        header_row = _detect_header_row(raw_df)
+        parsed = raw_df.iloc[header_row + 1 :].copy().reset_index(drop=True)
+        parsed.columns = raw_df.iloc[header_row].tolist()
+        cleaned = _clean_sheet_frame(parsed)
+        if not cleaned.empty:
+            return cleaned
 
-        item_num = _parse_num(ws.cell(row=row, column=2).value)
-        item_id = int(item_num) if item_num is not None else len(orcamento) + 1
-        descricao = _safe_str(ws.cell(row=row, column=3).value)
-        quant = _parse_num(ws.cell(row=row, column=4).value) or 0
-        unid = _safe_str(ws.cell(row=row, column=5).value)
+    first_sheet_name = next(iter(workbook.keys()))
+    raw_df = workbook[first_sheet_name]
+    header_row = _detect_header_row(raw_df)
+    parsed = raw_df.iloc[header_row + 1 :].copy().reset_index(drop=True)
+    parsed.columns = raw_df.iloc[header_row].tolist()
+    return _clean_sheet_frame(parsed)
 
-        # Type: Serviço if quant == 1, else Insumo
-        tipo = "Serviço" if quant == 1 else "Insumo"
 
-        orcamento.append({
-            "Item": item_id,
-            "Descricao": descricao,
-            "Quant": quant,
-            "Unid": unid,
-            "Tipo": tipo,
-        })
+def parse_orcamento_file(file_bytes: bytes, filename: str) -> dict[str, pd.DataFrame]:
+    budget_df = _extract_budget_sheet(file_bytes)
+    if budget_df.empty:
+        return {"flat": pd.DataFrame(), "mapas": pd.DataFrame()}
 
-        # Extract prices from each fornecedor
-        for forn in fornecedores:
-            sc = forn["StartCol"]
-            val_a = _parse_num(ws.cell(row=row, column=sc).value)
-            val_b = _parse_num(ws.cell(row=row, column=sc + 1).value)
+    item_col = _find_column(budget_df, ["ITEM"], required=True)
+    subitem_col = _find_column(budget_df, ["SUBITEM"], required=False)
+    descricao_col = _find_column(budget_df, ["DESCRICAO", "DESCRIÇÃO"], required=True)
+    unid_col = _find_column(budget_df, ["UNID"], required=False)
+    qtd_col = _find_column(budget_df, ["QTD"], required=False)
+    custo_unitario_col = _find_column(budget_df, ["CUSTO UNITARIO", "CUSTO UNITÁRIO"], required=False)
+    custo_total_col = _find_column(budget_df, ["CUSTO TOTAL"], required=False)
 
-            price_map.append({
-                "Item": item_id,
-                "Descricao": descricao,
-                "FornecedorIndex": forn["FornecedorIndex"],
-                "FornecedorNome": forn["Nome"],
-                "ValorA": val_a,
-                "ValorB": val_b,
-                "Preco": val_b if val_b is not None else val_a,
-            })
+    flat_source_columns = [
+        column
+        for column in [item_col, subitem_col, descricao_col, unid_col, qtd_col, custo_unitario_col, custo_total_col]
+        if column
+    ]
+    flat_df = budget_df.loc[:, flat_source_columns].copy()
+    flat_df = flat_df.rename(
+        columns={
+            item_col: "ITEM",
+            subitem_col: "SUBITEM",
+            descricao_col: "DESCRIÇÃO",
+            unid_col: "UNID",
+            qtd_col: "QTD",
+            custo_unitario_col: "CUSTO UNITÁRIO",
+            custo_total_col: "CUSTO TOTAL",
+        }
+    )
 
-    # ── Build flat DataFrame ──────────────────────────────────────────
-    flat_records = []
-    for orc_item in orcamento:
-        for forn in fornecedores:
-            # Find matching price
-            matching = [
-                p for p in price_map
-                if p["Item"] == orc_item["Item"]
-                and p["FornecedorIndex"] == forn["FornecedorIndex"]
-            ]
-            preco = matching[0]["Preco"] if matching else None
-            val_a = matching[0]["ValorA"] if matching else None
-            val_b = matching[0]["ValorB"] if matching else None
+    key_columns = [column for column in ["ITEM", "SUBITEM", "DESCRIÇÃO"] if column in flat_df.columns]
+    if key_columns:
+        empty_key_mask = flat_df[key_columns].apply(
+            lambda column: column.astype(str).str.strip().replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+        )
+        flat_df = flat_df[~empty_key_mask.isna().all(axis=1)]
 
-            flat_records.append({
-                # Meta
-                "Obra": meta["Obra"],
-                "Assunto": meta["Assunto"],
-                "Numero": meta["Numero"],
-                "Data": meta["Data"],
-                "Filename": filename,
-                # Item
-                "Item": orc_item["Item"],
-                "Descricao": orc_item["Descricao"],
-                "Quant": orc_item["Quant"],
-                "Unid": orc_item["Unid"],
-                "Tipo": orc_item["Tipo"],
-                # Fornecedor
-                "FornecedorIndex": forn["FornecedorIndex"],
-                "FornecedorNome": forn["Nome"],
-                "Contato": forn["Contato"],
-                "Telefone": forn["Telefone"],
-                "Email": forn["Email"],
-                # Prices
-                "ValorA": val_a,
-                "ValorB": val_b,
-                "Preco": preco,
-            })
+    budget_fixed_cols = [
+        column
+        for column in [item_col, subitem_col, descricao_col, unid_col, qtd_col, custo_unitario_col, custo_total_col]
+        if column
+    ]
+    id_cols = [column for column in [item_col, subitem_col, descricao_col] if column]
+    value_cols = [column for column in budget_df.columns if column not in id_cols + budget_fixed_cols]
 
-    df = pd.DataFrame(flat_records) if flat_records else pd.DataFrame()
+    mapas_df = pd.DataFrame(columns=["ITEM", "SUBITEM", "MAPA", "VALOR_MAPA"])
+    if not flat_df.empty and value_cols:
+        maps_source = budget_df.loc[:, [column for column in id_cols + value_cols if column in budget_df.columns]].copy()
+        maps_source = maps_source.dropna(how="all", subset=id_cols)
+        mapas_df = maps_source.melt(id_vars=id_cols, value_vars=value_cols, var_name="MAPA", value_name="VALOR_MAPA")
+        mapas_df["VALOR_MAPA"] = pd.to_numeric(mapas_df["VALOR_MAPA"], errors="coerce")
+        mapas_df = mapas_df[mapas_df["VALOR_MAPA"].notna() & (mapas_df["VALOR_MAPA"] != 0)].reset_index(drop=True)
+        if subitem_col is None:
+            mapas_df["SUBITEM"] = None
+            subitem_col = "SUBITEM"
+        mapas_df = mapas_df.rename(
+            columns={
+                item_col: "ITEM",
+                descricao_col: "DESCRIÇÃO",
+                subitem_col: "SUBITEM",
+            }
+        )
+        mapas_df = mapas_df.loc[:, ["ITEM", "SUBITEM", "MAPA", "VALOR_MAPA"]]
 
     return {
-        "meta": meta,
-        "orcamento": orcamento,
-        "fornecedores": [
-            {k: v for k, v in f.items() if k != "StartCol"}
-            for f in fornecedores
-        ],
-        "price_map": price_map,
-        "flat": df,
+        "flat": flat_df.reset_index(drop=True),
+        "mapas": mapas_df.reset_index(drop=True),
     }
 
-
-def parse_multiple_orcamento_files(
-    files: List[Tuple[bytes, str]],
-) -> pd.DataFrame:
-    """
-    Parse multiple Mapa de Concorrência files and merge into a single DataFrame.
-    Each file adds its own items + fornecedores + prices.
-
-    Args:
-        files: list of (file_bytes, filename) tuples
-
-    Returns:
-        Combined DataFrame with all items × fornecedores across all files
-    """
-    all_dfs = []
-    for file_bytes, filename in files:
-        try:
-            result = parse_orcamento_file(file_bytes, filename)
-            if not result["flat"].empty:
-                all_dfs.append(result["flat"])
-        except Exception as e:
-            print(f"Error parsing {filename}: {e}")
-            continue
-
-    if not all_dfs:
-        return pd.DataFrame()
-
-    return pd.concat(all_dfs, ignore_index=True)
-
-
-# ─── Detection ────────────────────────────────────────────────────────────────
 
 def detect_orcamento_file(file_bytes: bytes, filename: str) -> bool:
-    """
-    Detect if a file is a Mapa de Concorrência spreadsheet.
-    Checks:
-    1. Row 2 contains "MAPA DE CONCORRÊNCIA"
-    2. Row 6 contains "FORNECEDOR"
-    3. Row 13 contains "ITEM" and "DESCRIÇÃO"
-    """
     try:
-        wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
-        ws = wb[wb.sheetnames[0]]
-
-        # Check row 2 for title
-        for col in range(1, 5):
-            v = _safe_str(ws.cell(row=2, column=col).value).upper()
-            if "MAPA" in v and "CONCORR" in v:
-                wb.close()
-                return True
-
-        # Check row 13 for ITEM header
-        v13 = _safe_str(ws.cell(row=13, column=2).value).upper()
-        if "ITEM" in v13:
-            wb.close()
-            return True
-
-        # Check row 6 for FORNECEDOR
-        for col in range(1, 22):
-            v = _safe_str(ws.cell(row=6, column=col).value).upper()
-            if "FORNECEDOR" in v:
-                wb.close()
-                return True
-
-        wb.close()
+        budget_df = _extract_budget_sheet(file_bytes)
+        normalized_columns = {_normalize_text(column) for column in budget_df.columns}
+        return "item" in normalized_columns and "custo total" in normalized_columns
     except Exception:
-        pass
-
-    return False
-
-
-# ─── CLI Test ─────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import sys
-    import json
-
-    path = sys.argv[1] if len(sys.argv) > 1 else ""
-    if not path:
-        print("Usage: python orcamento_parser.py <file.xlsx>")
-        sys.exit(1)
-
-    with open(path, "rb") as f:
-        content = f.read()
-
-    result = parse_orcamento_file(content, path)
-
-    print(f"Meta: {json.dumps(result['meta'], indent=2, ensure_ascii=False)}")
-    print(f"\nOrçamento ({len(result['orcamento'])} items):")
-    for item in result["orcamento"]:
-        print(f"  {item['Item']:>3}. [{item['Tipo']:>7}] {item['Descricao'][:60]} | Q={item['Quant']} {item['Unid']}")
-    print(f"\nFornecedores ({len(result['fornecedores'])}):")
-    for f in result["fornecedores"]:
-        print(f"  #{f['FornecedorIndex']} {f['Nome']} | {f['Telefone']} | {f['Email']}")
-        print(f"       Headers: {f['PriceHeaderA']} / {f['PriceHeaderB']}")
-    print(f"\nPrice Map ({len(result['price_map'])} entries):")
-    for p in result["price_map"][:10]:
-        print(f"  Item {p['Item']:>3} × {p['FornecedorNome'][:25]:25} → A={p['ValorA']}  B={p['ValorB']}  Preço={p['Preco']}")
-    print(f"\nFlat DataFrame: {len(result['flat'])} rows × {len(result['flat'].columns)} cols")
-    if not result["flat"].empty:
-        print(result["flat"].head(5).to_string(index=False))
+        return False

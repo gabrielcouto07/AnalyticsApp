@@ -321,15 +321,15 @@ class EfetivoAnalyzer:
             daily_pivot = pivot.to_dict(orient="records")
 
             # per-day funcao breakdown
-            funcao_cols = ["Dia", "Fornecedor", "Funcao", "Quantidade"]
-            existing = [c for c in funcao_cols if c in df_m.columns]
+            group_columns = [column for column in ["Dia", "Obra", "Fornecedor", "Funcao"] if column in df_m.columns]
             funcao_agg = (
-                df_m.groupby([c for c in ["Dia", "Fornecedor", "Funcao"] if c in df_m.columns])["Quantidade"]
+                df_m.groupby(group_columns)["Quantidade"]
                 .sum().reset_index().sort_values(["Dia", "Fornecedor"])
             )
             funcao_rows = [
                 {
                     "dia": int(r["Dia"]),
+                    "obra": str(r["Obra"]) if "Obra" in r else "",
                     "fornecedor": str(r["Fornecedor"]) if "Fornecedor" in r else "",
                     "funcao": str(r["Funcao"]) if "Funcao" in r else "",
                     "quantidade": int(r["Quantidade"]),

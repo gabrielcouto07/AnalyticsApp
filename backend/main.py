@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import upload, data, charts, export, filters, advanced, converter, profiler, templates, materiais
+from .routers import advanced, charts, converter, custos, data, export, filters, materiais, orcamento, profiler, templates, upload
 
 app = FastAPI(title="Analytics Dashboard API", version="2.0.0")
 
@@ -13,6 +13,7 @@ _origins = [o.strip() for o in os.getenv("CORS_ORIGINS", _default_origins).split
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,6 +25,8 @@ app.include_router(charts.router)
 app.include_router(export.router)
 app.include_router(filters.router)
 app.include_router(advanced.router)
+app.include_router(custos.router)
+app.include_router(orcamento.router)
 app.include_router(converter.router)
 app.include_router(profiler.router)
 app.include_router(templates.router)
@@ -38,4 +41,4 @@ def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8001")))
