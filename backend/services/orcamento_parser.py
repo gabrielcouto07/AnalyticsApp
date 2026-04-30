@@ -1,3 +1,8 @@
+"""
+OrcamentoParser - extracts flat budget lines and purchase-map allocations from workbook uploads.
+Called by: backend.routers.upload.
+"""
+
 from __future__ import annotations
 
 import re

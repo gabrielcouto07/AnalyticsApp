@@ -5,7 +5,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -14,44 +13,49 @@ import {
   YAxis,
 } from "recharts"
 
-import { fetchApiJson, type CustosConsolidadoResponse, type CustosNfsResponse, type CustosOrcadoRealizadoResponse, type CustosResumoResponse } from "../api/analytics"
-import { API_BASE_URL } from "../api/client"
-import { EmptyState } from "./layout/EmptyState"
-import { SCHEMA_REQUIRED_COLUMNS } from "./layout/schemaRequirements"
-import { useSessionStore } from "../store/session"
+import { fetchApiJson } from "../api/analytics"
 
 type TabId = "nfs" | "consolidado" | "orcado-realizado" | "resumo"
-type SortDirection = "asc" | "desc"
-type SortState = { key: string; direction: SortDirection }
-type TableRow = Record<string, string | number | null | undefined>
+type GenericRow = Record<string, unknown>
+type OrcadoRealizadoItem = {
+  item: string
+  descricao: string
+  verba_total: number
+  periodos: Array<{ periodo: number; desembolso: number }>
+}
 
 const TAB_LABELS: Array<{ id: TabId; label: string }> = [
   { id: "nfs", label: "NFs" },
   { id: "consolidado", label: "Consolidado" },
-  { id: "orcado-realizado", label: "Orçado × Realizado" },
+  { id: "orcado-realizado", label: "Orcado x Realizado" },
   { id: "resumo", label: "Resumo" },
 ]
 
-const NATUREZA_OPTIONS = [
-  "Material / Serviço",
-  "Mão Obra Empr.",
-  "Mão Obra Tempo.",
+const NATUREZA_ORDER = [
+  "Material / Servico",
+  "Mao Obra Empr.",
+  "Mao Obra Tempo.",
   "Staff",
-  "Serviços s/ TxAdm",
+  "Servicos s/ TxAdm",
 ]
-
-const NATUREZA_COLORS: Record<string, string> = {
-  "Material / Serviço": "#60a5fa",
-  "Mão Obra Empr.": "#fb923c",
-  "Mão Obra Tempo.": "#facc15",
-  Staff: "#c084fc",
-  "Serviços s/ TxAdm": "#4ade80",
-}
+const SITUACAO_OPTIONS = ["Todas", "A PAGAR", "PAGO", "VENCIDO"]
 
 const PAGE_SIZE = 50
 
-function formatCurrency(value: number) {
-  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+function DashboardSkeleton() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} style={cardSkeletonStyle} />
+        ))}
+      </div>
+      <div style={filterSkeletonStyle} />
+      <div style={panelSkeletonStyle} />
+      <div style={panelSkeletonStyle} />
+      <style>{skeletonStyle}</style>
+    </div>
+  )
 }
 
 function normalizeText(value: unknown) {
@@ -59,6 +63,11 @@ function normalizeText(value: unknown) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    .trim()
+}
+
+function formatCurrency(value: number) {
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })
 }
 
 function parseNumber(value: unknown) {
@@ -70,30 +79,57 @@ function parseNumber(value: unknown) {
 }
 
 function parseDateValue(value: unknown) {
-  if (!value) return Number.NaN
+  if (!value) return null
   const parsed = new Date(String(value))
-  return Number.isNaN(parsed.getTime()) ? Number.NaN : parsed.getTime()
+  return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-function compareValues(left: unknown, right: unknown) {
-  const leftDate = parseDateValue(left)
-  const rightDate = parseDateValue(right)
-  if (!Number.isNaN(leftDate) && !Number.isNaN(rightDate)) return leftDate - rightDate
-
-  const leftNumber = parseNumber(left)
-  const rightNumber = parseNumber(right)
-  const leftLooksNumeric = typeof left === "number" || /\d/.test(String(left ?? ""))
-  const rightLooksNumeric = typeof right === "number" || /\d/.test(String(right ?? ""))
-  if (leftLooksNumeric && rightLooksNumeric) return leftNumber - rightNumber
-
-  return String(left ?? "").localeCompare(String(right ?? ""), "pt-BR", { numeric: true, sensitivity: "base" })
+function selectMultiValues(options: HTMLOptionsCollection) {
+  return Array.from(options)
+    .filter((option) => option.selected)
+    .map((option) => option.value)
 }
 
-function sortRows<T extends TableRow>(rows: T[], sortState: SortState) {
-  return [...rows].sort((left, right) => {
-    const result = compareValues(left[sortState.key], right[sortState.key])
-    return sortState.direction === "asc" ? result : -result
-  })
+function resolveSituacaoLabel(rawSituacao: unknown, rawDate: unknown) {
+  const situacao = normalizeText(rawSituacao)
+  if (situacao.includes("pago")) return "PAGO"
+  if (situacao.includes("venc")) return "VENCIDO"
+
+  const dueDate = parseDateValue(rawDate)
+  if (dueDate) {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    dueDate.setHours(0, 0, 0, 0)
+    if (dueDate < today) return "VENCIDO"
+  }
+
+  return "A PAGAR"
+}
+
+function formatDate(value: unknown) {
+  if (!value) return "-"
+  const parsed = new Date(String(value))
+  if (Number.isNaN(parsed.getTime())) return String(value)
+  return parsed.toLocaleDateString("pt-BR")
+}
+
+function findColumn(rows: GenericRow[], candidates: string[]) {
+  const keys = Object.keys(rows[0] ?? {})
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeText(candidate)
+    const match = keys.find((key) => normalizeText(key) === normalizedCandidate)
+    if (match) return match
+  }
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeText(candidate)
+    const match = keys.find((key) => normalizeText(key).includes(normalizedCandidate))
+    if (match) return match
+  }
+  return null
+}
+
+function getValue(row: GenericRow, column: string | null) {
+  return column ? row[column] : undefined
 }
 
 function paginateRows<T>(rows: T[], page: number) {
@@ -103,61 +139,58 @@ function paginateRows<T>(rows: T[], page: number) {
   return {
     page: safePage,
     totalPages,
+    start,
+    end: Math.min(start + PAGE_SIZE, rows.length),
     rows: rows.slice(start, start + PAGE_SIZE),
   }
-}
-
-function Card({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={metricCardStyle}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase" }}>{label}</div>
-      <div style={{ marginTop: 10, fontSize: 24, fontWeight: 800, color: "#f8fafc" }}>{value}</div>
-    </div>
-  )
 }
 
 function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (page: number) => void }) {
   if (totalPages <= 1) return null
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
-      <span style={{ color: "#94a3b8", fontSize: 13 }}>
-        Página {page} de {totalPages}
+      <span style={{ color: "#64748b", fontSize: 13 }}>
+        Pagina {page} de {totalPages}
       </span>
       <div style={{ display: "flex", gap: 8 }}>
-        <button type="button" style={secondaryButtonStyle} onClick={() => onChange(Math.max(1, page - 1))}>
+        <button type="button" style={pagerButtonStyle} onClick={() => onChange(Math.max(1, page - 1))}>
           Anterior
         </button>
-        <button type="button" style={secondaryButtonStyle} onClick={() => onChange(Math.min(totalPages, page + 1))}>
-          Próxima
+        <button type="button" style={pagerButtonStyle} onClick={() => onChange(Math.min(totalPages, page + 1))}>
+          Proxima
         </button>
       </div>
     </div>
   )
 }
 
+function EmptyTabMessage({ message }: { message: string }) {
+  return (
+    <section style={panelStyle}>
+      <div style={{ minHeight: 220, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <p style={{ margin: 0, color: "#64748b", fontSize: 14 }}>{message}</p>
+      </div>
+    </section>
+  )
+}
+
 export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) => {
-  const schemaTypes = useSessionStore((state) => state.schemaTypes)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabId>("nfs")
-  const [nfsRows, setNfsRows] = useState<CustosNfsResponse>([])
-  const [consolidadoRows, setConsolidadoRows] = useState<CustosConsolidadoResponse>([])
-  const [orcadoRealizadoRows, setOrcadoRealizadoRows] = useState<CustosOrcadoRealizadoResponse>([])
-  const [resumoRows, setResumoRows] = useState<CustosResumoResponse>([])
+  const [nfsRows, setNfsRows] = useState<GenericRow[]>([])
+  const [consolidadoRows, setConsolidadoRows] = useState<GenericRow[]>([])
+  const [orcadoRealizadoRows, setOrcadoRealizadoRows] = useState<OrcadoRealizadoItem[]>([])
+  const [resumoRows, setResumoRows] = useState<GenericRow[]>([])
   const [selectedNaturezas, setSelectedNaturezas] = useState<string[]>([])
   const [selectedConsolidadoNaturezas, setSelectedConsolidadoNaturezas] = useState<string[]>([])
-  const [fornecedorSearch, setFornecedorSearch] = useState("")
+  const [selectedSituacao, setSelectedSituacao] = useState("Todas")
   const [consolidadoFornecedorSearch, setConsolidadoFornecedorSearch] = useState("")
-  const [dateFrom, setDateFrom] = useState("")
-  const [dateTo, setDateTo] = useState("")
+  const [consolidadoDateFrom, setConsolidadoDateFrom] = useState("")
+  const [consolidadoDateTo, setConsolidadoDateTo] = useState("")
   const [selectedItem, setSelectedItem] = useState("")
-  const [nfsSort, setNfsSort] = useState<SortState>({ key: "DATA VENCTO", direction: "desc" })
-  const [consolidadoSort, setConsolidadoSort] = useState<SortState>({ key: "DATA VENCTO", direction: "desc" })
-  const [resumoSort, setResumoSort] = useState<SortState>({ key: "Nº CONSOLIDADO", direction: "asc" })
-  const [orcadoSort, setOrcadoSort] = useState<SortState>({ key: "item", direction: "asc" })
   const [nfsPage, setNfsPage] = useState(1)
   const [consolidadoPage, setConsolidadoPage] = useState(1)
-  const [resumoPage, setResumoPage] = useState(1)
 
   useEffect(() => {
     let active = true
@@ -165,10 +198,10 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
     setError(null)
 
     Promise.all([
-      fetchApiJson<CustosNfsResponse>(`/api/custos/${sessionId}/nfs`),
-      fetchApiJson<CustosConsolidadoResponse>(`/api/custos/${sessionId}/consolidado`),
-      fetchApiJson<CustosOrcadoRealizadoResponse>(`/api/custos/${sessionId}/orcado_realizado`),
-      fetchApiJson<CustosResumoResponse>(`/api/custos/${sessionId}/resumo`),
+      fetchApiJson<GenericRow[]>(`/api/custos/${sessionId}/nfs`),
+      fetchApiJson<GenericRow[]>(`/api/custos/${sessionId}/consolidado`),
+      fetchApiJson<OrcadoRealizadoItem[]>(`/api/custos/${sessionId}/orcado_realizado`),
+      fetchApiJson<GenericRow[]>(`/api/custos/${sessionId}/resumo`),
     ])
       .then(([nextNfs, nextConsolidado, nextOrcadoRealizado, nextResumo]) => {
         if (!active) return
@@ -191,191 +224,280 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
     }
   }, [sessionId])
 
+  const nfsColumns = useMemo(() => {
+    return {
+      consolidado: findColumn(nfsRows, ["NumConsolidado", "Nº CONSOLIDADO", "N CONSOLIDADO"]),
+      fornecedor: findColumn(nfsRows, ["Fornecedor", "FORNECEDOR"]),
+      nf: findColumn(nfsRows, ["NF"]),
+      natureza: findColumn(nfsRows, ["Natureza", "NATUREZA"]),
+      dataVencto: findColumn(nfsRows, ["DataVencto", "DATA VENCTO"]),
+      valor: findColumn(nfsRows, ["Valor", "VALOR"]),
+      situacao: findColumn(nfsRows, ["SituacaoPlanilha", "SITUACAO PLANILHA", "SITUACAO"]),
+      saldo: findColumn(nfsRows, ["SaldoPlanilha", "SALDO PLANILHA"]),
+    }
+  }, [nfsRows])
+
+  const consolidadoColumns = useMemo(() => {
+    return {
+      natureza: findColumn(consolidadoRows, ["Natureza", "NATUREZA"]),
+      fornecedor: findColumn(consolidadoRows, ["Fornecedor", "FORNECEDOR"]),
+      dataVencto: findColumn(consolidadoRows, ["DataVencto", "DATA VENCTO"]),
+      valor: findColumn(consolidadoRows, ["Valor", "VALOR"]),
+      apropriValor: findColumn(consolidadoRows, ["ApropriValor", "VALOR APROPRIADO"]),
+    }
+  }, [consolidadoRows])
+
+  const resumoColumns = useMemo(() => {
+    const keys = Object.keys(resumoRows[0] ?? {})
+    const totalGeral =
+      keys.find((key) => {
+        const normalized = normalizeText(key)
+        return normalized.includes("total") && normalized.includes("geral")
+      }) ?? null
+    const taxaAdm =
+      keys.find((key) => {
+        const normalized = normalizeText(key)
+        return normalized.includes("taxa") && normalized.includes("adm")
+      }) ?? null
+    const materialServico =
+      keys.find((key) => {
+        const normalized = normalizeText(key)
+        return normalized.includes("material") && normalized.includes("servico")
+      }) ?? null
+    const maoObraEmpreitada =
+      keys.find((key) => {
+        const normalized = normalizeText(key)
+        return normalized.includes("mao obra") && normalized.includes("empreitada")
+      }) ?? null
+    const maoObraTempo =
+      keys.find((key) => {
+        const normalized = normalizeText(key)
+        return normalized.includes("mao obra") && normalized.includes("tempo")
+      }) ?? null
+    return { totalGeral, taxaAdm, materialServico, maoObraEmpreitada, maoObraTempo, all: keys }
+  }, [resumoRows])
+
   const filteredNfs = useMemo(() => {
     return nfsRows.filter((row) => {
-      const natureza = String(row["NATUREZA"] ?? "")
-      const fornecedor = String(row["FORNECEDOR"] ?? "")
-      const vencto = parseDateValue(row["DATA VENCTO"])
+      const natureza = String(getValue(row, nfsColumns.natureza) ?? "").trim()
       const matchesNatureza = selectedNaturezas.length === 0 || selectedNaturezas.includes(natureza)
-      const matchesFornecedor = !fornecedorSearch || normalizeText(fornecedor).includes(normalizeText(fornecedorSearch))
-      const matchesFrom = !dateFrom || Number.isNaN(vencto) || vencto >= new Date(dateFrom).getTime()
-      const matchesTo = !dateTo || Number.isNaN(vencto) || vencto <= new Date(dateTo).getTime()
-      return matchesNatureza && matchesFornecedor && matchesFrom && matchesTo
+      const situacaoLabel = resolveSituacaoLabel(
+        getValue(row, nfsColumns.situacao),
+        getValue(row, nfsColumns.dataVencto),
+      )
+      const matchesSituacao = selectedSituacao === "Todas" || situacaoLabel === selectedSituacao
+      return matchesNatureza && matchesSituacao
     })
-  }, [dateFrom, dateTo, fornecedorSearch, nfsRows, selectedNaturezas])
+  }, [nfsColumns.dataVencto, nfsColumns.natureza, nfsColumns.situacao, nfsRows, selectedNaturezas, selectedSituacao])
 
   const filteredConsolidado = useMemo(() => {
     return consolidadoRows.filter((row) => {
-      const natureza = String(row["NATUREZA"] ?? "")
-      const fornecedor = String(row["FORNECEDOR"] ?? "")
-      const matchesNatureza = selectedConsolidadoNaturezas.length === 0 || selectedConsolidadoNaturezas.includes(natureza)
+      const natureza = String(getValue(row, consolidadoColumns.natureza) ?? "").trim()
+      const fornecedor = String(getValue(row, consolidadoColumns.fornecedor) ?? "").trim()
+      const dataVencto = parseDateValue(getValue(row, consolidadoColumns.dataVencto))
+      const matchesNatureza =
+        selectedConsolidadoNaturezas.length === 0 || selectedConsolidadoNaturezas.includes(natureza)
       const matchesFornecedor =
-        !consolidadoFornecedorSearch || normalizeText(fornecedor).includes(normalizeText(consolidadoFornecedorSearch))
-      return matchesNatureza && matchesFornecedor
+        !consolidadoFornecedorSearch ||
+        normalizeText(fornecedor).includes(normalizeText(consolidadoFornecedorSearch))
+      const matchesDateFrom = !consolidadoDateFrom || (dataVencto !== null && dataVencto >= new Date(`${consolidadoDateFrom}T00:00:00`))
+      const matchesDateTo = !consolidadoDateTo || (dataVencto !== null && dataVencto <= new Date(`${consolidadoDateTo}T23:59:59`))
+      return matchesNatureza && matchesFornecedor && matchesDateFrom && matchesDateTo
     })
-  }, [consolidadoFornecedorSearch, consolidadoRows, selectedConsolidadoNaturezas])
+  }, [
+    consolidadoColumns.dataVencto,
+    consolidadoColumns.fornecedor,
+    consolidadoColumns.natureza,
+    consolidadoDateFrom,
+    consolidadoDateTo,
+    consolidadoFornecedorSearch,
+    consolidadoRows,
+    selectedConsolidadoNaturezas,
+  ])
 
-  const naturezaChart = useMemo(() => {
-    const grouped = new Map<string, number>()
-    for (const row of filteredNfs) {
-      const natureza = String(row["NATUREZA"] ?? "Sem natureza")
-      grouped.set(natureza, (grouped.get(natureza) ?? 0) + parseNumber(row["VALOR"]))
-    }
-    return Array.from(grouped.entries()).map(([natureza, valor]) => ({ natureza, valor }))
-  }, [filteredNfs])
+  const naturezaOptions = useMemo(() => {
+    const values = Array.from(
+      new Set(
+        nfsRows
+          .map((row) => String(getValue(row, nfsColumns.natureza) ?? "").trim())
+          .filter(Boolean),
+      ),
+    )
+    const prioritized = NATUREZA_ORDER.filter((option) =>
+      values.some((value) => normalizeText(value) === normalizeText(option)),
+    )
+    const remaining = values.filter(
+      (value) => !prioritized.some((option) => normalizeText(option) === normalizeText(value)),
+    )
+    return [...prioritized, ...remaining]
+  }, [nfsColumns.natureza, nfsRows])
+
+  const consolidadoNaturezaOptions = useMemo(() => {
+    const values = Array.from(
+      new Set(
+        consolidadoRows
+          .map((row) => String(getValue(row, consolidadoColumns.natureza) ?? "").trim())
+          .filter(Boolean),
+      ),
+    )
+    const prioritized = NATUREZA_ORDER.filter((option) =>
+      values.some((value) => normalizeText(value) === normalizeText(option)),
+    )
+    const remaining = values.filter(
+      (value) => !prioritized.some((option) => normalizeText(option) === normalizeText(value)),
+    )
+    return [...prioritized, ...remaining]
+  }, [consolidadoColumns.natureza, consolidadoRows])
 
   const nfsKpis = useMemo(() => {
-    const totalValor = filteredNfs.reduce((sum, row) => sum + parseNumber(row["VALOR"]), 0)
+    const totalValor = filteredNfs.reduce((sum, row) => sum + parseNumber(getValue(row, nfsColumns.valor)), 0)
     const valorEmAberto = filteredNfs.reduce((sum, row) => {
-      return normalizeText(row["SITUAÇÃO PLANILHA"]).includes("aberto") ? sum + parseNumber(row["VALOR"]) : sum
+      const situacao = resolveSituacaoLabel(getValue(row, nfsColumns.situacao), getValue(row, nfsColumns.dataVencto))
+      return situacao === "A PAGAR" || situacao === "VENCIDO"
+        ? sum + parseNumber(getValue(row, nfsColumns.valor))
+        : sum
     }, 0)
-    const fornecedores = new Set(filteredNfs.map((row) => String(row["FORNECEDOR"] ?? "").trim()).filter(Boolean))
+    const fornecedores = new Set(
+      filteredNfs
+        .map((row) => String(getValue(row, nfsColumns.fornecedor) ?? "").trim())
+        .filter(Boolean),
+    )
     return {
       totalNfs: filteredNfs.length,
       totalValor,
       valorEmAberto,
       fornecedores: fornecedores.size,
     }
-  }, [filteredNfs])
+  }, [filteredNfs, nfsColumns.dataVencto, nfsColumns.fornecedor, nfsColumns.situacao, nfsColumns.valor])
+
+  const naturezaChart = useMemo(() => {
+    const grouped = new Map<string, number>()
+    for (const row of filteredNfs) {
+      const natureza = String(getValue(row, nfsColumns.natureza) ?? "Sem natureza").trim() || "Sem natureza"
+      grouped.set(natureza, (grouped.get(natureza) ?? 0) + parseNumber(getValue(row, nfsColumns.valor)))
+    }
+    return Array.from(grouped.entries())
+      .map(([natureza, valor]) => ({ natureza, valor }))
+      .sort((left, right) => right.valor - left.valor)
+  }, [filteredNfs, nfsColumns.natureza, nfsColumns.valor])
 
   const consolidadoKpis = useMemo(() => {
     return {
-      totalPagamentos: filteredConsolidado.length,
-      totalValor: filteredConsolidado.reduce((sum, row) => sum + parseNumber(row["VALOR"]), 0),
-      valorApropriado: filteredConsolidado.reduce((sum, row) => sum + parseNumber(row["VALOR APROPRIADO"]), 0),
+      pagamentos: filteredConsolidado.length,
+      valorTotal: filteredConsolidado.reduce(
+        (sum, row) => sum + parseNumber(getValue(row, consolidadoColumns.valor)),
+        0,
+      ),
+      valorApropriado: filteredConsolidado.reduce(
+        (sum, row) => sum + parseNumber(getValue(row, consolidadoColumns.apropriValor)),
+        0,
+      ),
     }
-  }, [filteredConsolidado])
+  }, [consolidadoColumns.apropriValor, consolidadoColumns.valor, filteredConsolidado])
 
   const orcadoSummaryRows = useMemo(() => {
     return orcadoRealizadoRows.map((row) => {
-      const desembolsoTotal = row.periodos.reduce((sum, periodo) => sum + periodo.desembolso, 0)
+      const realizado = row.periodos.reduce((sum, periodo) => sum + Number(periodo.desembolso || 0), 0)
       return {
         item: row.item,
         descricao: row.descricao,
-        verba_total: row.verba_total,
-        desembolso_total: desembolsoTotal,
-        saldo: row.verba_total - desembolsoTotal,
+        verbaTotal: row.verba_total,
+        realizado,
+        saldo: row.verba_total - realizado,
       }
     })
   }, [orcadoRealizadoRows])
 
-  const selectedOrcadoItem = useMemo(
-    () => orcadoRealizadoRows.find((row) => row.item === selectedItem) ?? orcadoRealizadoRows[0] ?? null,
-    [orcadoRealizadoRows, selectedItem],
-  )
+  const selectedOrcadoItem = useMemo(() => {
+    return orcadoRealizadoRows.find((row) => row.item === selectedItem) ?? orcadoRealizadoRows[0] ?? null
+  }, [orcadoRealizadoRows, selectedItem])
 
-  const orcadoChartData = useMemo(() => {
+  const orcadoChartRows = useMemo(() => {
     if (!selectedOrcadoItem) return []
     return selectedOrcadoItem.periodos
       .slice()
       .sort((left, right) => left.periodo - right.periodo)
       .map((periodo) => ({
-        periodo: String(periodo.periodo),
+        periodo: periodo.periodo,
         verba: selectedOrcadoItem.verba_total,
-        desembolso: periodo.desembolso,
+        desembolso: Number(periodo.desembolso || 0),
       }))
   }, [selectedOrcadoItem])
 
   const resumoKpis = useMemo(() => {
     return {
-      totalGeral: resumoRows.reduce((sum, row) => sum + parseNumber(row["TOTAL GERAL"]), 0),
-      taxaAdministracao: resumoRows.reduce((sum, row) => sum + parseNumber(row["TAXA ADMINISTRAÇÃO"]), 0),
+      totalGeral: resumoRows.reduce(
+        (sum, row) => sum + parseNumber(getValue(row, resumoColumns.totalGeral)),
+        0,
+      ),
+      totalMaterialServico: resumoRows.reduce(
+        (sum, row) => sum + parseNumber(getValue(row, resumoColumns.materialServico)),
+        0,
+      ),
+      totalMaoObra: resumoRows.reduce(
+        (sum, row) =>
+          sum +
+          parseNumber(getValue(row, resumoColumns.maoObraEmpreitada)) +
+          parseNumber(getValue(row, resumoColumns.maoObraTempo)),
+        0,
+      ),
+      taxaAdministracao: resumoRows.reduce(
+        (sum, row) => sum + parseNumber(getValue(row, resumoColumns.taxaAdm)),
+        0,
+      ),
     }
-  }, [resumoRows])
+  }, [
+    resumoColumns.maoObraEmpreitada,
+    resumoColumns.maoObraTempo,
+    resumoColumns.materialServico,
+    resumoColumns.taxaAdm,
+    resumoColumns.totalGeral,
+    resumoRows,
+  ])
 
-  const sortedNfs = useMemo(() => sortRows(filteredNfs as TableRow[], nfsSort), [filteredNfs, nfsSort])
-  const sortedConsolidado = useMemo(
-    () => sortRows(filteredConsolidado as TableRow[], consolidadoSort),
-    [consolidadoSort, filteredConsolidado],
-  )
-  const sortedResumo = useMemo(() => sortRows(resumoRows as TableRow[], resumoSort), [resumoRows, resumoSort])
-  const sortedOrcadoSummary = useMemo(
-    () => sortRows(orcadoSummaryRows as TableRow[], orcadoSort),
-    [orcadoSort, orcadoSummaryRows],
-  )
+  const pagedNfs = paginateRows(filteredNfs, nfsPage)
+  const pagedConsolidado = paginateRows(filteredConsolidado, consolidadoPage)
 
-  const pagedNfs = paginateRows(sortedNfs, nfsPage)
-  const pagedConsolidado = paginateRows(sortedConsolidado, consolidadoPage)
-  const pagedResumo = paginateRows(sortedResumo, resumoPage)
-
-  const availableNaturezas = useMemo(() => {
-    const values = new Set<string>()
-    for (const row of nfsRows) {
-      const natureza = String(row["NATUREZA"] ?? "").trim()
-      if (natureza) values.add(natureza)
-    }
-    return NATUREZA_OPTIONS.filter((option) => values.has(option)).concat(
-      Array.from(values).filter((value) => !NATUREZA_OPTIONS.includes(value)),
-    )
-  }, [nfsRows])
-
-  const availableConsolidadoNaturezas = useMemo(() => {
-    const values = new Set<string>()
-    for (const row of consolidadoRows) {
-      const natureza = String(row["NATUREZA"] ?? "").trim()
-      if (natureza) values.add(natureza)
-    }
-    return NATUREZA_OPTIONS.filter((option) => values.has(option)).concat(
-      Array.from(values).filter((value) => !NATUREZA_OPTIONS.includes(value)),
-    )
-  }, [consolidadoRows])
-
-  const handleSort = (current: SortState, setSort: (next: SortState) => void, key: string) => {
-    setSort({
-      key,
-      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
-    })
+  const handleResumoExport = () => {
+    fetch(`/api/export/${sessionId}`)
+      .then((response) => response.blob())
+      .then((blob) => {
+        const anchor = document.createElement("a")
+        anchor.href = URL.createObjectURL(blob)
+        anchor.download = "export.xlsx"
+        anchor.click()
+      })
   }
 
-  const handleExport = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/export/${sessionId}`)
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement("a")
-      anchor.href = url
-      anchor.download = "custos_export.xlsx"
-      anchor.click()
-      URL.revokeObjectURL(url)
-    } catch (exportError) {
-      console.error("Erro ao exportar custos", exportError)
-    }
-  }
+  if (loading) return <DashboardSkeleton />
 
-  if (loading) {
-    return <div style={{ color: "#cbd5e1" }}>Carregando dashboard de custos...</div>
-  }
-
-  if (error || (nfsRows.length === 0 && consolidadoRows.length === 0 && resumoRows.length === 0)) {
-    return (
-      <EmptyState
-        schemaRequired="custos"
-        requiredColumns={SCHEMA_REQUIRED_COLUMNS.custos}
-        uploadedSchemas={schemaTypes}
-      />
-    )
+  if (error) {
+    return <EmptyTabMessage message={error} />
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: 24, color: "#f8fafc" }}>Custos</h2>
-        <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 14 }}>
-          NFs, consolidado, orçamento realizado e resumo financeiro do arquivo enviado.
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#f1f5f9" }}>Controle de Custos</h2>
+        <p style={{ margin: "4px 0 0", fontSize: 13, color: "#94a3b8" }}>
+          NFs, consolidado, orcado x realizado e resumo financeiro do arquivo enviado.
         </p>
       </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: 8, gap: 16 }}>
         {TAB_LABELS.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
             style={{
-              ...tabButtonStyle,
-              background: activeTab === tab.id ? "#cbbba0" : "#1e293b",
-              color: activeTab === tab.id ? "#0b4f3a" : "#f8fafc",
+              border: "none",
+              background: "transparent",
+              borderBottom: activeTab === tab.id ? "2px solid #0b4f3a" : "2px solid transparent",
+              color: activeTab === tab.id ? "#0b4f3a" : "#64748b",
+              fontWeight: activeTab === tab.id ? 700 : 600,
+              padding: "0 2px 10px",
+              cursor: "pointer",
             }}
           >
             {tab.label}
@@ -384,60 +506,84 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
       </div>
 
       {activeTab === "nfs" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-            <Card label="Total NFs" value={nfsKpis.totalNfs.toLocaleString("pt-BR")} />
-            <Card label="Valor Total" value={formatCurrency(nfsKpis.totalValor)} />
-            <Card label="Valor em Aberto" value={formatCurrency(nfsKpis.valorEmAberto)} />
-            <Card label="Nº de Fornecedores" value={nfsKpis.fornecedores.toLocaleString("pt-BR")} />
+            {[
+              { label: "Total NFs", value: nfsKpis.totalNfs.toLocaleString("pt-BR") },
+              { label: "Valor Total", value: formatCurrency(nfsKpis.totalValor) },
+              { label: "Valor em Aberto", value: formatCurrency(nfsKpis.valorEmAberto) },
+              { label: "Fornecedores", value: nfsKpis.fornecedores.toLocaleString("pt-BR") },
+            ].map((card) => (
+              <div key={card.label} style={metricCardStyle}>
+                <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>
+                  {card.label}
+                </p>
+                <p style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 800, color: "#0b4f3a" }}>{card.value}</p>
+              </div>
+            ))}
           </div>
 
           <section style={panelStyle}>
-            <div style={filterRowStyle}>
+            <h3 style={panelTitleStyle}>Valor por Natureza</h3>
+            <ResponsiveContainer width="100%" height={320}>
+              <BarChart data={naturezaChart} layout="vertical" margin={{ top: 8, right: 20, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={(value: number) => `R$ ${(value / 1000).toFixed(0)}k`} />
+                <YAxis type="category" dataKey="natureza" width={180} tick={{ fill: "#0f172a", fontSize: 11 }} />
+                <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
+                <Bar dataKey="valor" fill="#0b4f3a" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </section>
+
+          <div style={filterPanelStyle}>
+            <label style={filterLabelStyle}>
+              Natureza
               <select
                 multiple
                 value={selectedNaturezas}
                 onChange={(event) => {
-                  setSelectedNaturezas(Array.from(event.target.selectedOptions, (option) => option.value))
+                  setSelectedNaturezas(selectMultiValues(event.currentTarget.options))
                   setNfsPage(1)
                 }}
-                style={{ ...inputStyle, minHeight: 120 }}
+                style={filterSelectStyle}
               >
-                {availableNaturezas.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
+                {naturezaOptions.map((natureza) => (
+                  <option key={natureza} value={natureza}>
+                    {natureza}
                   </option>
                 ))}
               </select>
-              <input
-                type="text"
-                value={fornecedorSearch}
+            </label>
+            <label style={filterLabelStyle}>
+              Situacao
+              <select
+                value={selectedSituacao}
                 onChange={(event) => {
-                  setFornecedorSearch(event.target.value)
+                  setSelectedSituacao(event.target.value)
                   setNfsPage(1)
                 }}
-                placeholder="Buscar fornecedor"
-                style={inputStyle}
-              />
-              <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} style={inputStyle} />
-              <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} style={inputStyle} />
-            </div>
-
-            <h3 style={panelTitleStyle}>Valor por Natureza</h3>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={naturezaChart}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.16)" />
-                <XAxis dataKey="natureza" tick={{ fill: "#cbd5e1", fontSize: 12 }} />
-                <YAxis tick={{ fill: "#cbd5e1", fontSize: 12 }} tickFormatter={(value: number) => `R$ ${(value / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
-                <Bar dataKey="valor" radius={[8, 8, 0, 0]}>
-                  {naturezaChart.map((entry) => (
-                    <Cell key={entry.natureza} fill={NATUREZA_COLORS[entry.natureza] ?? "#94a3b8"} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </section>
+                style={filterInputStyle}
+              >
+                {SITUACAO_OPTIONS.map((situacao) => (
+                  <option key={situacao} value={situacao}>
+                    {situacao}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedNaturezas([])
+                setSelectedSituacao("Todas")
+                setNfsPage(1)
+              }}
+              style={resetButtonStyle}
+            >
+              Limpar Filtros
+            </button>
+          </div>
 
           <section style={panelStyle}>
             <h3 style={panelTitleStyle}>Tabela de NFs</h3>
@@ -446,48 +592,36 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                 <thead>
                   <tr>
                     {[
-                      "Nº CONSOLIDADO",
-                      "COD",
-                      "FORNECEDOR",
-                      "NF",
-                      "MAPA PREÇOS",
-                      "NATUREZA",
-                      "BOLETO/DEPÓSITO",
-                      "DATA VENCTO",
-                      "VALOR",
-                      "SITUAÇÃO PLANILHA",
-                      "SALDO PLANILHA",
-                    ].map((column) => (
-                      <th key={column} style={thStyle}>
-                        <button type="button" onClick={() => handleSort(nfsSort, setNfsSort, column)} style={sortButtonStyle}>
-                          {column}
-                        </button>
+                      ["NumConsolidado", nfsColumns.consolidado],
+                      ["Fornecedor", nfsColumns.fornecedor],
+                      ["NF", nfsColumns.nf],
+                      ["Natureza", nfsColumns.natureza],
+                      ["DataVencto", nfsColumns.dataVencto],
+                      ["Valor", nfsColumns.valor],
+                      ["SituacaoPlanilha", nfsColumns.situacao],
+                      ["SaldoPlanilha", nfsColumns.saldo],
+                    ].map(([label, column]) => (
+                      <th key={label} style={thStyle}>
+                        {column ?? label}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {pagedNfs.rows.map((row, index) => (
-                    <tr key={`${row["NF"]}-${index}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.28)" : "transparent" }}>
-                      {[
-                        "Nº CONSOLIDADO",
-                        "COD",
-                        "FORNECEDOR",
-                        "NF",
-                        "MAPA PREÇOS",
-                        "NATUREZA",
-                        "BOLETO/DEPÓSITO",
-                        "DATA VENCTO",
-                        "VALOR",
-                        "SITUAÇÃO PLANILHA",
-                        "SALDO PLANILHA",
-                      ].map((column) => (
-                        <td key={column} style={tdStyle}>
-                          {column === "VALOR" || column === "SALDO PLANILHA"
-                            ? formatCurrency(parseNumber(row[column]))
-                            : String(row[column] ?? "-")}
-                        </td>
-                      ))}
+                    <tr key={`${getValue(row, nfsColumns.nf)}-${index}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.02)" : "transparent" }}>
+                      <td style={tdStyle}>{String(getValue(row, nfsColumns.consolidado) ?? "-")}</td>
+                      <td style={tdStyle}>{String(getValue(row, nfsColumns.fornecedor) ?? "-")}</td>
+                      <td style={tdStyle}>{String(getValue(row, nfsColumns.nf) ?? "-")}</td>
+                      <td style={tdStyle}>{String(getValue(row, nfsColumns.natureza) ?? "-")}</td>
+                      <td style={tdStyle}>{formatDate(getValue(row, nfsColumns.dataVencto))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>
+                        {formatCurrency(parseNumber(getValue(row, nfsColumns.valor)))}
+                      </td>
+                      <td style={tdStyle}>{String(getValue(row, nfsColumns.situacao) ?? "-")}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>
+                        {formatCurrency(parseNumber(getValue(row, nfsColumns.saldo)))}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -499,30 +633,43 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
       )}
 
       {activeTab === "consolidado" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
-            <Card label="Total Pagamentos" value={consolidadoKpis.totalPagamentos.toLocaleString("pt-BR")} />
-            <Card label="Valor Total" value={formatCurrency(consolidadoKpis.totalValor)} />
-            <Card label="Valor Apropriado Total" value={formatCurrency(consolidadoKpis.valorApropriado)} />
+            {[
+              { label: "Pagamentos", value: consolidadoKpis.pagamentos.toLocaleString("pt-BR") },
+              { label: "Valor Total", value: formatCurrency(consolidadoKpis.valorTotal) },
+              { label: "Valor Apropriado", value: formatCurrency(consolidadoKpis.valorApropriado) },
+            ].map((card) => (
+              <div key={card.label} style={metricCardStyle}>
+                <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>
+                  {card.label}
+                </p>
+                <p style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 800, color: "#0b4f3a" }}>{card.value}</p>
+              </div>
+            ))}
           </div>
 
-          <section style={panelStyle}>
-            <div style={filterRowStyle}>
+          <div style={filterPanelStyle}>
+            <label style={filterLabelStyle}>
+              Natureza
               <select
                 multiple
                 value={selectedConsolidadoNaturezas}
                 onChange={(event) => {
-                  setSelectedConsolidadoNaturezas(Array.from(event.target.selectedOptions, (option) => option.value))
+                  setSelectedConsolidadoNaturezas(selectMultiValues(event.currentTarget.options))
                   setConsolidadoPage(1)
                 }}
-                style={{ ...inputStyle, minHeight: 120 }}
+                style={filterSelectStyle}
               >
-                {availableConsolidadoNaturezas.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
+                {consolidadoNaturezaOptions.map((natureza) => (
+                  <option key={natureza} value={natureza}>
+                    {natureza}
                   </option>
                 ))}
               </select>
+            </label>
+            <label style={filterLabelStyle}>
+              Fornecedor
               <input
                 type="text"
                 value={consolidadoFornecedorSearch}
@@ -531,56 +678,82 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                   setConsolidadoPage(1)
                 }}
                 placeholder="Buscar fornecedor"
-                style={inputStyle}
+                style={filterInputStyle}
               />
-            </div>
+            </label>
+            <label style={filterLabelStyle}>
+              Data Vencto de
+              <input
+                type="date"
+                value={consolidadoDateFrom}
+                onChange={(event) => {
+                  setConsolidadoDateFrom(event.target.value)
+                  setConsolidadoPage(1)
+                }}
+                style={dateInputStyle}
+              />
+            </label>
+            <label style={filterLabelStyle}>
+              ate
+              <input
+                type="date"
+                value={consolidadoDateTo}
+                onChange={(event) => {
+                  setConsolidadoDateTo(event.target.value)
+                  setConsolidadoPage(1)
+                }}
+                style={dateInputStyle}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedConsolidadoNaturezas([])
+                setConsolidadoFornecedorSearch("")
+                setConsolidadoDateFrom("")
+                setConsolidadoDateTo("")
+                setConsolidadoPage(1)
+              }}
+              style={resetButtonStyle}
+            >
+              Limpar Filtros
+            </button>
+          </div>
 
+          <section style={panelStyle}>
             <h3 style={panelTitleStyle}>Tabela Consolidada</h3>
+            <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 13 }}>
+              Exibindo {filteredConsolidado.length.toLocaleString("pt-BR")} de {consolidadoRows.length.toLocaleString("pt-BR")} registros - Total: {formatCurrency(consolidadoKpis.valorTotal)}
+            </p>
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
                 <thead>
                   <tr>
-                    {[
-                      "Nº CONSOLIDADO",
-                      "FORNECEDOR",
-                      "NF",
-                      "MAPA",
-                      "NATUREZA",
-                      "COND.PAGTO",
-                      "DATA VENCTO",
-                      "VALOR",
-                      "ITEM APROPRIAÇÃO",
-                      "VALOR APROPRIADO",
-                    ].map((column) => (
+                    {Object.keys(consolidadoRows[0] ?? {}).map((column) => (
                       <th key={column} style={thStyle}>
-                        <button type="button" onClick={() => handleSort(consolidadoSort, setConsolidadoSort, column)} style={sortButtonStyle}>
-                          {column}
-                        </button>
+                        {column}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {pagedConsolidado.rows.map((row, index) => (
-                    <tr key={`${row["NF"]}-${index}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.28)" : "transparent" }}>
-                      {[
-                        "Nº CONSOLIDADO",
-                        "FORNECEDOR",
-                        "NF",
-                        "MAPA",
-                        "NATUREZA",
-                        "COND.PAGTO",
-                        "DATA VENCTO",
-                        "VALOR",
-                        "ITEM APROPRIAÇÃO",
-                        "VALOR APROPRIADO",
-                      ].map((column) => (
-                        <td key={column} style={tdStyle}>
-                          {column === "VALOR" || column === "VALOR APROPRIADO"
-                            ? formatCurrency(parseNumber(row[column]))
-                            : String(row[column] ?? "-")}
-                        </td>
-                      ))}
+                    <tr key={`${index}-${String(getValue(row, consolidadoColumns.fornecedor) ?? "")}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.02)" : "transparent" }}>
+                      {Object.keys(consolidadoRows[0] ?? {}).map((column) => {
+                        const normalized = normalizeText(column)
+                        const cell = row[column]
+                        const isDate = normalized.includes("data")
+                        const isCurrency = normalized.includes("valor")
+                        return (
+                          <td key={column} style={{ ...tdStyle, textAlign: isCurrency ? "right" : "left" }}>
+                            {isDate
+                              ? formatDate(cell)
+                              : isCurrency
+                                ? formatCurrency(parseNumber(cell))
+                                : String(cell ?? "-")}
+                          </td>
+                        )
+                      })}
                     </tr>
                   ))}
                 </tbody>
@@ -592,76 +765,104 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
       )}
 
       {activeTab === "orcado-realizado" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <section style={panelStyle}>
-            <div style={filterRowStyle}>
-              <select value={selectedOrcadoItem?.item ?? ""} onChange={(event) => setSelectedItem(event.target.value)} style={inputStyle}>
-                {orcadoRealizadoRows.map((row) => (
-                  <option key={row.item} value={row.item}>
-                    {row.item} - {row.descricao}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <h3 style={panelTitleStyle}>Verba × Desembolso por Período</h3>
-            <ResponsiveContainer width="100%" height={320}>
-              <LineChart data={orcadoChartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.16)" />
-                <XAxis dataKey="periodo" tick={{ fill: "#cbd5e1", fontSize: 12 }} />
-                <YAxis tick={{ fill: "#cbd5e1", fontSize: 12 }} tickFormatter={(value: number) => `R$ ${(value / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
-                <Line type="monotone" dataKey="verba" stroke="#cbbba0" strokeWidth={3} dot={{ r: 3 }} />
-                <Line type="monotone" dataKey="desembolso" stroke="#34d399" strokeWidth={3} dot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </section>
-
-          <section style={panelStyle}>
-            <h3 style={panelTitleStyle}>Resumo de Itens</h3>
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    {["item", "descricao", "verba_total", "desembolso_total", "saldo"].map((column) => (
-                      <th key={column} style={thStyle}>
-                        <button type="button" onClick={() => handleSort(orcadoSort, setOrcadoSort, column)} style={sortButtonStyle}>
-                          {column.replace(/_/g, " ").toUpperCase()}
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedOrcadoSummary.map((row, index) => (
-                    <tr key={`${row.item}-${index}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.28)" : "transparent" }}>
-                      <td style={tdStyle}>{String(row.item)}</td>
-                      <td style={tdStyle}>{String(row.descricao)}</td>
-                      <td style={tdStyle}>{formatCurrency(parseNumber(row.verba_total))}</td>
-                      <td style={tdStyle}>{formatCurrency(parseNumber(row.desembolso_total))}</td>
-                      <td style={{ ...tdStyle, color: parseNumber(row.saldo) < 0 ? "#f87171" : "#4ade80", fontWeight: 800 }}>
-                        {formatCurrency(parseNumber(row.saldo))}
-                      </td>
-                    </tr>
+        orcadoRealizadoRows.length === 0 ? (
+          <EmptyTabMessage message="Dados de Orcado x Realizado nao disponiveis neste arquivo." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={filterPanelStyle}>
+              <label style={filterLabelStyle}>
+                ITEM
+                <select
+                  value={selectedOrcadoItem?.item ?? ""}
+                  onChange={(event) => setSelectedItem(event.target.value)}
+                  style={filterInputStyle}
+                >
+                  {orcadoRealizadoRows.map((row) => (
+                    <option key={row.item} value={row.item}>
+                      {row.item} - {row.descricao}
+                    </option>
                   ))}
-                </tbody>
-              </table>
+                </select>
+              </label>
             </div>
-          </section>
-        </div>
+
+            <section style={panelStyle}>
+              <h3 style={panelTitleStyle}>Verba x Desembolso</h3>
+              <ResponsiveContainer width="100%" height={320}>
+                <LineChart data={orcadoChartRows}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="periodo" tick={{ fill: "#64748b", fontSize: 11 }} />
+                  <YAxis tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={(value: number) => `R$ ${(value / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
+                  <Line type="monotone" dataKey="verba" stroke="#0b4f3a" strokeWidth={3} dot={false} />
+                  <Line type="monotone" dataKey="desembolso" stroke="#4f8ef7" strokeWidth={3} dot={{ r: 4 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </section>
+
+            <section style={panelStyle}>
+              <h3 style={panelTitleStyle}>Resumo</h3>
+              <div style={{ overflowX: "auto" }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      {["ITEM", "DESCRICAO", "VERBA TOTAL", "REALIZADO", "SALDO"].map((column) => (
+                        <th key={column} style={thStyle}>
+                          {column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orcadoSummaryRows.map((row) => (
+                      <tr key={row.item}>
+                        <td style={tdStyle}>{row.item}</td>
+                        <td style={tdStyle}>{row.descricao}</td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>{formatCurrency(row.verbaTotal)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>{formatCurrency(row.realizado)}</td>
+                        <td
+                          style={{
+                            ...tdStyle,
+                            textAlign: "right",
+                            fontWeight: 800,
+                            background: row.saldo < 0 ? "rgba(248,113,113,0.18)" : "rgba(34,197,94,0.18)",
+                            color: row.saldo < 0 ? "#991b1b" : "#166534",
+                          }}
+                        >
+                          {formatCurrency(row.saldo)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        )
       )}
 
       {activeTab === "resumo" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-            <Card label="TOTAL GERAL" value={formatCurrency(resumoKpis.totalGeral)} />
-            <Card label="TAXA ADMINISTRAÇÃO" value={formatCurrency(resumoKpis.taxaAdministracao)} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+            {[
+              { label: "Total Geral", value: formatCurrency(resumoKpis.totalGeral) },
+              { label: "Total Material / Servico", value: formatCurrency(resumoKpis.totalMaterialServico) },
+              { label: "Total Mao Obra", value: formatCurrency(resumoKpis.totalMaoObra) },
+              { label: "Taxa Adm Total", value: formatCurrency(resumoKpis.taxaAdministracao) },
+            ].map((card) => (
+              <div key={card.label} style={metricCardStyle}>
+                <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>
+                  {card.label}
+                </p>
+                <p style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 800, color: "#0b4f3a" }}>{card.value}</p>
+              </div>
+            ))}
           </div>
 
           <section style={panelStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
               <h3 style={{ ...panelTitleStyle, margin: 0 }}>Resumo Consolidado</h3>
-              <button type="button" onClick={handleExport} style={primaryButtonStyle}>
+              <button type="button" onClick={handleResumoExport} style={resetButtonStyle}>
                 Exportar
               </button>
             </div>
@@ -670,60 +871,43 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
               <table style={tableStyle}>
                 <thead>
                   <tr>
-                    {[
-                      "Nº CONSOLIDADO",
-                      "MATERIAL/SERVIÇO",
-                      "MÃO OBRA EMPREITADA",
-                      "MÃO OBRA TEMPO",
-                      "STAFF",
-                      "SERVIÇO sem TAXA ADM",
-                      "TOTAL",
-                      "TAXA ADMINISTRAÇÃO",
-                      "DATA VENCTO",
-                      "DATA RECBTO",
-                      "TOTAL GERAL",
-                    ].map((column) => (
+                    {resumoColumns.all.map((column) => (
                       <th key={column} style={thStyle}>
-                        <button type="button" onClick={() => handleSort(resumoSort, setResumoSort, column)} style={sortButtonStyle}>
-                          {column}
-                        </button>
+                        {column}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {pagedResumo.rows.map((row, index) => (
-                    <tr key={`${row["Nº CONSOLIDADO"]}-${index}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.28)" : "transparent" }}>
-                      {[
-                        "Nº CONSOLIDADO",
-                        "MATERIAL/SERVIÇO",
-                        "MÃO OBRA EMPREITADA",
-                        "MÃO OBRA TEMPO",
-                        "STAFF",
-                        "SERVIÇO sem TAXA ADM",
-                        "TOTAL",
-                        "TAXA ADMINISTRAÇÃO",
-                        "DATA VENCTO",
-                        "DATA RECBTO",
-                        "TOTAL GERAL",
-                      ].map((column) => (
-                        <td key={column} style={tdStyle}>
-                          {column.includes("SERVIÇO") ||
-                          column.includes("MÃO") ||
-                          column === "STAFF" ||
-                          column === "TOTAL" ||
-                          column === "TAXA ADMINISTRAÇÃO" ||
-                          column === "TOTAL GERAL"
-                            ? formatCurrency(parseNumber(row[column]))
-                            : String(row[column] ?? "-")}
-                        </td>
-                      ))}
+                  {resumoRows.map((row, index) => (
+                    <tr key={`${index}-${String(row[resumoColumns.all[0] ?? ""] ?? "")}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.02)" : "transparent" }}>
+                      {resumoColumns.all.map((column) => {
+                        const normalized = normalizeText(column)
+                        const cell = row[column]
+                        const isDate = normalized.includes("data")
+                        const isCurrency =
+                          !normalized.includes("%") &&
+                          (normalized.includes("total") ||
+                            normalized.includes("taxa") ||
+                            normalized.includes("material") ||
+                            normalized.includes("obra") ||
+                            normalized.includes("staff") ||
+                            normalized.includes("servico"))
+                        return (
+                          <td key={column} style={{ ...tdStyle, textAlign: isCurrency ? "right" : "left" }}>
+                            {isDate
+                              ? formatDate(cell)
+                              : isCurrency
+                                ? formatCurrency(parseNumber(cell))
+                                : String(cell ?? "-")}
+                          </td>
+                        )
+                      })}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <Pagination page={pagedResumo.page} totalPages={pagedResumo.totalPages} onChange={setResumoPage} />
           </section>
         </div>
       )}
@@ -731,49 +915,113 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
   )
 }
 
-const tabButtonStyle: React.CSSProperties = {
-  border: "1px solid rgba(203,187,160,0.28)",
-  borderRadius: 999,
-  padding: "10px 16px",
+const skeletonStyle = `
+  @keyframes custos-wave {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+`
+
+const cardSkeletonStyle: React.CSSProperties = {
+  height: 110,
+  borderRadius: 16,
+  background: "linear-gradient(90deg, rgba(226,232,240,0.8), rgba(241,245,249,0.95), rgba(226,232,240,0.8))",
+  backgroundSize: "200% 100%",
+  animation: "custos-wave 1.4s ease infinite",
+}
+
+const panelSkeletonStyle: React.CSSProperties = {
+  ...cardSkeletonStyle,
+  height: 280,
+}
+
+const filterSkeletonStyle: React.CSSProperties = {
+  ...cardSkeletonStyle,
+  height: 88,
+}
+
+const filterPanelStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 12,
+  flexWrap: "wrap",
+  alignItems: "flex-end",
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.12)",
+  borderRadius: 12,
+  padding: 16,
+}
+
+const filterLabelStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  minWidth: 220,
+  color: "#64748b",
+  fontSize: 11,
+  fontWeight: 800,
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+}
+
+const filterInputStyle: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.18)",
+  borderRadius: 8,
+  color: "#0f172a",
+  padding: "8px 10px",
+  fontSize: 13,
+  height: 38,
+}
+
+const filterSelectStyle: React.CSSProperties = {
+  width: 220,
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.18)",
+  borderRadius: 8,
+  color: "#0f172a",
+  padding: "8px 10px",
+  fontSize: 13,
+  minHeight: 90,
+}
+
+const dateInputStyle: React.CSSProperties = {
+  border: "1px solid rgba(11,79,58,0.18)",
+  borderRadius: 8,
+  padding: "8px 10px",
+  fontSize: 13,
+  height: 38,
+}
+
+const resetButtonStyle: React.CSSProperties = {
+  background: "#0b4f3a",
+  color: "#fff",
+  border: "none",
+  borderRadius: 8,
+  padding: "9px 14px",
   fontWeight: 800,
   cursor: "pointer",
 }
 
 const metricCardStyle: React.CSSProperties = {
-  background: "#1e293b",
-  borderRadius: 16,
-  border: "1px solid rgba(203,187,160,0.18)",
-  padding: "18px 16px",
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.12)",
+  borderRadius: 12,
+  padding: "16px 20px",
 }
 
 const panelStyle: React.CSSProperties = {
-  background: "#1e293b",
-  borderRadius: 20,
-  border: "1px solid rgba(203,187,160,0.18)",
-  padding: 18,
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.12)",
+  borderRadius: 12,
+  padding: 20,
+  boxShadow: "0 2px 8px rgba(11,79,58,0.08)",
 }
 
 const panelTitleStyle: React.CSSProperties = {
-  margin: "0 0 14px",
-  fontSize: 18,
+  margin: "0 0 16px",
+  fontSize: 16,
   fontWeight: 800,
-  color: "#f8fafc",
-}
-
-const filterRowStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 10,
-  flexWrap: "wrap",
-  marginBottom: 16,
-}
-
-const inputStyle: React.CSSProperties = {
-  borderRadius: 12,
-  border: "1px solid rgba(148,163,184,0.26)",
-  padding: "10px 12px",
-  background: "#0f172a",
-  color: "#f8fafc",
-  minWidth: 180,
+  color: "#0f172a",
 }
 
 const tableStyle: React.CSSProperties = {
@@ -783,45 +1031,27 @@ const tableStyle: React.CSSProperties = {
 
 const thStyle: React.CSSProperties = {
   textAlign: "left",
-  padding: "12px 10px",
-  fontSize: 12,
-  color: "#94a3b8",
+  padding: "10px 12px",
+  borderBottom: "1px solid #e2e8f0",
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#64748b",
   textTransform: "uppercase",
-  borderBottom: "1px solid rgba(148,163,184,0.18)",
-}
-
-const tdStyle: React.CSSProperties = {
-  padding: "12px 10px",
-  fontSize: 14,
-  color: "#f8fafc",
-  borderBottom: "1px solid rgba(148,163,184,0.12)",
   whiteSpace: "nowrap",
 }
 
-const sortButtonStyle: React.CSSProperties = {
-  border: "none",
-  background: "transparent",
-  color: "inherit",
-  font: "inherit",
-  cursor: "pointer",
-  padding: 0,
+const tdStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  borderBottom: "1px solid #e2e8f0",
+  color: "#0f172a",
+  whiteSpace: "nowrap",
 }
 
-const primaryButtonStyle: React.CSSProperties = {
-  border: "1px solid rgba(203,187,160,0.28)",
-  background: "#cbbba0",
-  color: "#0b4f3a",
-  borderRadius: 12,
-  padding: "10px 16px",
-  fontWeight: 800,
-  cursor: "pointer",
-}
-
-const secondaryButtonStyle: React.CSSProperties = {
-  border: "1px solid rgba(203,187,160,0.22)",
-  background: "#0f172a",
-  color: "#f8fafc",
-  borderRadius: 10,
+const pagerButtonStyle: React.CSSProperties = {
+  border: "1px solid rgba(11,79,58,0.18)",
+  background: "#fff",
+  color: "#0f172a",
+  borderRadius: 8,
   padding: "8px 12px",
   fontWeight: 700,
   cursor: "pointer",

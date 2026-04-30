@@ -16,7 +16,14 @@ function DetalhamentoSkeleton() {
   )
 }
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 50
+
+function normalizeText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+}
 
 export function EfetivoDetalhamento({ sessionId }: { sessionId: string }) {
   const uploadedSchemas = useSessionStore((state) => state.schemaTypes)
@@ -24,6 +31,8 @@ export function EfetivoDetalhamento({ sessionId }: { sessionId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [rows, setRows] = useState<ReturnType<typeof buildWorkRows>>([])
   const [page, setPage] = useState(1)
+  const [fornecedorFilter, setFornecedorFilter] = useState("")
+  const [cargoFilter, setCargoFilter] = useState("")
   const [sort, setSort] = useState<{ key: DetailSortKey; direction: "asc" | "desc" }>({
     key: "quantidade",
     direction: "desc",
@@ -52,8 +61,17 @@ export function EfetivoDetalhamento({ sessionId }: { sessionId: string }) {
     }
   }, [sessionId])
 
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      const fornecedorOk =
+        !fornecedorFilter || normalizeText(row.fornecedor).includes(normalizeText(fornecedorFilter))
+      const cargoOk = !cargoFilter || normalizeText(row.cargo).includes(normalizeText(cargoFilter))
+      return fornecedorOk && cargoOk
+    })
+  }, [cargoFilter, fornecedorFilter, rows])
+
   const sortedRows = useMemo(() => {
-    return [...rows].sort((left, right) => {
+    return [...filteredRows].sort((left, right) => {
       const leftValue = left[sort.key]
       const rightValue = right[sort.key]
       const direction = sort.direction === "asc" ? 1 : -1
@@ -64,11 +82,13 @@ export function EfetivoDetalhamento({ sessionId }: { sessionId: string }) {
 
       return String(leftValue).localeCompare(String(rightValue), "pt-BR") * direction
     })
-  }, [rows, sort])
+  }, [filteredRows, sort])
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
-  const pagedRows = sortedRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  const start = (currentPage - 1) * PAGE_SIZE
+  const end = Math.min(start + PAGE_SIZE, sortedRows.length)
+  const pagedRows = sortedRows.slice(start, end)
 
   if (loading) return <DetalhamentoSkeleton />
 
@@ -83,77 +103,133 @@ export function EfetivoDetalhamento({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <div style={panelStyle}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-        <div>
-          <h3 style={panelTitleStyle}>Detalhamento dos Registros</h3>
-          <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 12 }}>
-            {rows.length.toLocaleString("pt-BR")} linhas disponíveis • página {currentPage} de {totalPages}
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            type="button"
-            onClick={() => setPage((value) => Math.max(value - 1, 1))}
-            disabled={currentPage === 1}
-            style={{ ...pagerButtonStyle, opacity: currentPage === 1 ? 0.5 : 1 }}
-          >
-            Página anterior
-          </button>
-          <button
-            type="button"
-            onClick={() => setPage((value) => Math.min(value + 1, totalPages))}
-            disabled={currentPage === totalPages}
-            style={{ ...pagerButtonStyle, opacity: currentPage === totalPages ? 0.5 : 1 }}
-          >
-            Próxima página
-          </button>
-        </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={filterPanelStyle}>
+        <label style={filterLabelStyle}>
+          Fornecedor
+          <input
+            type="text"
+            value={fornecedorFilter}
+            onChange={(event) => {
+              setFornecedorFilter(event.target.value)
+              setPage(1)
+            }}
+            placeholder="Buscar fornecedor"
+            style={filterInputStyle}
+          />
+        </label>
+        <label style={filterLabelStyle}>
+          Cargo / Funcao
+          <input
+            type="text"
+            value={cargoFilter}
+            onChange={(event) => {
+              setCargoFilter(event.target.value)
+              setPage(1)
+            }}
+            placeholder="Buscar cargo / funcao"
+            style={filterInputStyle}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            setFornecedorFilter("")
+            setCargoFilter("")
+            setPage(1)
+          }}
+          style={resetButtonStyle}
+        >
+          Limpar Filtros
+        </button>
       </div>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr>
-              {[
-                ["filial", "Filial/Obra"],
-                ["fornecedor", "Fornecedor"],
-                ["cargo", "Cargo/Função"],
-                ["periodo", "Período"],
-                ["dia", "Dia"],
-                ["quantidade", "Qtd"],
-              ].map(([key, label]) => (
-                <th key={key} style={thStyle}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSort((current) => ({
-                        key: key as DetailSortKey,
-                        direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
-                      }))
-                    }
-                    style={sortButtonStyle}
-                  >
-                    {label}
-                    {sort.key === key ? (sort.direction === "asc" ? " ▲" : " ▼") : null}
-                  </button>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {pagedRows.map((row, index) => (
-              <tr key={`${row.filial}-${row.fornecedor}-${row.cargo}-${row.periodo}-${row.dia}-${index}`}>
-                <td style={tdStyle}>{row.filial}</td>
-                <td style={tdStyle}>{row.fornecedor}</td>
-                <td style={tdStyle}>{row.cargo}</td>
-                <td style={tdStyle}>{row.periodo}</td>
-                <td style={tdStyle}>{row.dia}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{row.quantidade}</td>
+      <div style={panelStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+          <div>
+            <h3 style={panelTitleStyle}>Detalhamento dos Registros</h3>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 12 }}>
+              {filteredRows.length.toLocaleString("pt-BR")} registros filtrados
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.max(value - 1, 1))}
+              disabled={currentPage === 1}
+              style={{ ...pagerButtonStyle, opacity: currentPage === 1 ? 0.5 : 1 }}
+            >
+              Pagina anterior
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.min(value + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              style={{ ...pagerButtonStyle, opacity: currentPage === totalPages ? 0.5 : 1 }}
+            >
+              Proxima pagina
+            </button>
+          </div>
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr>
+                {[
+                  ["filial", "Filial/Obra"],
+                  ["fornecedor", "Fornecedor"],
+                  ["cargo", "Cargo/Funcao"],
+                  ["periodo", "Periodo"],
+                  ["dia", "Dia"],
+                  ["quantidade", "Qtd"],
+                ].map(([key, label]) => (
+                  <th key={key} style={thStyle}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSort((current) => ({
+                          key: key as DetailSortKey,
+                          direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+                        }))
+                      }
+                      style={sortButtonStyle}
+                    >
+                      {label}
+                      {sort.key === key ? (sort.direction === "asc" ? " ^" : " v") : null}
+                    </button>
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {pagedRows.map((row, index) => (
+                <tr
+                  key={`${row.filial}-${row.fornecedor}-${row.cargo}-${row.periodo}-${row.dia}-${index}`}
+                  style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.02)" : "transparent" }}
+                >
+                  <td style={tdStyle}>{row.filial}</td>
+                  <td style={tdStyle}>{row.fornecedor}</td>
+                  <td style={tdStyle}>{row.cargo}</td>
+                  <td style={tdStyle}>{row.periodo}</td>
+                  <td style={tdStyle}>{row.dia}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>
+                    {row.quantidade}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 14 }}>
+          <span style={{ color: "#64748b", fontSize: 13 }}>
+            Exibindo {sortedRows.length === 0 ? 0 : `${start + 1}-${end}`} de {filteredRows.length} registros
+          </span>
+          <span style={{ color: "#64748b", fontSize: 13 }}>
+            Pagina {currentPage} de {totalPages}
+          </span>
+        </div>
       </div>
     </div>
   )
@@ -177,6 +253,46 @@ const headerSkeletonStyle: React.CSSProperties = {
 const tableSkeletonStyle: React.CSSProperties = {
   ...headerSkeletonStyle,
   height: 360,
+}
+
+const filterPanelStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 12,
+  flexWrap: "wrap",
+  alignItems: "flex-end",
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.12)",
+  borderRadius: 12,
+  padding: 16,
+}
+
+const filterLabelStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  minWidth: 240,
+  color: "#0f172a",
+  fontSize: 12,
+  fontWeight: 700,
+}
+
+const filterInputStyle: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.18)",
+  borderRadius: 8,
+  color: "#0f172a",
+  padding: "10px 12px",
+  fontSize: 12,
+}
+
+const resetButtonStyle: React.CSSProperties = {
+  background: "#cbbba0",
+  color: "#0b4f3a",
+  border: "none",
+  borderRadius: 8,
+  padding: "9px 14px",
+  fontWeight: 800,
+  cursor: "pointer",
 }
 
 const panelStyle: React.CSSProperties = {

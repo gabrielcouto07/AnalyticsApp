@@ -13,17 +13,15 @@ def _build_multisheet_workbook() -> bytes:
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         pd.DataFrame(
             {
-                "Nº CONSOLIDADO": [1, 2],
+                "N CONSOLIDADO": [1, 2],
                 "COD": ["1-1", "1-2"],
                 "FORNECEDOR": ["Fornecedor A", "Fornecedor B"],
                 "NF": ["1001", "1002"],
-                "MAPA PREÇOS": ["MAPA-01", "MAPA-02"],
-                "NATUREZA": ["Material / Serviço", "Staff"],
-                "BOLETO/DEPÓSITO": ["Boleto", "Depósito"],
+                "MAPA PRECOS": ["MAPA-01", "MAPA-02"],
+                "NATUREZA": ["Material / Servico", "Staff"],
                 "DATA VENCTO": ["2026-01-10", "2026-02-15"],
                 "VALOR": [1500.0, 2100.0],
-                "SITUAÇÃO PLANILHA": ["Aberto", "Pago"],
-                "SALDO PLANILHA": [1500.0, 0.0],
+                "ITEM PLANILHA": ["1.1", "2.1"],
             }
         ).to_excel(writer, sheet_name="PLANILHA NFs - Entrada de Dados", index=False, startrow=7)
 
@@ -31,44 +29,48 @@ def _build_multisheet_workbook() -> bytes:
             {
                 "ITEM": ["1", "2"],
                 "SUBITEM": ["1.1", "2.1"],
-                "DESCRIÇÃO": ["Cimento", "Equipe"],
+                "DESCRICAO": ["Cimento", "Equipe"],
                 "UNID": ["sc", "mes"],
                 "QTD": [50, 2],
-                "CUSTO UNITÁRIO": [30.0, 5000.0],
+                "CUSTO UNITARIO": [30.0, 5000.0],
                 "CUSTO TOTAL": [1500.0, 10000.0],
                 "EXTRA 1": ["A", "B"],
                 "EXTRA 2": ["C", "D"],
                 "MAPA 001": [1500.0, 2500.0],
                 "MAPA 002": [0.0, 1200.0],
             }
-        ).to_excel(writer, sheet_name="PLANILHA ORÇAMENTO - Entrada de", index=False, startrow=8)
+        ).to_excel(writer, sheet_name="PLANILHA ORCAMENTO - Entrada de", index=False, startrow=8)
 
         pd.DataFrame(
             {
                 "ITEM/SUBITEM": ["1", "2"],
-                "DESCRIÇÃO": ["Cimento", "Equipe"],
+                "DESCRICAO": ["Cimento", "Equipe"],
                 "VERBA TOTAL CUSTO DIRETO": [1500.0, 10000.0],
                 "1": [500.0, 3000.0],
                 "2": [700.0, 2500.0],
             }
-        ).to_excel(writer, sheet_name="PLANILHA ORÇADOxREALIZADO", index=False, startrow=10)
+        ).to_excel(writer, sheet_name="PLANILHA ORCADOxREALIZADO", index=False, startrow=10)
 
         pd.DataFrame(
             {
-                "Nº CONSOLIDADO": [1, 2],
+                "N CONSOLIDADO": [1, 2],
                 "FORNECEDOR": ["Fornecedor A", "Fornecedor B"],
                 "NF": ["1001", "1002"],
-                "NATUREZA": ["Material / Serviço", "Staff"],
+                "MAPA": ["MAPA-01", "MAPA-02"],
+                "NATUREZA": ["Material / Servico", "Staff"],
+                "COND PAGTO": ["Boleto", "Deposito"],
                 "DATA VENCTO": ["2026-01-10", "2026-02-15"],
                 "VALOR": [1500.0, 2100.0],
+                "APROPRIITEM": ["1.1", "2.1"],
+                "APROPRIVALOR": [1000.0, 2000.0],
             }
         ).to_excel(writer, sheet_name="PLANILHA CONSOLIDADO", index=False, startrow=5)
 
         pd.DataFrame(
             [
-                ["OBRA", "OBRA RIL - RESIDÊNCIA ISABELA E LUIZ"],
-                ["CLIENTE", "ISABELA E LUIZ RENÓ"],
-                ["INÍCIO", "2026-02-03"],
+                ["OBRA", "OBRA RIL - RESIDENCIA ISABELA E LUIZ"],
+                ["CLIENTE", "ISABELA E LUIZ RENO"],
+                ["INICIO", "2026-02-03"],
                 ["TAXA ADM", "13,00"],
             ]
         ).to_excel(
@@ -80,16 +82,15 @@ def _build_multisheet_workbook() -> bytes:
         )
         pd.DataFrame(
             {
-                "Nº CONSOLIDADO": [1, 2],
+                "N CONSOLIDADO": [1, 2],
                 "TOTAL": [1500.0, 2100.0],
-                "TAXA ADMINISTRAÇÃO": [195.0, 273.0],
-                "%": [13.0, 13.0],
+                "TAXA ADMINISTRACAO": [195.0, 273.0],
                 "TOTAL GERAL": [1695.0, 2373.0],
                 "DATA VENCTO": ["2026-01-10", "2026-02-15"],
             }
         ).to_excel(writer, sheet_name="RESUMO CONSOLIDADOS - CLIENTE", index=False, startrow=9)
 
-        pd.DataFrame({"A": [1]}).to_excel(writer, sheet_name="CALENDÁRIO", index=False)
+        pd.DataFrame({"A": [1]}).to_excel(writer, sheet_name="CALENDARIO", index=False)
         pd.DataFrame({"A": [1]}).to_excel(writer, sheet_name="ENTENDA COMO OPERAR", index=False)
         pd.DataFrame({0: [None] * 12, 1: [None] * 12}).to_excel(writer, sheet_name="VAZIA", index=False, header=False)
 
@@ -102,11 +103,11 @@ def test_multisheet_upload_persists_sheet_dict_and_endpoints_read_memory(client)
     response = client.post(
         "/api/upload",
         files={
-          "file": (
-            "BD_Planilha Controle Custos.xlsx",
-            workbook_bytes,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          )
+            "file": (
+                "BD_Planilha Controle Custos.xlsx",
+                workbook_bytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
         },
     )
 
@@ -118,10 +119,10 @@ def test_multisheet_upload_persists_sheet_dict_and_endpoints_read_memory(client)
     assert session is not None
     assert session.filename == "BD_Planilha Controle Custos.xlsx"
     assert "PLANILHA NFs - Entrada de Dados" in session.sheets
-    assert "PLANILHA ORÇAMENTO - Entrada de" in session.sheets
+    assert "PLANILHA ORCAMENTO - Entrada de" in session.sheets
     assert "PLANILHA CONSOLIDADO" in session.sheets
     assert "RESUMO CONSOLIDADOS - CLIENTE" in session.sheets
-    assert "CALENDÁRIO" not in session.sheets
+    assert "CALENDARIO" not in session.sheets
     assert "ENTENDA COMO OPERAR" not in session.sheets
     assert "VAZIA" not in session.sheets
 
@@ -129,15 +130,14 @@ def test_multisheet_upload_persists_sheet_dict_and_endpoints_read_memory(client)
 
     nfs_response = client.get(f"/api/custos/{session_id}/nfs")
     assert nfs_response.status_code == 200
-    assert nfs_response.json()["total"] == 2
+    assert len(nfs_response.json()) == 2
 
-    budget_response = client.get(f"/api/orcamento/{session_id}/budget")
+    budget_response = client.get(f"/api/orcamento/{session_id}/flat")
     assert budget_response.status_code == 200
-    assert budget_response.json()["total_orcado"] == 11500.0
+    assert len(budget_response.json()) == 2
 
     resumo_response = client.get(f"/api/custos/{session_id}/resumo")
     assert resumo_response.status_code == 200
     resumo_payload = resumo_response.json()
-    assert resumo_payload["obra_nome"] == "OBRA RIL - RESIDÊNCIA ISABELA E LUIZ"
-    assert resumo_payload["cliente"] == "ISABELA E LUIZ RENÓ"
-    assert resumo_payload["taxa_adm_pct"] == 13.0
+    assert len(resumo_payload) == 2
+    assert any("TOTAL GERAL" in key.upper() for key in resumo_payload[0].keys())

@@ -1,3 +1,8 @@
+"""
+Parser - loads supported file formats, detects workbook sheets, and normalizes raw tabular data.
+Called by: backend.routers.upload.
+"""
+
 import json
 import re
 import unicodedata
