@@ -3,7 +3,11 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import advanced, charts, converter, custos, data, export, filters, materiais, orcamento, profiler, templates, upload
+from .routers import advanced, analytics, charts, converter, data, export, filters, materiais, profiler, templates, upload
+from .routers import custos as custos_router
+from .routers import efetivo_por_obra as por_obra_router
+from .routers import forecast as forecast_router
+from .routers import orcamento as orcamento_router
 
 app = FastAPI(title="Analytics Dashboard API", version="2.0.0")
 
@@ -25,8 +29,11 @@ app.include_router(charts.router)
 app.include_router(export.router)
 app.include_router(filters.router)
 app.include_router(advanced.router)
-app.include_router(custos.router)
-app.include_router(orcamento.router)
+app.include_router(analytics.router)
+app.include_router(custos_router.router, prefix="/api/custos", tags=["custos"])
+app.include_router(orcamento_router.router, prefix="/api/orcamento", tags=["orcamento"])
+app.include_router(por_obra_router.router, prefix="/api/efetivo", tags=["efetivo"])
+app.include_router(forecast_router.router, prefix="/api/forecast", tags=["forecast"])
 app.include_router(converter.router)
 app.include_router(profiler.router)
 app.include_router(templates.router)

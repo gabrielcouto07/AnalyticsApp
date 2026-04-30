@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react"
 import { CartesianGrid, Cell, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from "recharts"
 import { API_BASE_URL } from "../api/client"
+import { fmtPct } from "../lib/formatters"
 
 interface AnalyticsProps {
   sessionId: string
@@ -142,7 +143,7 @@ export const AnomaliasDashboard: React.FC<AnalyticsProps> = ({ sessionId }) => {
   const points = useMemo(() => parsePoints(result), [result])
   const anomalyCount = points.filter((point) => point.is_anomaly).length || Math.max(0, ...methodResults.map((item) => item.count))
   const total = points.length || Number(valueOf(result?.anomaly_analysis, ["total_records"], 0)) || 0
-  const anomalyPct = total ? ((anomalyCount / total) * 100).toFixed(1) : "0.0"
+  const anomalyPct = total ? (anomalyCount / total) * 100 : 0
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, color: "#0f172a" }}>
@@ -190,7 +191,7 @@ export const AnomaliasDashboard: React.FC<AnalyticsProps> = ({ sessionId }) => {
           <div style={cardStyle}>
             <p style={{ margin: 0, color: "#64748b", fontWeight: 700 }}>Resumo</p>
             <p style={{ margin: "6px 0 0", color: "#0b4f3a", fontSize: 28, fontWeight: 800 }}>
-              {anomalyCount} anomalias detectadas ({anomalyPct}% dos dados)
+              {anomalyCount} anomalias detectadas ({fmtPct(anomalyPct)} dos dados)
             </p>
           </div>
 

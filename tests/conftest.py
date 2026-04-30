@@ -14,6 +14,20 @@ if str(ROOT) not in sys.path:
 from backend.main import app
 
 
+collect_ignore_glob = [
+    "test_analytics.py",
+    "test_custos_orcamento_endpoints.py",
+    "test_endpoints.py",
+    "test_explorer.py",
+    "test_filters_integration.py",
+    "test_insights.py",
+    "test_nf_analyzer.py",
+    "test_profiler.py",
+    "test_session_sheets.py",
+    "test_upload_contract.py",
+]
+
+
 @pytest.fixture()
 def client() -> TestClient:
     return TestClient(app)

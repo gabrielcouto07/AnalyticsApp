@@ -46,32 +46,52 @@ def _normalize_text(value: Any) -> str:
     return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
 
 
+def _resolve_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    normalized_map = {_normalize_text(column): column for column in df.columns}
+    for candidate in candidates:
+        normalized_candidate = _normalize_text(candidate)
+        if normalized_candidate in normalized_map:
+            return normalized_map[normalized_candidate]
+        for normalized_name, original_name in normalized_map.items():
+            if normalized_candidate in normalized_name:
+                return original_name
+    return None
+
+
 def _apply_efetivo_filters(df: pd.DataFrame, fornecedor: Optional[str] = None, mes: Optional[str] = None, funcao: Optional[str] = None) -> pd.DataFrame:
     filtered = df.copy()
-    if fornecedor and "Fornecedor" in filtered.columns:
+    fornecedor_col = _resolve_column(filtered, ["Fornecedor"])
+    funcao_col = _resolve_column(filtered, ["Funcao", "Cargo"])
+    mes_col = _resolve_column(filtered, ["Mes"])
+    mes_nome_col = _resolve_column(filtered, ["MesNome"])
+
+    if fornecedor and fornecedor_col:
         target = _normalize_text(fornecedor)
-        filtered = filtered[filtered["Fornecedor"].astype(str).map(_normalize_text) == target]
-    if funcao and "Funcao" in filtered.columns:
+        filtered = filtered[filtered[fornecedor_col].astype(str).map(_normalize_text) == target]
+    if funcao and funcao_col:
         target = _normalize_text(funcao)
-        filtered = filtered[filtered["Funcao"].astype(str).map(_normalize_text) == target]
+        filtered = filtered[filtered[funcao_col].astype(str).map(_normalize_text) == target]
     if mes:
         target = _normalize_text(mes)
-        if target.isdigit() and "Mes" in filtered.columns:
-            filtered = filtered[pd.to_numeric(filtered["Mes"], errors="coerce") == int(target)]
-        elif "MesNome" in filtered.columns:
-            filtered = filtered[filtered["MesNome"].astype(str).map(_normalize_text) == target]
+        if target.isdigit() and mes_col:
+            filtered = filtered[pd.to_numeric(filtered[mes_col], errors="coerce") == int(target)]
+        elif mes_nome_col:
+            filtered = filtered[filtered[mes_nome_col].astype(str).map(_normalize_text) == target]
     return filtered
 
 
 def _apply_custos_filters(df: pd.DataFrame, fornecedor: Optional[str] = None, mes: Optional[str] = None) -> pd.DataFrame:
     filtered = df.copy()
-    if fornecedor and "Fornecedor" in filtered.columns:
+    fornecedor_col = _resolve_column(filtered, ["Fornecedor"])
+    data_col = _resolve_column(filtered, ["DataVencto", "Data Vencimento", "data_vencimento"])
+
+    if fornecedor and fornecedor_col:
         target = _normalize_text(fornecedor)
-        filtered = filtered[filtered["Fornecedor"].astype(str).map(_normalize_text) == target]
-    if mes and "DataVencto" in filtered.columns:
+        filtered = filtered[filtered[fornecedor_col].astype(str).map(_normalize_text) == target]
+    if mes and data_col:
         target = _normalize_text(mes)
         if target.isdigit():
-            filtered = filtered[pd.to_datetime(filtered["DataVencto"], errors="coerce").dt.month == int(target)]
+            filtered = filtered[pd.to_datetime(filtered[data_col], errors="coerce").dt.month == int(target)]
         else:
             month_map = {
                 "janeiro": 1, "fevereiro": 2, "marco": 3, "março": 3, "abril": 4, "maio": 5,
@@ -80,7 +100,7 @@ def _apply_custos_filters(df: pd.DataFrame, fornecedor: Optional[str] = None, me
             }
             month_num = month_map.get(target)
             if month_num is not None:
-                filtered = filtered[pd.to_datetime(filtered["DataVencto"], errors="coerce").dt.month == month_num]
+                filtered = filtered[pd.to_datetime(filtered[data_col], errors="coerce").dt.month == month_num]
     return filtered
 
 
@@ -1001,10 +1021,11 @@ async def get_custos_anomalies(
 
     try:
         def compute():
-            if "Valor" not in df.columns:
+            value_col = _resolve_column(df, ["Valor", "valor"])
+            if value_col is None:
                 raise HTTPException(status_code=422, detail="Column 'Valor' not found")
 
-            values = pd.to_numeric(df["Valor"], errors="coerce").dropna()
+            values = pd.to_numeric(df[value_col], errors="coerce").dropna()
             if values.empty:
                 return {"method": method, "anomalies": [], "count": 0, "percentage": 0}
 

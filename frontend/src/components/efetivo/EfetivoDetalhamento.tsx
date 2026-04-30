@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react"
 
+import { fmtNum } from "../../lib/formatters"
 import { EmptyState } from "../layout/EmptyState"
 import { SCHEMA_REQUIRED_COLUMNS } from "../layout/schemaRequirements"
 import { useSessionStore } from "../../store/session"
@@ -149,7 +150,7 @@ export function EfetivoDetalhamento({ sessionId }: { sessionId: string }) {
           <div>
             <h3 style={panelTitleStyle}>Detalhamento dos Registros</h3>
             <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 12 }}>
-              {filteredRows.length.toLocaleString("pt-BR")} registros filtrados
+              {fmtNum(filteredRows.length)} registros filtrados
             </p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>

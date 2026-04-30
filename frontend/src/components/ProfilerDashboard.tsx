@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react"
 import { API_BASE_URL } from "../api/client"
+import { fmtNum } from "../lib/formatters"
 
 interface AnalyticsProps {
   sessionId: string
@@ -33,7 +34,7 @@ const cardStyle: React.CSSProperties = {
 const fmt = (value: unknown) => {
   const number = Number(value)
   if (!Number.isFinite(number)) return "-"
-  return number.toLocaleString("pt-BR", { maximumFractionDigits: 2 })
+  return fmtNum(Math.round(number * 100) / 100)
 }
 
 const nullBadgeStyle = (pct: number): React.CSSProperties => {

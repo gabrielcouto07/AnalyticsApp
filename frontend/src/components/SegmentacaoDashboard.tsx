@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { API_BASE_URL } from "../api/client"
+import { fmtNum, fmtPct } from "../lib/formatters"
 
 interface AnalyticsProps {
   sessionId: string
@@ -59,7 +60,7 @@ const normalizeSegments = (payload: any): SegmentRow[] => {
     const computedTotal = total || rows.reduce((sum, row) => sum + row.count, 0)
     return rows.map((row) => ({
       ...row,
-      percentage: row.percentage || (computedTotal ? Number(((row.count / computedTotal) * 100).toFixed(1)) : 0),
+      percentage: row.percentage || (computedTotal ? Math.round((row.count / computedTotal) * 1000) / 10 : 0),
     }))
   }
 
@@ -215,13 +216,13 @@ export const SegmentacaoDashboard: React.FC<AnalyticsProps> = ({ sessionId }) =>
                   {rows.map((row) => (
                     <tr key={row.name}>
                       <td style={tdStyle}>{row.name}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{row.count.toLocaleString("pt-BR")}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>{row.percentage.toLocaleString("pt-BR")}%</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{fmtNum(row.count)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmtPct(row.percentage)}</td>
                     </tr>
                   ))}
                   <tr>
                     <td style={{ ...tdStyle, fontWeight: 800 }}>Total</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800 }}>{total.toLocaleString("pt-BR")}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800 }}>{fmtNum(total)}</td>
                     <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800 }}>100%</td>
                   </tr>
                 </tbody>

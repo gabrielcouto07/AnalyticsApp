@@ -73,14 +73,14 @@ export function DashboardPage() {
   }
   if (activeView === "custos") {
     return (
-      <SchemaGuard requires="custos">
+      <SchemaGuard requires={["custos", "orcamento"]}>
         <CustosDashboard sessionId={sessionId} />
       </SchemaGuard>
     )
   }
   if (activeView === "orcamento") {
     return (
-      <SchemaGuard requires="orcamento">
+      <SchemaGuard requires={["orcamento", "custos"]}>
         <OrcamentoDashboard sessionId={sessionId} />
       </SchemaGuard>
     )

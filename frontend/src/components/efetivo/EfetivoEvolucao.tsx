@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts"
 
+import { fmtPct } from "../../lib/formatters"
 import { EmptyState } from "../layout/EmptyState"
 import { SCHEMA_REQUIRED_COLUMNS } from "../layout/schemaRequirements"
 import { useSessionStore } from "../../store/session"
@@ -95,7 +96,7 @@ export function EfetivoEvolucao({ sessionId }: { sessionId: string }) {
 
   const deltaPct =
     analytics.firstPoint.funcionarios > 0
-      ? ((analytics.delta / analytics.firstPoint.funcionarios) * 100).toFixed(1)
+      ? (analytics.delta / analytics.firstPoint.funcionarios) * 100
       : null
   const deltaColor = analytics.delta >= 0 ? "#4f8ef7" : "#e05263"
   const lastPoint = evolutionData[evolutionData.length - 1]
@@ -108,7 +109,7 @@ export function EfetivoEvolucao({ sessionId }: { sessionId: string }) {
           { label: "Vale", value: analytics.trough.funcionarios, subtitle: analytics.trough.periodo, color: "#f5a623" },
           {
             label: "Variação Total",
-            value: `${analytics.delta > 0 ? "+" : ""}${analytics.delta}${deltaPct ? ` (${deltaPct}%)` : ""}`,
+            value: `${analytics.delta > 0 ? "+" : ""}${analytics.delta}${deltaPct !== null ? ` (${fmtPct(deltaPct)})` : ""}`,
             subtitle: `${analytics.firstPoint.periodo} → ${analytics.lastPoint.periodo}`,
             color: deltaColor,
           },

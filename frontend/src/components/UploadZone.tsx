@@ -45,10 +45,7 @@ export function UploadZone() {
         filename: upload.filename,
         rows: upload.rows,
         columns: upload.columns,
-        col_types: upload.col_types,
-        template: upload.template ?? null,
-        detected_schema: upload.detected_schema ?? upload.schema_types ?? [],
-        schema_types: upload.schema_types ?? upload.detected_schema ?? [],
+        schema_types: upload.schema_types,
       })
       closeUpload()
     } catch (uploadError: any) {

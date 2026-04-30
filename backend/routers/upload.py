@@ -14,7 +14,7 @@ from ..services.custos_template import detect_custos_file
 from ..services.efetivo_parser import parse_efetivo_file
 from ..services.efetivo_template import detect_efetivo_file
 from ..services.orcamento_parser import parse_orcamento_file
-from ..services.parser import detect_format, get_col_types, load_dataframe, load_file_bundle
+from ..services.parser import load_dataframe, load_file_bundle
 from ..services.schema_detector import detect_schema
 
 
@@ -86,10 +86,11 @@ async def upload_file(
 
     try:
         content = await file.read()
-        detected_format = detect_format(file.filename or "arquivo", content)
+        if not content:
+            raise HTTPException(status_code=400, detail="Arquivo vazio")
 
         if extension in {".xlsx", ".xls", ".xlsm", ".csv", ".txt", ".json"}:
-            primary_df, sheets, detected_sheets, detected_format = load_file_bundle(content, file.filename or "arquivo")
+            primary_df, sheets, detected_sheets, _ = load_file_bundle(content, file.filename or "arquivo")
         else:
             primary_df, _, _ = load_dataframe(content, file.filename or "arquivo")
             sheet_name = Path(file.filename or "arquivo").stem or "Sheet1"
@@ -183,7 +184,6 @@ async def upload_file(
     if len(merged_schema_types) > 1 and "generic" in merged_schema_types:
         merged_schema_types = [schema for schema in merged_schema_types if schema != "generic"]
 
-    col_types = {str(key): value for key, value in get_col_types(session_df).items()}
     session_id = create_session(
         session_df,
         sheets=sheets,
@@ -195,6 +195,7 @@ async def upload_file(
     )
     session = get_session(session_id)
     if session is not None:
+        session.schema_types = merged_schema_types
         calculate_kpis(session_df)
 
     return {
@@ -202,12 +203,7 @@ async def upload_file(
         "filename": file.filename,
         "rows": int(len(session_df)),
         "columns": int(len(session_df.columns)),
-        "col_types": col_types,
-        "template": template_type,
-        "format": detected_format,
         "schema_types": merged_schema_types,
-        "detected_schema": merged_schema_types,
         "detected_sheets": detected_sheets,
-        "available_sheets": detected_sheets,
         "preview": _safe_preview(session_df),
     }

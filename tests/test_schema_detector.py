@@ -7,15 +7,46 @@ from backend.services.schema_detector import detect_schema
 
 
 @pytest.mark.parametrize(
-    ("columns", "expected"),
+    ("sheets", "expected"),
     [
-        (["CARGO/FUNÇÃO", "FORNECEDOR", "OUTRA"], ["efetivo"]),
-        (["NATUREZA", "FORNECEDOR", "NF", "VALOR"], ["custos"]),
-        (["DESCRIÇÃO", "QTD", "CUSTO TOTAL", "UNID"], ["orcamento"]),
-        (["FORNECEDOR", "NATUREZA", "NF", "VALOR", "DESCRIÇÃO", "QTD", "CUSTO TOTAL"], ["custos", "orcamento"]),
-        (["foo", "bar"], ["generic"]),
+        (
+            {
+                "Sheet1": pd.DataFrame(
+                    columns=["CARGO/FUNÇÃO", "FORNECEDOR", "FILIAL/OBRA", "PERÍODO"],
+                )
+            },
+            ["efetivo"],
+        ),
+        (
+            {
+                "Sheet1": pd.DataFrame(
+                    columns=["NATUREZA", "FORNECEDOR", "NF", "DATA VENCTO", "VALOR"],
+                )
+            },
+            ["custos"],
+        ),
+        (
+            {
+                "Sheet1": pd.DataFrame(
+                    columns=["CUSTO TOTAL", "QTD", "DESCRIÇÃO", "UNID"],
+                )
+            },
+            ["orcamento"],
+        ),
+        (
+            {
+                "Sheet1": pd.DataFrame(columns=["foo", "bar", "baz"]),
+            },
+            ["generic"],
+        ),
+        (
+            {
+                "Efetivo": pd.DataFrame(columns=["CARGO/FUNÇÃO", "FILIAL/OBRA"]),
+                "Custos": pd.DataFrame(columns=["NATUREZA", "FORNECEDOR", "NF", "VALOR"]),
+            },
+            ["efetivo", "custos"],
+        ),
     ],
 )
-def test_detect_schema(columns: list[str], expected: list[str]) -> None:
-    sheets = {"Sheet1": pd.DataFrame(columns=columns)}
+def test_detect_schema(sheets: dict[str, pd.DataFrame], expected: list[str]) -> None:
     assert detect_schema(sheets) == expected

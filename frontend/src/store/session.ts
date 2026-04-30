@@ -21,6 +21,8 @@ interface SessionState {
   sessionId: string | null
   filename: string | null
   format: string | null
+  rows: number
+  columns: number
   rowCount: number
   colCount: number
   colTypes: Record<string, string>
@@ -35,10 +37,10 @@ interface SessionState {
     filename: string
     rows: number
     columns: number
-    col_types: Record<string, string>
+    col_types?: Record<string, string>
     template?: string | null
     detected_schema?: string[]
-    schema_types?: string[]
+    schema_types: string[]
     format?: string | null
   }) => void
   switchSession: (sessionId: string) => void
@@ -55,6 +57,8 @@ const emptySnapshot = {
   sessionId: null as string | null,
   filename: null as string | null,
   format: null as string | null,
+  rows: 0,
+  columns: 0,
   rowCount: 0,
   colCount: 0,
   colTypes: {},
@@ -70,6 +74,8 @@ function resolveSnapshot(session: SessionData | null) {
     sessionId: session.sessionId,
     filename: session.filename,
     format: session.format,
+    rows: session.rowCount,
+    columns: session.colCount,
     rowCount: session.rowCount,
     colCount: session.colCount,
     colTypes: session.colTypes,
@@ -149,7 +155,7 @@ export const useSessionStore = create<SessionState>((set) => ({
         format: payload.format ?? deriveFormat(payload.filename),
         rowCount: payload.rows,
         colCount: payload.columns,
-        colTypes: payload.col_types,
+        colTypes: payload.col_types ?? {},
         activeView,
         selectedTemplate: payload.template && payload.template !== 'generic' ? payload.template : null,
         suggestedTemplates: [],

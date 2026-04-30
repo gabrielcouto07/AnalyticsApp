@@ -1,66 +1,61 @@
 import React from "react"
 
 import { useSessionStore } from "../store/session"
+import { SCHEMA_REQUIRED_COLUMNS } from "./layout/schemaRequirements"
 
 interface SchemaGuardProps {
-  requires: string
+  requires: string | string[]
   children: React.ReactNode
 }
 
+function resolveColumns(schema: string) {
+  return SCHEMA_REQUIRED_COLUMNS[schema] ?? []
+}
+
 export function SchemaGuard({ requires, children }: SchemaGuardProps) {
+  const sessionId = useSessionStore((state) => state.sessionId)
   const schemaTypes = useSessionStore((state) => state.schemaTypes)
   const openUpload = useSessionStore((state) => state.openUpload)
+  const requiredSchemas = Array.isArray(requires) ? requires : [requires]
+  const canAccess = requiredSchemas.some((schema) => schemaTypes.includes(schema))
+  const requiredColumns = Array.from(
+    new Set(requiredSchemas.flatMap((schema) => resolveColumns(schema))),
+  )
 
-  if (schemaTypes.includes(requires)) {
+  if (sessionId && canAccess) {
     return <>{children}</>
   }
 
+  const hasUpload = Boolean(sessionId)
+  const message = hasUpload
+    ? "Este dashboard requer um arquivo com as colunas abaixo. Faça upload do arquivo correto."
+    : "Faça upload de um arquivo para habilitar este dashboard."
+
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "420px",
-        padding: "24px",
-        background: "#0f172a",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "520px",
-          background: "#1e293b",
-          border: "1px solid rgba(203,187,160,0.28)",
-          borderRadius: 18,
-          padding: "28px 24px",
-          textAlign: "center",
-          boxShadow: "0 20px 45px rgba(15,23,42,0.35)",
-        }}
-      >
-        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#f8fafc" }}>Dashboard indisponível</h2>
-        <p style={{ margin: "14px 0 0", fontSize: 15, lineHeight: 1.6, color: "#f8fafc" }}>
-          {`Este dashboard requer dados do tipo «${requires}».`}
-        </p>
-        <p style={{ margin: "6px 0 0", fontSize: 15, lineHeight: 1.6, color: "#f8fafc" }}>
-          Faça upload de um arquivo compatível para continuar.
-        </p>
+    <div className="flex min-h-[420px] items-center justify-center px-6 py-8">
+      <div className="w-full max-w-2xl rounded-3xl border border-emerald-900/30 bg-slate-950/95 px-8 py-10 text-center shadow-[0_24px_80px_rgba(2,6,23,0.45)]">
+        <span className="mb-4 block text-5xl">📂</span>
+        <h2 className="text-2xl font-extrabold text-slate-50">Dados não compatíveis</h2>
+        <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-300">{message}</p>
+        {requiredColumns.length > 0 && (
+          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-300">
+            Colunas esperadas:{" "}
+            <code className="rounded-full bg-emerald-500/10 px-3 py-1 font-semibold text-emerald-300">
+              {requiredColumns.join(", ")}
+            </code>
+          </p>
+        )}
+        {schemaTypes.length > 0 && (
+          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+            Detectado: {schemaTypes.join(" • ")}
+          </p>
+        )}
         <button
           type="button"
           onClick={openUpload}
-          style={{
-            marginTop: 20,
-            background: "#cbbba0",
-            color: "#0b4f3a",
-            border: "none",
-            borderRadius: 12,
-            padding: "12px 18px",
-            fontSize: 14,
-            fontWeight: 800,
-            cursor: "pointer",
-          }}
+          className="mt-6 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-600"
         >
-          Novo Upload
+          Fazer Upload
         </button>
       </div>
     </div>

@@ -4,6 +4,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Line,
   LineChart,
   ReferenceDot,
@@ -19,21 +20,13 @@ import {
   type EfetivoMonthData,
   type EfetivoTrendResponse,
 } from "../../api/analytics"
+import { formatBRL, formatDiarias, formatInt, formatPct } from "../../lib/formatters"
 import { useSessionStore } from "../../store/session"
 import { EmptyState } from "../layout/EmptyState"
 import { SCHEMA_REQUIRED_COLUMNS } from "../layout/schemaRequirements"
 import { buildBranchRows, buildCompleteness, buildEvolutionData, buildWorkRows, fetchEfetivoBase } from "./data"
 
-const SERIES_COLORS = [
-  "#4f8ef7",
-  "#34c97e",
-  "#f5a623",
-  "#e05263",
-  "#a78bfa",
-  "#06b6d4",
-  "#f97316",
-  "#ec4899",
-]
+const SERIES_COLORS = ["#1a5c45", "#2d8659", "#4ab07a", "#7ecba1", "#c4e8d3", "#f0a500", "#e05c1a", "#8b1a4a"]
 
 function trendArrow(trend: EfetivoTrendResponse | null) {
   if (!trend || trend.direction === "unknown" || trend.direction === "flat") return "→"
@@ -42,18 +35,21 @@ function trendArrow(trend: EfetivoTrendResponse | null) {
   return "→"
 }
 
+function readSummaryNumber(summary: Awaited<ReturnType<typeof fetchEfetivoBase>>["summary"], key: string) {
+  if (!summary) return undefined
+  const value = (summary as unknown as Record<string, unknown>)[key]
+  return typeof value === "number" ? value : undefined
+}
+
 function sumDailyValues(row: Record<string, string | number | null | undefined>, fornecedores: string[]) {
-  return fornecedores.reduce((sum, fornecedor) => {
-    const value = row[fornecedor]
-    return sum + (typeof value === "number" ? value : 0)
-  }, 0)
+  return fornecedores.reduce((sum, fornecedor) => sum + (typeof row[fornecedor] === "number" ? Number(row[fornecedor]) : 0), 0)
 }
 
 function maxDailyValue(row: Record<string, string | number | null | undefined>, fornecedores: string[]) {
-  return fornecedores.reduce((maxValue, fornecedor) => {
-    const value = row[fornecedor]
-    return typeof value === "number" ? Math.max(maxValue, value) : maxValue
-  }, 0)
+  return fornecedores.reduce(
+    (maxValue, fornecedor) => (typeof row[fornecedor] === "number" ? Math.max(maxValue, Number(row[fornecedor])) : maxValue),
+    0,
+  )
 }
 
 function VisaoGeralSkeleton() {
@@ -76,6 +72,10 @@ function VisaoGeralSkeleton() {
         <div style={panelSkeletonStyle} />
       </div>
       <div style={panelSkeletonStyle} />
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 16 }}>
+        <div style={panelSkeletonStyle} />
+        <div style={panelSkeletonStyle} />
+      </div>
       <style>{skeletonStyle}</style>
     </div>
   )
@@ -92,6 +92,9 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
   const [trendTotal, setTrendTotal] = useState<EfetivoTrendResponse | null>(null)
   const [trendMedia, setTrendMedia] = useState<EfetivoTrendResponse | null>(null)
   const [anomalyDays, setAnomalyDays] = useState<number[]>([])
+  const [workforceSummary, setWorkforceSummary] = useState<Array<Record<string, unknown>>>([])
+  const [costPerWorkerday, setCostPerWorkerday] = useState<Array<Record<string, unknown>>>([])
+  const [forecast, setForecast] = useState<Record<string, unknown> | null>(null)
 
   useEffect(() => {
     let active = true
@@ -100,13 +103,14 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
 
     Promise.all([
       fetchEfetivoBase(sessionId),
-      fetchApiJson<EfetivoTrendResponse>(
-        `/api/templates/efetivo/trend/${sessionId}?column=total_trabalhadores&window=7`,
-      ),
+      fetchApiJson<EfetivoTrendResponse>(`/api/templates/efetivo/trend/${sessionId}?column=total_trabalhadores&window=7`),
       fetchApiJson<EfetivoTrendResponse>(`/api/templates/efetivo/trend/${sessionId}?column=fornecedores&window=7`),
       fetchApiJson<EfetivoAnomaliesResponse>(`/api/templates/efetivo/anomalies/${sessionId}?method=iqr`),
+      fetchApiJson<Array<Record<string, unknown>>>(`/api/analytics/${sessionId}/workforce-summary`).catch(() => []),
+      fetchApiJson<Array<Record<string, unknown>>>(`/api/analytics/${sessionId}/cost-per-workerday`).catch(() => []),
+      fetchApiJson<Record<string, unknown>>(`/api/analytics/${sessionId}/forecast?horizon_months=2`).catch(() => null),
     ])
-      .then(([base, totalTrend, mediaTrend, anomalies]) => {
+      .then(([base, totalTrend, mediaTrend, anomalies, nextWorkforceSummary, nextCostPerWorkerday, nextForecast]) => {
         if (!active) return
         setSummary(base.summary)
         setMonths(base.months)
@@ -114,6 +118,9 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
         setHiddenFornecedores([])
         setTrendTotal(totalTrend)
         setTrendMedia(mediaTrend)
+        setWorkforceSummary(nextWorkforceSummary)
+        setCostPerWorkerday(nextCostPerWorkerday)
+        setForecast(nextForecast)
         setAnomalyDays(
           (anomalies.points ?? [])
             .map((point) => new Date(point.data).getDate())
@@ -136,8 +143,9 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
   const workRows = useMemo(() => buildWorkRows(summary, months), [months, summary])
   const branchRows = useMemo(() => buildBranchRows(workRows), [workRows])
   const completeness = useMemo(() => buildCompleteness(workRows), [workRows])
+  const totalDiarias = useMemo(() => workRows.reduce((sum, row) => sum + row.quantidade, 0), [workRows])
   const totalFuncionarios = useMemo(
-    () => workRows.reduce((sum, row) => sum + row.quantidade, 0),
+    () => new Set(workRows.filter((row) => row.quantidade > 0).map((row) => `${row.fornecedor}|${row.cargo}`)).size,
     [workRows],
   )
   const obrasAtivas = useMemo(() => new Set(workRows.map((row) => row.filial)).size, [workRows])
@@ -162,15 +170,14 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
     if (!currentMonth) return []
     return anomalyDays
       .map((day) => {
-        const dailyRow = currentMonth.daily_pivot.find((row) => Number(row.Dia) === day)
-        if (!dailyRow) return null
-        const y = Math.max(
-          maxDailyValue(dailyRow, visibleFornecedores),
-          sumDailyValues(dailyRow, visibleFornecedores) > 0 ? 0 : 0,
-        )
-        return { day, y: y > 0 ? y : sumDailyValues(dailyRow, currentMonth.fornecedores ?? []) }
+        const row = currentMonth.daily_pivot.find((dailyRow) => Number(dailyRow.Dia) === day)
+        if (!row) return null
+        return {
+          day,
+          y: Math.max(maxDailyValue(row, visibleFornecedores), sumDailyValues(row, currentMonth.fornecedores ?? [])),
+        }
       })
-      .filter((item): item is { day: number; y: number } => item !== null && item.y >= 0)
+      .filter((item): item is { day: number; y: number } => item !== null)
   }, [anomalyDays, currentMonth, visibleFornecedores])
   const cargoChart = useMemo(() => {
     if (!currentMonth) return []
@@ -201,75 +208,69 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
       .sort((left, right) => right.quantidade - left.quantidade)
       .slice(0, 5)
   }, [currentMonth])
+  const workforceForecastChart = useMemo(() => {
+    const historical = workforceSummary.map((row, index) => {
+      const total = Number(row.total_worker_days ?? 0)
+      const historyValues = workforceSummary.slice(0, index + 1).map((item) => Number(item.total_worker_days ?? 0))
+      const movingAverage = historyValues.length > 0 ? historyValues.reduce((sum, value) => sum + value, 0) / historyValues.length : 0
+      return {
+        label: String(row.mes_nome ?? row.mes ?? ""),
+        historico: total,
+        forecast: null,
+        media: Math.round(movingAverage * 100) / 100,
+      }
+    })
+    const projected = Array.isArray(forecast?.projected_monthly)
+      ? forecast.projected_monthly.slice(0, 2).map((row) => ({
+          label: `+${String((row as Record<string, unknown>).mes_offset ?? "")}`,
+          historico: null,
+          forecast: Number((row as Record<string, unknown>).valor_previsto ?? 0),
+          media: historical[historical.length - 1]?.media ?? 0,
+        }))
+      : []
+    return [...historical, ...projected]
+  }, [forecast, workforceSummary])
+  const mediaMensal = useMemo(() => {
+    if (workforceSummary.length === 0) return 0
+    return workforceSummary.reduce((sum, row) => sum + Number(row.total_worker_days ?? 0), 0) / workforceSummary.length
+  }, [workforceSummary])
+  const mesPico = useMemo(() => {
+    if (workforceSummary.length === 0) return "-"
+    return [...workforceSummary].sort((left, right) => Number(right.total_worker_days ?? 0) - Number(left.total_worker_days ?? 0))[0]?.mes_nome?.toString() ?? "-"
+  }, [workforceSummary])
 
   if (loading) return <VisaoGeralSkeleton />
 
   if (error || workRows.length === 0 || !currentMonth) {
-    return (
-      <EmptyState
-        schemaRequired="efetivo"
-        requiredColumns={SCHEMA_REQUIRED_COLUMNS.efetivo}
-        uploadedSchemas={uploadedSchemas}
-      />
-    )
+    return <EmptyState schemaRequired="efetivo" requiredColumns={SCHEMA_REQUIRED_COLUMNS.efetivo} uploadedSchemas={uploadedSchemas} />
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
         {[
-          { label: "Total Funcionarios", value: (summary?.total_diarias ?? totalFuncionarios).toLocaleString("pt-BR") },
-          { label: "Filiais / Obras Ativas", value: obrasAtivas.toLocaleString("pt-BR") },
-          { label: "Cargos Distintos", value: cargosDistintos.toLocaleString("pt-BR") },
-          { label: "% Dados Completos", value: `${completeness}%` },
+          {
+            label: "TOTAL FUNCIONÁRIOS",
+            value: formatInt(readSummaryNumber(summary, "total_funcionarios") ?? totalFuncionarios),
+          },
+          { label: "OBRAS ATIVAS", value: formatInt(obrasAtivas) },
+          { label: "CARGOS DISTINTOS", value: formatInt(cargosDistintos) },
+          { label: "% DADOS COMPLETOS", value: formatPct(completeness) },
         ].map((card, index) => (
           <div key={card.label} style={metricCardStyle}>
-            <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>
-              {card.label}
-            </p>
-            <p
-              style={{
-                margin: "6px 0 0",
-                fontSize: 28,
-                fontWeight: 800,
-                color: index === 0 ? "#0b4f3a" : "#0f172a",
-              }}
-            >
-              {card.value}
-            </p>
+            <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>{card.label}</p>
+            <p style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 800, color: index === 0 ? "#0b4f3a" : "#0f172a" }}>{card.value}</p>
           </div>
         ))}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12 }}>
         {[
-          {
-            label: "Total Diarias",
-            value: (summary?.total_diarias ?? totalFuncionarios).toLocaleString("pt-BR"),
-            accent: "#4f8ef7",
-            hint: trendArrow(trendTotal),
-          },
-          {
-            label: "Dias Ativos",
-            value: (summary?.dias_ativos ?? 0).toLocaleString("pt-BR"),
-            accent: "#34c97e",
-          },
-          {
-            label: "Media Diaria",
-            value: (summary?.media_diaria ?? 0).toLocaleString("pt-BR"),
-            accent: "#f5a623",
-            hint: trendArrow(trendMedia),
-          },
-          {
-            label: "Fornecedores",
-            value: (summary?.unique_fornecedores ?? 0).toLocaleString("pt-BR"),
-            accent: "#a78bfa",
-          },
-          {
-            label: "Funcoes",
-            value: (summary?.unique_funcoes ?? 0).toLocaleString("pt-BR"),
-            accent: "#06b6d4",
-          },
+          { label: "TOTAL DIÁRIAS", value: formatDiarias(summary?.total_diarias ?? totalDiarias), accent: "#4f8ef7", hint: trendArrow(trendTotal) },
+          { label: "DIAS ATIVOS", value: formatInt(summary?.dias_ativos ?? 0), accent: "#34c97e" },
+          { label: "MÉDIA DIÁRIA", value: formatDiarias(summary?.media_diaria ?? 0), accent: "#f5a623", hint: trendArrow(trendMedia) },
+          { label: "FORNECEDORES", value: formatInt(readSummaryNumber(summary, "total_fornecedores") ?? summary?.unique_fornecedores ?? 0), accent: "#a78bfa" },
+          { label: "FUNÇÕES", value: formatInt(readSummaryNumber(summary, "total_funcoes") ?? summary?.unique_funcoes ?? 0), accent: "#06b6d4" },
         ].map((card) => (
           <div key={card.label} style={darkCardStyle}>
             <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>
@@ -284,20 +285,10 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
           <div>
             <h3 style={lightTitleStyle}>Headcount Diario por Fornecedor</h3>
-            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 12 }}>
-              {(summary?.obra || "Obra nao identificada").trim()} • {currentMonth.mes_nome}
-            </p>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 12 }}>{(summary?.obra || "Obra nao identificada").trim()} • {currentMonth.mes_nome}</p>
           </div>
           <div style={{ maxWidth: "100%", overflowX: "auto", scrollbarWidth: "none" as "none" }}>
-            <div
-              style={{
-                background: "#f1f5f9",
-                borderRadius: 10,
-                padding: 4,
-                display: "inline-flex",
-                flexWrap: "nowrap",
-              }}
-            >
+            <div style={{ background: "#f1f5f9", borderRadius: 10, padding: 4, display: "inline-flex", flexWrap: "nowrap" }}>
               {months.map((month) => {
                 const isActive = activeMes === month.mes
                 return (
@@ -317,14 +308,7 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
                       fontWeight: 700,
                       fontSize: 13,
                       cursor: "pointer",
-                      transition: "background 180ms ease",
                       whiteSpace: "nowrap",
-                    }}
-                    onMouseEnter={(event) => {
-                      if (!isActive) event.currentTarget.style.background = "rgba(11,79,58,0.08)"
-                    }}
-                    onMouseLeave={(event) => {
-                      if (!isActive) event.currentTarget.style.background = "transparent"
                     }}
                   >
                     {month.mes_nome}
@@ -342,25 +326,10 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
             <YAxis tick={{ fill: "#475569", fontSize: 12 }} allowDecimals={false} />
             <Tooltip />
             {visibleFornecedores.map((fornecedor, index) => (
-              <Line
-                key={fornecedor}
-                type="monotone"
-                dataKey={fornecedor}
-                stroke={SERIES_COLORS[index % SERIES_COLORS.length]}
-                strokeWidth={2.5}
-                dot={{ r: 3 }}
-                connectNulls
-              />
+              <Line key={fornecedor} type="monotone" dataKey={fornecedor} stroke={SERIES_COLORS[index % SERIES_COLORS.length]} strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
             ))}
             {anomalyMarkers.map((marker, index) => (
-              <ReferenceDot
-                key={`${marker.day}-${index}`}
-                x={marker.day}
-                y={marker.y}
-                r={5}
-                fill="#ef4444"
-                stroke="#ef4444"
-              />
+              <ReferenceDot key={`${marker.day}-${index}`} x={marker.day} y={marker.y} r={5} fill="#ef4444" stroke="#ef4444" />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -372,11 +341,7 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
               <button
                 key={fornecedor}
                 type="button"
-                onClick={() =>
-                  setHiddenFornecedores((current) =>
-                    hidden ? current.filter((item) => item !== fornecedor) : [...current, fornecedor],
-                  )
-                }
+                onClick={() => setHiddenFornecedores((current) => (hidden ? current.filter((item) => item !== fornecedor) : [...current, fornecedor]))}
                 style={{
                   borderRadius: 999,
                   border: "1px solid rgba(148,163,184,0.22)",
@@ -388,16 +353,7 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
                   cursor: "pointer",
                 }}
               >
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: 8,
-                    height: 8,
-                    borderRadius: 999,
-                    background: SERIES_COLORS[index % SERIES_COLORS.length],
-                    marginRight: 6,
-                  }}
-                />
+                <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: SERIES_COLORS[index % SERIES_COLORS.length], marginRight: 6 }} />
                 {fornecedor}
               </button>
             )
@@ -452,10 +408,8 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
                   {fornecedorRanking.map((row) => (
                     <tr key={row.fornecedor}>
                       <td style={tdStyle}>{row.fornecedor}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>
-                        {row.quantidade.toLocaleString("pt-BR")}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>{row.percentual.toFixed(1)}%</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{formatDiarias(row.quantidade)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{formatPct(row.percentual)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -478,6 +432,63 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
             <Bar dataKey="funcionarios" fill="#0b4f3a" radius={[0, 6, 6, 0]} />
           </BarChart>
         </ResponsiveContainer>
+      </section>
+
+      <section style={forecastPanelStyle}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 20 }}>
+          <div>
+            <h3 style={{ ...lightTitleStyle, color: "#f8fafc", marginBottom: 6 }}>Previsao de Demanda de Mao de Obra</h3>
+            <p style={{ margin: "0 0 16px", fontSize: 12, color: "#94a3b8" }}>Historico mensal, forecast para os proximos 2 meses e linha de media movel.</p>
+            {workforceForecastChart.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart data={workforceForecastChart}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.22)" />
+                  <XAxis dataKey="label" tick={{ fill: "#cbd5e1", fontSize: 11 }} />
+                  <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="historico" fill="#4f8ef7" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="forecast" fill="rgba(255,255,255,0.06)" stroke="#cbd5e1" strokeDasharray="5 5" radius={[8, 8, 0, 0]} />
+                  <Line type="monotone" dataKey="media" stroke="#a78bfa" strokeWidth={3} dot={{ r: 3 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={emptyForecastStateStyle}>Sem historico suficiente para previsao de demanda.</div>
+            )}
+          </div>
+
+          <div style={{ display: "grid", gap: 16 }}>
+            <div style={forecastInnerCardStyle}>
+              <h4 style={forecastInnerTitleStyle}>Custo por Diaria</h4>
+              {costPerWorkerday.length > 0 ? (
+                <ResponsiveContainer width="100%" height={150}>
+                  <LineChart data={costPerWorkerday}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.22)" />
+                    <XAxis dataKey="mes_nome" tick={{ fill: "#cbd5e1", fontSize: 11 }} />
+                    <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} tickFormatter={(value) => formatBRL(Number(value))} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="cost_per_workerday" stroke="#34c97e" strokeWidth={3} dot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={emptyForecastStateStyle}>Sem dados suficientes para custo por diaria.</div>
+              )}
+            </div>
+
+            <div style={forecastInnerCardStyle}>
+              <h4 style={forecastInnerTitleStyle}>Indicadores</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12, marginTop: 12 }}>
+                <div>
+                  <p style={forecastLabelStyle}>Media mensal</p>
+                  <p style={forecastValueStyle}>{formatDiarias(mediaMensal)}</p>
+                </div>
+                <div>
+                  <p style={forecastLabelStyle}>Mes pico</p>
+                  <p style={forecastValueStyle}>{mesPico}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   )
@@ -558,4 +569,54 @@ const tdStyle: React.CSSProperties = {
   padding: "10px 12px",
   borderBottom: "1px solid #e2e8f0",
   color: "#0f172a",
+}
+
+const forecastPanelStyle: React.CSSProperties = {
+  background: "rgba(15,23,42,0.86)",
+  border: "1px solid rgba(79,142,247,0.13)",
+  borderRadius: 12,
+  padding: 20,
+  boxShadow: "0 10px 28px rgba(15,23,42,0.18)",
+}
+
+const forecastInnerCardStyle: React.CSSProperties = {
+  background: "rgba(30,41,59,0.86)",
+  border: "1px solid rgba(79,142,247,0.12)",
+  borderRadius: 12,
+  padding: "16px 20px",
+}
+
+const forecastInnerTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 16,
+  fontWeight: 800,
+  color: "#f8fafc",
+}
+
+const forecastLabelStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 11,
+  fontWeight: 800,
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  color: "#94a3b8",
+}
+
+const forecastValueStyle: React.CSSProperties = {
+  margin: "8px 0 0",
+  fontSize: 24,
+  fontWeight: 800,
+  color: "#f8fafc",
+}
+
+const emptyForecastStateStyle: React.CSSProperties = {
+  minHeight: 120,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  textAlign: "center",
+  color: "#cbd5e1",
+  fontSize: 13,
+  border: "1px dashed rgba(148,163,184,0.24)",
+  borderRadius: 12,
 }

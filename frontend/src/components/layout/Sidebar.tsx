@@ -1,14 +1,29 @@
 "use client"
 
+import { useMemo } from "react"
+
+import { NAV_SECTIONS } from "./navigation"
+import { fmtNum } from "../../lib/formatters"
 import { useSessionStore } from "../../store/session"
-import { getVisibleNavSections } from "./navigation"
+
+const BRAND_GREEN = "#0b4f3a"
 
 function formatSchemaLabel(value: string) {
-  if (value === "generic") return "Generico"
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ")
+  if (value === "generic") return "GENERICO"
+  return value.toUpperCase()
+}
+
+function schemaBadgeStyle(schema: string): React.CSSProperties {
+  if (schema === "efetivo") {
+    return { background: "rgba(11,79,58,0.12)", color: "#0b4f3a" }
+  }
+  if (schema === "custos") {
+    return { background: "rgba(79,142,247,0.12)", color: "#1d4ed8" }
+  }
+  if (schema === "orcamento") {
+    return { background: "rgba(245,166,35,0.12)", color: "#92400e" }
+  }
+  return { background: "rgba(148,163,184,0.14)", color: "#475569" }
 }
 
 export function Sidebar() {
@@ -25,12 +40,22 @@ export function Sidebar() {
   const removeSession = useSessionStore((state) => state.removeSession)
   const openUpload = useSessionStore((state) => state.openUpload)
 
-  const sessionEntries = Object.values(sessions)
-  const visibleSections = getVisibleNavSections(schemaTypes)
-  const hasSession = Boolean(activeSessionId)
-  const schemaLabel =
-    schemaTypes.length > 0 ? schemaTypes.map(formatSchemaLabel).join(" + ") : "Sem schema detectado"
-  const hasDashboardItems = visibleSections.some((section) => section.title === "DASHBOARDS")
+  const sessionEntries = useMemo(() => Object.values(sessions), [sessions])
+  const visibleSections = useMemo(() => {
+    return NAV_SECTIONS.map((section) => {
+      if (section.title === "DASHBOARDS" && schemaTypes.length === 0) {
+        return { ...section, items: [] }
+      }
+      return {
+        ...section,
+        items: section.items.filter(
+          (item) => !item.requires || item.requires.some((schema) => schemaTypes.includes(schema)),
+        ),
+      }
+    })
+  }, [schemaTypes])
+
+  const visibleSessions = sessionEntries.slice(0, 6)
 
   return (
     <div
@@ -38,32 +63,27 @@ export function Sidebar() {
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: "#0b4f3a",
+        backgroundColor: BRAND_GREEN,
         color: "#f8fafc",
+        fontFamily: "'Inter', system-ui, sans-serif",
       }}
     >
-      <div
-        style={{
-          padding: "16px",
-          borderBottom: "1px solid rgba(255,255,255,0.15)",
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <span style={{ fontSize: "24px" }}>📊</span>
+      <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.14)", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 24 }}>📊</span>
           <div>
-            <p style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#fff" }}>ERP Analytics</p>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#fff" }}>ERP Analytics</p>
             <p
               style={{
                 margin: "4px 0 0",
-                fontSize: "10px",
-                fontWeight: 700,
-                color: "#cbbba0",
+                fontSize: 11,
+                fontWeight: 800,
+                color: "rgba(255,255,255,0.70)",
                 textTransform: "uppercase",
-                letterSpacing: "0.5px",
+                letterSpacing: "0.06em",
               }}
             >
-              Gestao de obra
+              Gestão de obra
             </p>
           </div>
         </div>
@@ -72,77 +92,75 @@ export function Sidebar() {
       <nav
         style={{
           flex: 1,
-          padding: "8px",
+          padding: 8,
           overflowY: "auto",
           display: "flex",
           flexDirection: "column",
-          gap: "4px",
+          gap: 6,
         }}
       >
-        {!hasDashboardItems && hasSession && (
+        {schemaTypes.length === 0 && (
           <div
             style={{
-              margin: "8px",
-              padding: "14px",
-              borderRadius: "12px",
-              border: "1px solid rgba(203,187,160,0.2)",
-              background: "rgba(255,255,255,0.06)",
+              borderRadius: 12,
+              border: "1px dashed rgba(255,255,255,0.18)",
+              padding: 14,
+              color: "rgba(255,255,255,0.72)",
+              fontSize: 12,
+              lineHeight: 1.6,
+              margin: "8px 4px",
             }}
           >
-            <p style={{ margin: 0, fontSize: "12px", fontWeight: 700, color: "#fff" }}>
-              Faca upload de um arquivo compativel
-            </p>
-            <p style={{ margin: "6px 0 0", fontSize: "11px", lineHeight: 1.5, color: "#cbd5e1" }}>
-              Nenhum dashboard especifico foi liberado para esta sessao. Os modulos de Analytics e Dados continuam disponiveis.
-            </p>
+            Faça upload de um arquivo para ver os dashboards disponíveis.
           </div>
         )}
-
-        {visibleSections.map((section) => (
+        {visibleSections.filter((section) => section.items.length > 0).map((section) => (
           <div key={section.title}>
             <p
               style={{
                 margin: "14px 12px 6px",
-                fontSize: "9px",
+                fontSize: 10,
                 fontWeight: 800,
-                color: "#cbbba0",
+                color: "rgba(255,255,255,0.66)",
                 textTransform: "uppercase",
-                letterSpacing: "1px",
+                letterSpacing: "0.08em",
               }}
             >
               {section.title}
             </p>
             {section.items.map((item) => {
               const isActive = activeView === item.id
-
+              const isSchemaLocked = sessionEntries.length === 0 && Boolean(item.requires?.length)
+              const disabled = sessionEntries.length === 0
               return (
                 <button
                   key={item.id}
                   type="button"
-                  disabled={!hasSession}
+                  title={isSchemaLocked ? `Faça upload de um arquivo ${item.requires?.[0]}` : item.label}
+                  disabled={disabled}
                   onClick={() => {
-                    if (hasSession) setActiveView(item.id)
+                    if (!disabled) setActiveView(item.id)
                   }}
                   style={{
                     width: "100%",
                     display: "flex",
                     alignItems: "center",
-                    gap: "10px",
+                    gap: 10,
                     padding: "10px 12px",
                     border: "none",
-                    borderRadius: "8px",
-                    background: isActive ? "rgba(255,255,255,0.18)" : "transparent",
-                    color: isActive ? "#fff" : "#cbd5e1",
-                    fontSize: "13px",
-                    fontWeight: isActive ? 700 : 500,
-                    cursor: hasSession ? "pointer" : "not-allowed",
-                    opacity: hasSession ? 1 : 0.35,
+                    borderRadius: 10,
+                    background: isActive ? "rgba(255,255,255,0.12)" : "transparent",
+                    color: isSchemaLocked ? "rgba(255,255,255,0.36)" : isActive ? "#fff" : "#dbe5ec",
+                    fontSize: 13,
+                    fontWeight: isActive ? 600 : 700,
+                    cursor: disabled ? "not-allowed" : "pointer",
+                    opacity: disabled && !isSchemaLocked ? 0.6 : 1,
                     textAlign: "left",
-                    transition: "background 150ms ease, color 150ms ease",
                   }}
                 >
-                  <span style={{ width: 20, fontSize: "15px", textAlign: "center" }}>{item.icon}</span>
+                  <span style={{ width: 20, textAlign: "center", fontSize: 15 }}>{item.icon}</span>
                   <span>{item.label}</span>
+                  {isSchemaLocked && <span style={{ marginLeft: "auto", fontSize: 11 }}>🔒</span>}
                 </button>
               )
             })}
@@ -150,165 +168,145 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div
-        style={{
-          padding: "16px",
-          borderTop: "1px solid rgba(255,255,255,0.15)",
-          flexShrink: 0,
-        }}
-      >
+      <div style={{ padding: 16, borderTop: "1px solid rgba(255,255,255,0.14)", flexShrink: 0 }}>
         <p
           style={{
-            margin: "0 0 8px",
-            fontSize: "10px",
+            margin: "0 0 10px",
+            fontSize: 10,
             fontWeight: 800,
-            color: "#cbbba0",
+            color: "rgba(255,255,255,0.66)",
             textTransform: "uppercase",
-            letterSpacing: "0.5px",
+            letterSpacing: "0.08em",
           }}
         >
-          ARQUIVO
+          Sessões
         </p>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, minWidth: 0 }}>
-          <p
-            title={filename ?? ""}
-            style={{
-              margin: 0,
-              flex: 1,
-              minWidth: 0,
-              fontSize: "12px",
-              fontWeight: 700,
-              color: "#e2e8f0",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {filename || "Nenhum arquivo"}
-          </p>
-          {format && (
-            <span
-              style={{
-                fontSize: "10px",
-                fontWeight: 800,
-                padding: "4px 8px",
-                borderRadius: "999px",
-                backgroundColor: "rgba(203,187,160,0.18)",
-                color: "#cbbba0",
-                border: "1px solid rgba(203,187,160,0.25)",
-                textTransform: "uppercase",
-                letterSpacing: "0.5px",
-                flexShrink: 0,
-              }}
-            >
-              {format}
-            </span>
-          )}
-        </div>
-
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
-          <span
-            style={{
-              fontSize: "10px",
-              fontWeight: 800,
-              padding: "4px 8px",
-              borderRadius: "999px",
-              backgroundColor: "rgba(31,122,90,0.18)",
-              color: "#d1fae5",
-              border: "1px solid rgba(34,197,94,0.25)",
-              textTransform: "uppercase",
-              letterSpacing: "0.5px",
-            }}
-          >
-            {schemaLabel}
-          </span>
-        </div>
-
-        <p style={{ margin: "0 0 12px", fontSize: "11px", color: "#cbd5e1", fontWeight: 500 }}>
-          {hasSession
-            ? `${rowCount.toLocaleString("pt-BR")} linhas x ${colCount.toLocaleString("pt-BR")} colunas`
-            : "Aguardando upload"}
-        </p>
-
-        {sessionEntries.length > 1 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-            {sessionEntries.map((entry) => {
-              const isActive = entry.sessionId === activeSessionId
-
-              return (
-                <div
-                  key={entry.sessionId}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    borderRadius: 999,
-                    overflow: "hidden",
-                    border: isActive
-                      ? "1px solid rgba(203,187,160,0.45)"
-                      : "1px solid rgba(255,255,255,0.14)",
-                    background: isActive ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.07)",
-                  }}
-                >
+        <div style={{ maxHeight: 216, overflowY: sessionEntries.length > 6 ? "auto" : "visible", display: "grid", gap: 8 }}>
+          {visibleSessions.map((entry) => {
+            const isActive = entry.sessionId === activeSessionId
+            return (
+              <div
+                key={entry.sessionId}
+                style={{
+                  borderRadius: 12,
+                  background: isActive ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  padding: "10px 12px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
                   <button
                     type="button"
                     onClick={() => switchSession(entry.sessionId)}
                     style={{
+                      flex: 1,
                       border: "none",
                       background: "transparent",
                       color: "#fff",
-                      fontSize: 11,
-                      fontWeight: isActive ? 800 : 600,
-                      padding: "6px 10px",
+                      textAlign: "left",
+                      padding: 0,
                       cursor: "pointer",
-                      maxWidth: 150,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
                     }}
-                    title={entry.filename}
                   >
-                    {entry.filename}
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                      title={entry.filename}
+                    >
+                      {entry.filename}
+                    </p>
+                    <p style={{ margin: "6px 0 0", fontSize: 11, color: "rgba(255,255,255,0.72)" }}>
+                      {fmtNum(entry.rowCount)} linhas × {fmtNum(entry.colCount)} colunas
+                    </p>
                   </button>
                   <button
                     type="button"
+                    aria-label={`Remover sessão ${entry.filename}`}
                     onClick={() => removeSession(entry.sessionId)}
-                    aria-label={`Remover sessao ${entry.filename}`}
                     style={{
                       border: "none",
-                      background: "rgba(15,23,42,0.2)",
-                      color: "#f8fafc",
-                      padding: "0 9px",
-                      height: 28,
-                      cursor: "pointer",
-                      fontSize: 12,
+                      background: "transparent",
+                      color: "rgba(255,255,255,0.72)",
+                      fontSize: 14,
                       fontWeight: 800,
+                      cursor: "pointer",
+                      padding: 0,
                     }}
                   >
-                    x
+                    ×
                   </button>
                 </div>
-              )
-            })}
-          </div>
-        )}
+
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                  {entry.schemaTypes.map((schema) => (
+                    <span
+                      key={`${entry.sessionId}-${schema}`}
+                      style={{
+                        ...schemaBadgeStyle(schema),
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        fontSize: 10,
+                        fontWeight: 800,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      {formatSchemaLabel(schema)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+
+          {sessionEntries.length === 0 && (
+            <div
+              style={{
+                borderRadius: 12,
+                border: "1px dashed rgba(255,255,255,0.18)",
+                padding: 14,
+                color: "rgba(255,255,255,0.72)",
+                fontSize: 12,
+                lineHeight: 1.6,
+              }}
+            >
+              Faça upload de um arquivo para liberar os dashboards por schema.
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: 14, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+          <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#fff" }}>{filename || "Nenhum arquivo ativo"}</p>
+          <p style={{ margin: "6px 0 0", fontSize: 11, color: "rgba(255,255,255,0.72)" }}>
+            {activeSessionId ? `${fmtNum(rowCount)} linhas × ${fmtNum(colCount)} colunas` : "Aguardando upload"}
+            {format ? ` • ${format}` : ""}
+          </p>
+        </div>
 
         <button
           type="button"
           onClick={openUpload}
           style={{
             width: "100%",
-            padding: "8px 12px",
-            fontSize: "12px",
+            marginTop: 14,
+            padding: "10px 12px",
+            fontSize: 13,
             fontWeight: 700,
-            color: "#0b4f3a",
-            backgroundColor: "#cbbba0",
-            border: "1px solid rgba(203,187,160,0.35)",
-            borderRadius: "8px",
+            color: BRAND_GREEN,
+            background: "#fff",
+            border: "none",
+            borderRadius: 10,
             cursor: "pointer",
           }}
         >
-          Novo Upload
+          ＋ Adicionar arquivo
         </button>
       </div>
     </div>

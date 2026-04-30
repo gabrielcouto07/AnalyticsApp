@@ -1,53 +1,118 @@
 from __future__ import annotations
 
+import logging
+import math
+import re
+from dataclasses import asdict
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-import re
-import unicodedata
 
-import numpy as np
 import pandas as pd
 
-
-_EXCEL_ERRORS = re.compile(r"^#|^ERRORREF|^ERRORNA|^ERROR", re.IGNORECASE)
-
-
-def _normalize_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value.strip().lower())
-    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^a-z0-9]+", " ", ascii_text).strip()
+from .core.header_detector import HeaderNotFoundError, find_header_row
+from .core.normalizer import normalize_df, strip_accents
+from .core.validator import DataQualityReport, validate_df
 
 
-def _clean_excel_frame(df: pd.DataFrame) -> pd.DataFrame:
-    working = df.copy()
-    working = working.dropna(axis=0, how="all").dropna(axis=1, how="all")
-    if working.empty:
-        return working
-
-    renamed_columns: list[str] = []
-    for index, column in enumerate(working.columns):
-        if isinstance(column, str):
-            text = column.strip()
-            renamed_columns.append(text or f"COL_{index + 1}")
-        elif pd.notna(column):
-            renamed_columns.append(str(column).strip() or f"COL_{index + 1}")
-        else:
-            renamed_columns.append(f"COL_{index + 1}")
-
-    working.columns = renamed_columns
-    return working.reset_index(drop=True)
+logger = logging.getLogger(__name__)
 
 
-def _clean_error_cells(df: pd.DataFrame) -> pd.DataFrame:
-    cleaned = df.copy()
-    for column in cleaned.select_dtypes(include="object").columns:
-        cleaned[column] = cleaned[column].apply(
-            lambda value: np.nan
-            if isinstance(value, str) and _EXCEL_ERRORS.match(value.strip())
-            else value
-        )
-    return cleaned
+NFS_COLUMN_MAP: dict[str, list[str]] = {
+    "n_consolidado": ["Nº CONSOLIDADO", "N CONSOLIDADO", "NUM CONSOLIDADO"],
+    "cod": ["COD"],
+    "fornecedor": ["FORNECEDOR"],
+    "nf": ["NF"],
+    "mapa_precos": ["MAPA PREÇOS", "MAPA PRECOS", "MAPA"],
+    "natureza": ["NATUREZA"],
+    "boleto_deposito": ["BOLETO/DEPÓSITO", "BOLETO/DEPOSITO", "COND.PAGTO", "COND PAGTO"],
+    "data_vencimento": ["DATA VENCTO", "DATA VENCIMENTO", "DATA"],
+    "valor": ["VALOR"],
+    "item_planilha": ["ITEM PLANILHA", "ITEM"],
+    "valor_item": ["VALOR ITEM", "VALOR APROPRIADO ITEM"],
+    "situacao_planilha": ["SITUAÇÃO PLANILHA", "SITUACAO PLANILHA", "SITUAÇÃO"],
+    "situacao_mapa_compra": ["SITUAÇÃO MAPA COMPRA", "SITUACAO MAPA COMPRA"],
+    "saldo_planilha": ["SALDO PLANILHA", "SALDO"],
+    "observacoes": ["OBSERVAÇÕES", "OBSERVACOES"],
+}
+
+CONSOLIDADO_COLUMN_MAP: dict[str, list[str]] = {
+    "n_consolidado": ["Nº CONSOLIDADO", "N CONSOLIDADO", "NUM CONSOLIDADO"],
+    "fornecedor": ["FORNECEDOR"],
+    "nf": ["NF"],
+    "mapa": ["MAPA", "MAPA PREÇOS", "MAPA PRECOS"],
+    "natureza": ["NATUREZA"],
+    "cond_pagto": ["COND.PAGTO", "COND PAGTO", "BOLETO/DEPÓSITO", "BOLETO/DEPOSITO"],
+    "data_vencimento": ["DATA VENCTO", "DATA VENCIMENTO", "DATA"],
+    "valor": ["VALOR"],
+    "apropriacao_item": ["ITEM APROPRIAÇÃO", "ITEM APROPRIACAO", "APROPRIITEM"],
+    "apropriacao_valor": ["VALOR APROPRIADO", "APROPRIVALOR"],
+}
+
+ORCAMENTO_BUDGET_COLUMN_MAP: dict[str, list[str]] = {
+    "item": ["ITEM"],
+    "subitem": ["SUBITEM"],
+    "descricao": ["DESCRIÇÃO", "DESCRICAO"],
+    "unid": ["UNID"],
+    "qtd": ["QTD", "QUANTIDADE"],
+    "custo_unitario": ["CUSTO UNITÁRIO", "CUSTO UNITARIO"],
+    "custo_total": ["CUSTO TOTAL"],
+}
+
+RESUMO_COLUMN_MAP: dict[str, list[str]] = {
+    "n_consolidado": ["Nº CONSOLIDADO", "N CONSOLIDADO"],
+    "fornecedor": ["FORNECEDOR", "CLIENTE"],
+    "material_servico": ["MATERIAL/SERVIÇO", "MATERIAL/SERVICO"],
+    "mao_obra_empr": ["MÃO OBRA EMPREITADA", "MAO OBRA EMPREITADA"],
+    "mao_obra_tempo": ["MÃO OBRA TEMPO", "MAO OBRA TEMPO"],
+    "staff": ["STAFF"],
+    "servicos_sem_taxa_adm": ["SERVIÇO sem TAXA ADM", "SERVIÇO SEM TAXA ADM", "SERVICO SEM TAXA ADM"],
+    "total": ["TOTAL"],
+    "taxa_administracao": ["TAXA ADMINISTRAÇÃO", "TAXA ADMINISTRACAO"],
+    "taxa_pct": ["%", "TAXA %"],
+    "nf_administracao": ["NF ADMINISTRAÇÃO", "NF ADMINISTRACAO"],
+    "data_vencimento": ["DATA VENCTO", "DATA VENCIMENTO"],
+    "data_recebimento": ["DATA RECBTO", "DATA RECBTº", "DATA RECBIMENTO", "DATA RECEBIMENTO"],
+    "total_geral": ["TOTAL GERAL"],
+}
+
+MONTH_NAME_MAP = {
+    "JAN": "1",
+    "FEV": "2",
+    "MAR": "3",
+    "ABR": "4",
+    "MAI": "5",
+    "JUN": "6",
+    "JUL": "7",
+    "AGO": "8",
+    "SET": "9",
+    "OUT": "10",
+    "NOV": "11",
+    "DEZ": "12",
+    "JANEIRO": "1",
+    "FEVEREIRO": "2",
+    "MARCO": "3",
+    "MARCO/": "3",
+    "ABRIL": "4",
+    "MAIO": "5",
+    "JUNHO": "6",
+    "JULHO": "7",
+    "AGOSTO": "8",
+    "SETEMBRO": "9",
+    "OUTUBRO": "10",
+    "NOVEMBRO": "11",
+    "DEZEMBRO": "12",
+}
+
+RISK_LOW = "baixo"
+RISK_MEDIUM = "medio"
+RISK_HIGH = "alto"
+
+
+def _normalize_text(value: Any) -> str:
+    text = strip_accents(str(value or "")).upper().strip()
+    text = re.sub(r"[^A-Z0-9]+", " ", text)
+    return " ".join(text.split())
 
 
 def _match_sheet_name(sheet_names: list[str], candidates: list[str]) -> str | None:
@@ -60,730 +125,773 @@ def _match_sheet_name(sheet_names: list[str], candidates: list[str]) -> str | No
     return None
 
 
-def _find_column(df: pd.DataFrame, candidates: list[str], required: bool = False) -> str | None:
-    normalized_map = {_normalize_text(str(column)): column for column in df.columns}
-    for candidate in candidates:
-        normalized_candidate = _normalize_text(candidate)
-        if normalized_candidate in normalized_map:
-            return normalized_map[normalized_candidate]
-    if required:
-        raise KeyError(f"Coluna esperada nao encontrada: {', '.join(candidates)}")
-    return None
-
-
-def _read_sheet(workbook_bytes: bytes, sheet_name: str | None, header: int) -> pd.DataFrame | None:
-    if sheet_name is None:
-        return None
-    dataframe = pd.read_excel(BytesIO(workbook_bytes), sheet_name=sheet_name, header=header)
-    dataframe = _clean_error_cells(dataframe)
-    dataframe = _promote_first_row_to_header(dataframe)
-    dataframe = _clean_excel_frame(dataframe)
-    return dataframe if not dataframe.empty else None
-
-
 def _read_sheet_raw(workbook_bytes: bytes, sheet_name: str | None) -> pd.DataFrame | None:
-    if sheet_name is None:
+    if not sheet_name:
         return None
     dataframe = pd.read_excel(BytesIO(workbook_bytes), sheet_name=sheet_name, header=None)
-    dataframe = _clean_error_cells(dataframe)
+    dataframe.attrs["source_name"] = sheet_name
     return dataframe
 
 
-def _promote_first_row_to_header(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-
-    columns = [str(column).strip() for column in df.columns]
-    unnamed_count = sum(column.lower().startswith("unnamed") for column in columns)
-    first_row = df.iloc[0]
-    first_row_values = [str(value).strip() for value in first_row.tolist() if pd.notna(value) and str(value).strip()]
-    normalized_values = [_normalize_text(value) for value in first_row_values]
-    header_signals = [
-        "fornecedor",
-        "natureza",
-        "valor",
-        "nf",
-        "item",
-        "descricao",
-        "n consolidado",
-        "total geral",
-        "taxa administracao",
-    ]
-
-    should_promote = unnamed_count >= max(1, len(columns) // 2) or any(
-        any(signal in value for signal in header_signals) for value in normalized_values
-    )
-    if not should_promote:
-        return df
-
-    promoted = df.iloc[1:].copy().reset_index(drop=True)
-    promoted.columns = [
+def _promote_header(df_raw: pd.DataFrame, required_cols: list[str]) -> pd.DataFrame:
+    header_row = find_header_row(df_raw, required_cols)
+    table = df_raw.iloc[header_row + 1 :].copy().reset_index(drop=True)
+    table.columns = [
         str(value).strip() if pd.notna(value) and str(value).strip() else f"COL_{index + 1}"
-        for index, value in enumerate(first_row.tolist())
+        for index, value in enumerate(df_raw.iloc[header_row].tolist())
     ]
-    return promoted
+    table = table.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    table.attrs["source_name"] = df_raw.attrs.get("source_name", "")
+    return table.reset_index(drop=True)
 
 
-def _promote_matching_row_to_header(
-    df: pd.DataFrame | None,
-    required_signals: list[str],
-    max_rows: int = 6,
-) -> pd.DataFrame | None:
-    if df is None or df.empty:
-        return df
-
-    for row_index in range(min(len(df), max_rows)):
-        row_values = [
-            str(value).strip()
-            for value in df.iloc[row_index].tolist()
-            if pd.notna(value) and str(value).strip()
-        ]
-        normalized_row = [_normalize_text(value) for value in row_values]
-        if all(any(signal in cell for cell in normalized_row) for signal in required_signals):
-            promoted = df.iloc[row_index + 1 :].copy().reset_index(drop=True)
-            promoted.columns = [
-                str(value).strip() if pd.notna(value) and str(value).strip() else f"COL_{index + 1}"
-                for index, value in enumerate(df.iloc[row_index].tolist())
-            ]
-            return _clean_excel_frame(promoted)
-
+def _attach_quality(df: pd.DataFrame, report: DataQualityReport) -> pd.DataFrame:
+    df.attrs["quality_report"] = asdict(report)
     return df
 
 
-def _parse_numeric_value(value: Any) -> float | None:
-    if value is None or (isinstance(value, float) and pd.isna(value)):
+def _empty_report() -> dict[str, Any]:
+    return asdict(DataQualityReport(total_rows=0, valid_rows=0))
+
+
+def _parse_month_key(column_name: Any) -> str | None:
+    if isinstance(column_name, (int, float)) and not isinstance(column_name, bool):
+        if float(column_name).is_integer():
+            month_num = int(column_name)
+            if 1 <= month_num <= 24:
+                return str(month_num)
+
+    raw_text = str(column_name).strip()
+    if re.fullmatch(r"\d+(?:\.0+)?", raw_text):
+        month_num = int(float(raw_text))
+        if 1 <= month_num <= 24:
+            return str(month_num)
+
+    normalized = _normalize_text(column_name)
+    if not normalized:
         return None
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "none", "---", "pago"}:
+    if normalized.isdigit():
+        month_num = int(normalized)
+        if 1 <= month_num <= 24:
+            return str(month_num)
         return None
 
-    text = text.replace("\xa0", " ")
-    text = re.sub(r"^r\$\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+", "", text)
-
-    if re.search(r"\d\.\d{3},\d", text):
-        text = text.replace(".", "").replace(",", ".")
-    elif "," in text and "." not in text:
-        text = text.replace(",", ".")
-    else:
-        text = text.replace(",", "")
-
-    try:
-        return float(text)
-    except ValueError:
+    if re.fullmatch(r"\d+\.0", normalized):
+        month_num = int(float(normalized))
+        if 1 <= month_num <= 24:
+            return str(month_num)
         return None
 
+    direct = MONTH_NAME_MAP.get(normalized)
+    if direct:
+        return direct
 
-def _coerce_numeric_column(df: pd.DataFrame | None, column_name: str) -> pd.DataFrame | None:
-    if df is None or column_name not in df.columns:
-        return df
-    working = df.copy()
-    working[column_name] = working[column_name].apply(_parse_numeric_value)
-    return working
-
-
-def _coerce_datetime_column(df: pd.DataFrame | None, column_name: str) -> pd.DataFrame | None:
-    if df is None or column_name not in df.columns:
-        return df
-    working = df.copy()
-    default_parsed = pd.to_datetime(working[column_name], errors="coerce")
-    dayfirst_parsed = pd.to_datetime(working[column_name], errors="coerce", dayfirst=True)
-    working[column_name] = default_parsed.fillna(dayfirst_parsed)
-    return working
+    for token, month_value in MONTH_NAME_MAP.items():
+        if token in normalized:
+            return month_value
+    return None
 
 
-def _first_content_columns(df: pd.DataFrame) -> list[str]:
-    content_columns: list[str] = []
-    for column in df.columns:
-        text = str(column).strip()
-        if not text or text.lower().startswith("unnamed"):
-            continue
-        content_columns.append(column)
-    return content_columns
-
-
-def _rename_columns_by_position(df: pd.DataFrame | None, mapping: dict[int, str]) -> pd.DataFrame | None:
-    if df is None or df.empty:
-        return df
-
-    rename_map: dict[str, str] = {}
-    for index, target in mapping.items():
-        if index < len(df.columns):
-            rename_map[df.columns[index]] = target
-
-    if not rename_map:
-        return df
-
-    return df.rename(columns=rename_map)
-
-
-def _extract_sheet_metadata(raw_df: pd.DataFrame | None) -> dict[str, Any]:
-    if raw_df is None or raw_df.empty:
+def _extract_metadata_from_resumo(df_raw: pd.DataFrame | None) -> dict[str, Any]:
+    if df_raw is None or df_raw.empty:
         return {}
 
-    metadata: dict[str, Any] = {
-        "obra_nome": "",
-        "cliente": "",
-        "taxa_adm_pct": 0.0,
-        "data_inicio": None,
-    }
-
-    for _, row in raw_df.iterrows():
+    metadata: dict[str, Any] = {}
+    for _, row in df_raw.head(12).iterrows():
         values = [str(value).strip() for value in row.tolist() if pd.notna(value) and str(value).strip()]
-        if not values:
-            continue
-
-        normalized_values = [_normalize_text(value) for value in values]
-        joined = " | ".join(values)
-        normalized_joined = _normalize_text(joined)
-
-        for index, normalized_value in enumerate(normalized_values):
+        normalized = [_normalize_text(value) for value in values]
+        for index, token in enumerate(normalized):
             next_value = values[index + 1] if index + 1 < len(values) else ""
-            if normalized_value == "obra" and next_value and not metadata["obra_nome"]:
-                metadata["obra_nome"] = next_value
-            if normalized_value == "cliente" and next_value and not metadata["cliente"]:
+            if token == "OBRA" and next_value and "obra" not in metadata:
+                metadata["obra"] = next_value
+            if token == "CLIENTE" and next_value and "cliente" not in metadata:
                 metadata["cliente"] = next_value
-            if normalized_value.startswith("taxa adm") and metadata["taxa_adm_pct"] == 0.0:
-                match = re.search(r"(\d+(?:[.,]\d+)?)", next_value or joined)
-                if match:
-                    metadata["taxa_adm_pct"] = float(match.group(1).replace(",", "."))
-            if normalized_value == "inicio" and metadata["data_inicio"] is None:
-                parsed_values = pd.to_datetime(pd.Series([next_value] + values), errors="coerce", dayfirst=True).dropna()
-                if not parsed_values.empty:
-                    metadata["data_inicio"] = parsed_values.iloc[0].date().isoformat()
-
-        if "obra" in normalized_joined and not metadata["obra_nome"]:
-            metadata["obra_nome"] = values[-1]
-        if "cliente" in normalized_joined and not metadata["cliente"]:
-            metadata["cliente"] = values[-1]
-        if "taxa adm" in normalized_joined and metadata["taxa_adm_pct"] == 0.0:
-            match = re.search(r"(\d+(?:[.,]\d+)?)", joined)
-            if match:
-                metadata["taxa_adm_pct"] = float(match.group(1).replace(",", "."))
-        if "inicio" in normalized_joined and metadata["data_inicio"] is None:
-            parsed_values = pd.to_datetime(pd.Series(values), errors="coerce", dayfirst=True).dropna()
-            if not parsed_values.empty:
-                metadata["data_inicio"] = parsed_values.iloc[0].date().isoformat()
-
+            if token.startswith("TAXA ADM") and next_value and "taxa_adm_pct" not in metadata:
+                metadata["taxa_adm_pct"] = next_value
+            if token.startswith("INICIO") and next_value and "data_inicio" not in metadata:
+                parsed = pd.to_datetime(next_value, errors="coerce", dayfirst=True)
+                if pd.notna(parsed):
+                    metadata["data_inicio"] = parsed.date().isoformat()
     return metadata
 
 
-def _prepare_nfs_dataframe(df: pd.DataFrame | None) -> pd.DataFrame | None:
-    if df is None or df.empty:
-        return df
-    working = df.copy()
-    fornecedor_col = _find_column(working, ["FORNECEDOR"], required=True)
-    valor_col = _find_column(working, ["VALOR"], required=True)
-    data_col = _find_column(working, ["DATA VENCTO"], required=False)
-
-    working = _coerce_numeric_column(working, str(valor_col))
-    working = _coerce_numeric_column(working, "SALDO PLANILHA")
-    if data_col:
-        working = _coerce_datetime_column(working, str(data_col))
-
-    working = working[working[fornecedor_col].notna()]
-    working = working[working[fornecedor_col].astype(str).str.strip() != "---"]
-    working = working[working[valor_col].notna() & (working[valor_col] != 0)]
-    return working.reset_index(drop=True)
+def canonicalize_nfs_frame(df: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame(columns=list(NFS_COLUMN_MAP.keys()))
+    normalized = normalize_df(df, NFS_COLUMN_MAP)
+    if "fornecedor" in normalized.columns and "valor" in normalized.columns:
+        normalized = normalized[~(normalized["fornecedor"].isna() & normalized["valor"].isna())]
+    if "data_vencimento" in normalized.columns:
+        normalized["data_vencimento"] = pd.to_datetime(normalized["data_vencimento"], errors="coerce", dayfirst=True)
+    return normalized.reset_index(drop=True)
 
 
-def _prepare_consolidado_dataframe(df: pd.DataFrame | None) -> pd.DataFrame | None:
-    if df is None or df.empty:
-        return df
-    working = df.copy()
-    fornecedor_col = _find_column(working, ["FORNECEDOR"], required=True)
-    consolidado_col = _find_column(working, ["N CONSOLIDADO", "Nº CONSOLIDADO", "N CONSOLIDADO"], required=False)
-    valor_col = _find_column(working, ["VALOR"], required=False)
-    data_col = _find_column(working, ["DATA VENCTO"], required=False)
-
-    if valor_col:
-        working = _coerce_numeric_column(working, str(valor_col))
-    if data_col:
-        working = _coerce_datetime_column(working, str(data_col))
-
-    if consolidado_col:
-        working = working[working[consolidado_col].notna()]
-    working = working[~working[fornecedor_col].astype(str).str.startswith("---")]
-    if valor_col:
-        working = working[working[valor_col].notna() & (working[valor_col] != 0)]
-    return working.reset_index(drop=True)
+def canonicalize_consolidado_frame(df: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame(columns=list(CONSOLIDADO_COLUMN_MAP.keys()))
+    normalized = normalize_df(df, CONSOLIDADO_COLUMN_MAP)
+    if "data_vencimento" in normalized.columns:
+        normalized["data_vencimento"] = pd.to_datetime(normalized["data_vencimento"], errors="coerce", dayfirst=True)
+    return normalized.reset_index(drop=True)
 
 
-def parse_orcamento_sheet(df_raw: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    content_columns = _first_content_columns(df_raw)
-    if len(content_columns) < 9:
-        return {"budget": pd.DataFrame(), "mapas": pd.DataFrame()}
-
-    budget_df = df_raw.loc[:, content_columns[:9]].copy()
-    descricao_col = _find_column(budget_df, ["DESCRICAO", "DESCRIÇÃO"], required=False)
-    if descricao_col:
-        budget_df = budget_df[budget_df[descricao_col].notna()].copy()
-        budget_df = budget_df[budget_df[descricao_col].astype(str).str.strip() != ""].copy()
-
-    return {
-        "budget": budget_df.reset_index(drop=True),
-        "mapas": pd.DataFrame(),
-    }
-
-
-def parse_orcado_realizado_sheet(df_raw: pd.DataFrame) -> pd.DataFrame:
-    if df_raw.empty:
-        return pd.DataFrame()
-
-    working = _promote_matching_row_to_header(
-        _clean_error_cells(df_raw),
-        required_signals=["item subitem", "descricao", "verba total"],
-    )
-    if working is None or working.empty:
-        return pd.DataFrame()
-
-    working = _clean_excel_frame(working)
-    item_col = _find_column(working, ["ITEM/SUBITEM", "ITEM SUBITEM", "ITEM"], required=False)
-    descricao_col = _find_column(working, ["DESCRIÇÃO", "DESCRICAO"], required=False)
-    verba_col = _find_column(
-        working,
-        ["VERBA TOTAL CUSTO DIRETO", "VERBA TOTAL CUSTO DIRETO SEM TAXA DE ADM", "VERBA TOTAL"],
-        required=False,
-    )
-
-    if descricao_col is None or verba_col is None:
-        return pd.DataFrame()
-
-    rename_map: dict[str, str] = {}
-    if item_col and item_col != "ITEM/SUBITEM":
-        rename_map[item_col] = "ITEM/SUBITEM"
-    if descricao_col != "DESCRIÇÃO":
-        rename_map[descricao_col] = "DESCRIÇÃO"
-    if verba_col != "VERBA TOTAL CUSTO DIRETO":
-        rename_map[verba_col] = "VERBA TOTAL CUSTO DIRETO"
-    if rename_map:
-        working = working.rename(columns=rename_map)
-        item_col = "ITEM/SUBITEM" if item_col else None
-        descricao_col = "DESCRIÇÃO"
-        verba_col = "VERBA TOTAL CUSTO DIRETO"
-
-    month_columns = [column for column in working.columns if str(column).strip().isdigit()]
-    if not month_columns:
-        columns = list(working.columns)
-        desembolso_col = _find_column(working, ["DESEMBOLSOS CONSOLIDADOS"], required=False)
-        saldo_col = _find_column(working, ["SALDO A DESEMBOLSAR"], required=False)
-        start_index = columns.index(desembolso_col) if desembolso_col in columns else 0
-        end_index = columns.index(saldo_col) if saldo_col in columns else len(columns)
-        fallback_columns = [
-            column
-            for column in columns[start_index:end_index]
-            if column not in {item_col, descricao_col, verba_col}
+def canonicalize_budget_frame(df: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame(columns=list(ORCAMENTO_BUDGET_COLUMN_MAP.keys()))
+    normalized = normalize_df(df, ORCAMENTO_BUDGET_COLUMN_MAP)
+    if "item" in normalized.columns and "custo_total" in normalized.columns:
+        normalized = normalized[
+            ~(
+                normalized["item"].astype("string").str.strip().fillna("").eq("")
+                & (normalized["custo_total"].fillna(0) == 0)
+            )
         ]
-        if fallback_columns:
-            working = working.rename(columns={column: str(index + 1) for index, column in enumerate(fallback_columns)})
-            month_columns = [column for column in working.columns if str(column).strip().isdigit()]
-
-    if not month_columns:
-        return pd.DataFrame()
-
-    melted = working.melt(
-        id_vars=[column for column in working.columns if column not in month_columns],
-        value_vars=month_columns,
-        var_name="PERIODO",
-        value_name="DESEMBOLSO",
-    )
-
-    if item_col:
-        melted = melted[melted[item_col].notna()].copy()
-        melted = melted[melted[item_col].astype(str).str.strip() != ""].copy()
-
-    melted["PERIODO"] = pd.to_numeric(melted["PERIODO"].astype(str), errors="coerce").astype("Int64")
-    melted["DESEMBOLSO"] = melted["DESEMBOLSO"].apply(_parse_numeric_value)
-    melted[verba_col] = melted[verba_col].apply(_parse_numeric_value)
-    melted = melted.dropna(subset=["PERIODO", "DESEMBOLSO"]).reset_index(drop=True)
-    return melted
+    return normalized.reset_index(drop=True)
 
 
-def _fallback_structured_payload() -> dict[str, Any]:
-    return {
-        "nfs": [],
-        "orcamento": {"budget": [], "mapas": []},
-        "orcamento_flat": [],
-        "orcado_realizado": [],
-        "consolidado": [],
-        "resumo": [],
-        "resumo_meta": {},
-    }
-
-
-def _parse_nfs_sheet(workbook_bytes: bytes, sheet_name: str | None) -> pd.DataFrame:
-    dataframe = _read_sheet(workbook_bytes, sheet_name, header=7)
-    if dataframe is None or dataframe.empty:
-        return pd.DataFrame()
-    prepared = _prepare_nfs_dataframe(dataframe)
-    return prepared if prepared is not None else pd.DataFrame()
-
-
-def _parse_consolidado_sheet(workbook_bytes: bytes, sheet_name: str | None) -> pd.DataFrame:
-    dataframe = pd.read_excel(BytesIO(workbook_bytes), sheet_name=sheet_name, header=7) if sheet_name else pd.DataFrame()
-    if dataframe.empty:
-        return pd.DataFrame()
-
-    dataframe = _clean_excel_frame(_clean_error_cells(dataframe))
-    dataframe = _rename_columns_by_position(
-        dataframe,
+def canonicalize_mapas_frame(df: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame(columns=["item", "subitem", "descricao", "mapa_num", "valor_alocado"])
+    return normalize_df(
+        df,
         {
-            1: "NÂº CONSOLIDADO",
-            2: "FORNECEDOR",
-            3: "NF",
-            4: "MAPA",
-            5: "NATUREZA",
-            6: "COND.PAGTO",
-            7: "DATA VENCTO",
-            8: "VALOR",
-            9: "ITEM APROPRIAÃ‡ÃƒO",
-            10: "VALOR APROPRIADO",
+            "item": ["ITEM"],
+            "subitem": ["SUBITEM"],
+            "descricao": ["DESCRIÇÃO", "DESCRICAO"],
+            "mapa_num": ["MAPA", "MAPA_NUM", "MAPA NUM"],
+            "valor_alocado": ["VALOR ALOCADO", "VALOR_ALOCADO", "VALOR_MAPA"],
         },
     )
-    coerced_valor = _coerce_numeric_column(dataframe, "VALOR")
-    dataframe = coerced_valor if coerced_valor is not None else dataframe
-    coerced_apropriado = _coerce_numeric_column(dataframe, "VALOR APROPRIADO")
-    dataframe = coerced_apropriado if coerced_apropriado is not None else dataframe
-    coerced_data = _coerce_datetime_column(dataframe, "DATA VENCTO")
-    dataframe = coerced_data if coerced_data is not None else dataframe
-    prepared = _prepare_consolidado_dataframe(dataframe)
-    dataframe = prepared if prepared is not None else pd.DataFrame()
-    return dataframe
 
 
-def _parse_orcamento_flat_sheet(workbook_bytes: bytes, sheet_name: str | None) -> pd.DataFrame:
-    dataframe = _read_sheet(workbook_bytes, sheet_name, header=8)
-    if dataframe is None or dataframe.empty:
-        return pd.DataFrame()
-    return parse_orcamento_sheet(dataframe)["budget"]
+def canonicalize_resumo_frame(df: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame(columns=list(RESUMO_COLUMN_MAP.keys()))
+    normalized = normalize_df(df, RESUMO_COLUMN_MAP)
+    numeric_cols = [
+        column
+        for column in normalized.columns
+        if column
+        not in {"n_consolidado", "fornecedor", "nf_administracao", "data_vencimento", "data_recebimento"}
+    ]
+    for column in numeric_cols:
+        normalized[column] = pd.to_numeric(normalized[column], errors="coerce").fillna(0)
+    for column in ["data_vencimento", "data_recebimento"]:
+        if column in normalized.columns:
+            normalized[column] = pd.to_datetime(normalized[column], errors="coerce", dayfirst=True)
+    return normalized.reset_index(drop=True)
 
 
-def _parse_resumo_sheet(workbook_bytes: bytes, sheet_name: str | None) -> pd.DataFrame:
-    dataframe = pd.read_excel(BytesIO(workbook_bytes), sheet_name=sheet_name, header=7) if sheet_name else pd.DataFrame()
-    if dataframe.empty:
-        return pd.DataFrame()
-
-    dataframe = _clean_error_cells(dataframe)
-    promoted = _promote_matching_row_to_header(dataframe, ["consolidado", "total geral"], max_rows=6)
-    if promoted is None or promoted.empty:
-        return pd.DataFrame()
-
-    working = _clean_excel_frame(promoted)
-    for candidates in [
-        ["MATERIAL/SERVICO", "MATERIAL/SERVIÇO"],
-        ["MAO OBRA EMPREITADA", "MÃO OBRA EMPREITADA"],
-        ["MAO OBRA TEMPO", "MÃO OBRA TEMPO"],
-        ["STAFF"],
-        ["SERVICO SEM TAXA ADM", "SERVIÇO SEM TAXA ADM"],
-        ["TOTAL"],
-        ["TAXA ADMINISTRACAO", "TAXA ADMINISTRAÇÃO"],
-        ["%"],
-        ["TOTAL GERAL"],
-    ]:
-        column_name = _find_column(working, candidates, required=False)
-        if column_name:
-            coerced = _coerce_numeric_column(working, column_name)
-            working = coerced if coerced is not None else working
-
-    for candidates in [["DATA VENCTO"], ["DATA RECBTO"], ["DATA RECBTº"]]:
-        column_name = _find_column(working, candidates, required=False)
-        if column_name:
-            coerced = _coerce_datetime_column(working, column_name)
-            working = coerced if coerced is not None else working
-
-    total_geral_col = _find_column(working, ["TOTAL GERAL"], required=False)
-    if total_geral_col:
-        working[total_geral_col] = pd.to_numeric(working[total_geral_col], errors="coerce").fillna(0)
-
-    return working.reset_index(drop=True)
+def canonicalize_orcado_realizado_frame(df: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame(columns=["item", "subitem", "descricao", "verba_total"])
+    explicit = normalize_df(
+        df,
+        {
+            "item": ["item", "ITEM", "ITEM/SUBITEM", "ITEM SUBITEM"],
+            "subitem": ["subitem", "SUBITEM"],
+            "descricao": ["descricao", "DESCRIÇÃO", "DESCRICAO"],
+            "verba_total": ["verba_total", "VERBA TOTAL CUSTO DIRETO", "VERBA TOTAL", "VERBA"],
+        },
+    )
+    remaining_months: dict[str, pd.Series] = {}
+    for column in df.columns:
+        month_key = _parse_month_key(column)
+        if month_key is not None:
+            remaining_months[month_key] = pd.to_numeric(df[column], errors="coerce").fillna(0)
+    for column_name, series in remaining_months.items():
+        explicit[column_name] = series.values[: len(explicit)]
+    return explicit.reset_index(drop=True)
 
 
-def _parse_orcado_realizado_sheet_defensive(workbook_bytes: bytes, sheet_name: str | None) -> pd.DataFrame:
-    if sheet_name is None:
-        return pd.DataFrame()
+def _parse_nfs_sheet(workbook_bytes: bytes, sheet_name: str | None) -> tuple[pd.DataFrame, dict[str, Any]]:
+    if not sheet_name:
+        return pd.DataFrame(columns=list(NFS_COLUMN_MAP.keys())), _empty_report()
 
-    dataframe = pd.read_excel(BytesIO(workbook_bytes), sheet_name=sheet_name, header=7)
-    dataframe = _clean_error_cells(dataframe)
-    parsed = parse_orcado_realizado_sheet(dataframe)
-    if not parsed.empty:
-        return parsed
+    raw = _read_sheet_raw(workbook_bytes, sheet_name)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=list(NFS_COLUMN_MAP.keys())), _empty_report()
 
-    fallback = _read_sheet(workbook_bytes, sheet_name, header=10)
-    if fallback is None or fallback.empty:
-        return pd.DataFrame()
+    table = _promote_header(raw, ["FORNECEDOR", "NF", "VALOR", "NATUREZA", "DATA"])
+    normalized = canonicalize_nfs_frame(table)
+    report = validate_df(
+        normalized,
+        {
+            "required": ["fornecedor", "nf", "valor"],
+            "numeric": ["valor", "valor_item", "saldo_planilha"],
+            "date": ["data_vencimento"],
+            "non_empty": ["fornecedor", "natureza"],
+        },
+    )
+    return _attach_quality(normalized, report), asdict(report)
 
-    parsed = parse_orcado_realizado_sheet(fallback)
-    if not parsed.empty:
-        return parsed
 
-    return pd.DataFrame()
+def _parse_consolidado_sheet(workbook_bytes: bytes, sheet_name: str | None) -> tuple[pd.DataFrame, dict[str, Any]]:
+    if not sheet_name:
+        return pd.DataFrame(columns=list(CONSOLIDADO_COLUMN_MAP.keys())), _empty_report()
+
+    raw = _read_sheet_raw(workbook_bytes, sheet_name)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=list(CONSOLIDADO_COLUMN_MAP.keys())), _empty_report()
+
+    table = _promote_header(raw, ["FORNECEDOR", "NF", "VALOR", "NATUREZA", "DATA"])
+    normalized = canonicalize_consolidado_frame(table)
+    report = validate_df(
+        normalized,
+        {
+            "required": ["fornecedor", "nf", "valor"],
+            "numeric": ["valor", "apropriacao_valor"],
+            "date": ["data_vencimento"],
+            "non_empty": ["fornecedor", "natureza"],
+        },
+    )
+    return _attach_quality(normalized, report), asdict(report)
 
 
-def _build_structured_payload(
-    sheets: dict[str, pd.DataFrame],
-    resumo_meta: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    sheet_names = list(sheets.keys())
-    nfs_sheet = _match_sheet_name(sheet_names, ["PLANILHA NFs - Entrada de Dados", "PLANILHA NFs", "NFs"])
-    orcamento_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇAMENTO - Entrada de", "PLANILHA ORCAMENTO"])
-    orcado_realizado_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇADOxREALIZADO", "PLANILHA ORCADOxREALIZADO"])
-    consolidado_sheet = _match_sheet_name(sheet_names, ["PLANILHA CONSOLIDADO", "CONSOLIDADO"])
-    resumo_sheet = _match_sheet_name(sheet_names, ["RESUMO CONSOLIDADOS - CLIENTE", "RESUMO CONSOLIDADOS"])
+def _parse_orcamento_sheet(
+    workbook_bytes: bytes,
+    sheet_name: str | None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    if not sheet_name:
+        return (
+            pd.DataFrame(columns=list(ORCAMENTO_BUDGET_COLUMN_MAP.keys())),
+            pd.DataFrame(columns=["item", "subitem", "descricao", "mapa_num", "valor_alocado"]),
+            _empty_report(),
+        )
 
-    try:
-        nfs_df = _prepare_nfs_dataframe(sheets.get(nfs_sheet)) if nfs_sheet else None
-    except KeyError:
-        nfs_df = sheets.get(nfs_sheet).copy() if nfs_sheet and nfs_sheet in sheets else None
+    raw = _read_sheet_raw(workbook_bytes, sheet_name)
+    if raw is None or raw.empty:
+        return (
+            pd.DataFrame(columns=list(ORCAMENTO_BUDGET_COLUMN_MAP.keys())),
+            pd.DataFrame(columns=["item", "subitem", "descricao", "mapa_num", "valor_alocado"]),
+            _empty_report(),
+        )
 
-    try:
-        consolidado_df = _prepare_consolidado_dataframe(sheets.get(consolidado_sheet)) if consolidado_sheet else None
-    except KeyError:
-        consolidado_df = sheets.get(consolidado_sheet).copy() if consolidado_sheet and consolidado_sheet in sheets else None
+    table = _promote_header(raw, ["ITEM", "DESCRIÇÃO", "CUSTO TOTAL", "CUSTO UNITÁRIO", "QTD"])
+    first_nine = table.iloc[:, : min(9, len(table.columns))].copy()
+    budget_rename_map: dict[str, str] = {}
+    for column in first_nine.columns:
+        normalized = _normalize_text(column)
+        if normalized == "ITEM":
+            budget_rename_map[column] = "item"
+        elif normalized == "SUBITEM":
+            budget_rename_map[column] = "subitem"
+        elif normalized == "DESCRICAO":
+            budget_rename_map[column] = "descricao"
+        elif normalized == "UNID":
+            budget_rename_map[column] = "unid"
+        elif normalized in {"QTD", "QUANTIDADE"}:
+            budget_rename_map[column] = "qtd"
+        elif normalized == "CUSTO UNITARIO":
+            budget_rename_map[column] = "custo_unitario"
+        elif normalized == "CUSTO TOTAL":
+            budget_rename_map[column] = "custo_total"
 
-    resumo_df = sheets.get(resumo_sheet).copy() if resumo_sheet and resumo_sheet in sheets else None
-    if resumo_df is not None and not resumo_df.empty:
-        resumo_df = _clean_error_cells(resumo_df)
-        for candidates in [
-            ["MATERIAL/SERVICO", "MATERIAL/SERVIÇO"],
-            ["MAO OBRA EMPREITADA", "MÃO OBRA EMPREITADA"],
-            ["MAO OBRA TEMPO", "MÃO OBRA TEMPO"],
-            ["STAFF"],
-            ["SERVICO SEM TAXA ADM", "SERVIÇO SEM TAXA ADM"],
-            ["TOTAL"],
-            ["TAXA ADMINISTRACAO", "TAXA ADMINISTRAÇÃO"],
-            ["%"],
-            ["TOTAL GERAL"],
-        ]:
-            column_name = _find_column(resumo_df, candidates, required=False)
-            if column_name:
-                resumo_df = _coerce_numeric_column(resumo_df, column_name)
-        for candidates in [["DATA VENCTO"], ["DATA RECBTO"]]:
-            column_name = _find_column(resumo_df, candidates, required=False)
-            if column_name:
-                resumo_df = _coerce_datetime_column(resumo_df, column_name)
+    budget_source = first_nine.rename(columns=budget_rename_map)
+    budget_df = canonicalize_budget_frame(budget_source)
+    if {"item", "custo_total"}.issubset(budget_df.columns):
+        budget_df = budget_df[
+            ~(
+                budget_df["item"].astype("string").str.strip().fillna("").eq("")
+                & budget_df["custo_total"].fillna(0).eq(0)
+            )
+        ].reset_index(drop=True)
 
-    orcamento_raw = sheets.get(orcamento_sheet).copy() if orcamento_sheet and orcamento_sheet in sheets else None
-    if isinstance(orcamento_raw, pd.DataFrame):
-        orcamento_raw = _clean_error_cells(orcamento_raw)
-    orcamento = parse_orcamento_sheet(orcamento_raw) if isinstance(orcamento_raw, pd.DataFrame) and not orcamento_raw.empty else {"budget": None, "mapas": None}
-
-    orcado_realizado_raw = sheets.get(orcado_realizado_sheet).copy() if orcado_realizado_sheet and orcado_realizado_sheet in sheets else None
-    if isinstance(orcado_realizado_raw, pd.DataFrame):
-        orcado_realizado_raw = _clean_error_cells(orcado_realizado_raw)
-    orcado_realizado = (
-        parse_orcado_realizado_sheet(orcado_realizado_raw)
-        if isinstance(orcado_realizado_raw, pd.DataFrame) and not orcado_realizado_raw.empty
-        else None
+    report = validate_df(
+        budget_df,
+        {
+            "required": ["item", "descricao", "custo_total"],
+            "numeric": ["qtd", "custo_unitario", "custo_total"],
+            "date": [],
+            "non_empty": ["item", "descricao"],
+        },
     )
 
-    return {
-        "nfs": nfs_df,
-        "orcamento": {
-            "budget": orcamento["budget"] if isinstance(orcamento, dict) else None,
-            "mapas": orcamento["mapas"] if isinstance(orcamento, dict) else None,
-        },
-        "orcado_realizado": orcado_realizado,
-        "consolidado": consolidado_df,
-        "resumo": resumo_df,
-        "resumo_meta": resumo_meta or {},
-    }
+    mapas_df = pd.DataFrame(columns=["item", "subitem", "descricao", "mapa_num", "valor_alocado"])
+    if len(table.columns) > 9 and not budget_df.empty:
+        mapa_values = table.iloc[:, 9:].copy().reset_index(drop=True)
+        id_columns = [column for column in ["item", "subitem", "descricao"] if column in budget_source.columns]
+        if "item" in id_columns and "descricao" in id_columns:
+            melt_source = pd.concat([budget_source[id_columns].reset_index(drop=True), mapa_values], axis=1)
+            mapa_columns = list(mapa_values.columns)
+            mapas_df = (
+                melt_source.melt(
+                    id_vars=id_columns,
+                    value_vars=mapa_columns,
+                    var_name="mapa_num",
+                    value_name="valor_alocado",
+                )
+                .assign(valor_alocado=lambda frame: pd.to_numeric(frame["valor_alocado"], errors="coerce"))
+                .dropna(subset=["valor_alocado"])
+            )
+            mapas_df = mapas_df[mapas_df["valor_alocado"] != 0].reset_index(drop=True)
+
+    return _attach_quality(budget_df, report), mapas_df, asdict(report)
 
 
-def build_structured_from_sheets(
-    sheets: dict[str, pd.DataFrame],
-    resumo_meta: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    return _build_structured_payload(sheets, resumo_meta=resumo_meta)
+def _parse_orcado_realizado_sheet(workbook_bytes: bytes, sheet_name: str | None) -> tuple[pd.DataFrame, dict[str, Any]]:
+    if not sheet_name:
+        return pd.DataFrame(columns=["item", "subitem", "descricao", "verba_total"]), _empty_report()
 
+    raw = _read_sheet_raw(workbook_bytes, sheet_name)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=["item", "subitem", "descricao", "verba_total"]), _empty_report()
 
-def _parse_custos_workbook_bytes(workbook_bytes: bytes) -> dict[str, Any]:
     try:
-        workbook = pd.ExcelFile(BytesIO(workbook_bytes))
-        sheet_names = workbook.sheet_names
+        table = _promote_header(raw, ["DESCRIÇÃO", "VERBA", "ITEM", "SUBITEM"])
+    except HeaderNotFoundError:
+        table = _promote_header(raw, ["DESCRIÇÃO", "VERBA", "ITEM"])
+    rename_map: dict[str, str] = {}
+    for column in table.columns:
+        normalized = _normalize_text(column)
+        if normalized in {"ITEM", "ITEM SUBITEM"}:
+            rename_map[column] = "item"
+        elif normalized == "SUBITEM":
+            rename_map[column] = "subitem"
+        elif normalized == "DESCRICAO":
+            rename_map[column] = "descricao"
+        elif normalized.startswith("VERBA"):
+            rename_map[column] = "verba_total"
 
-        nfs_sheet = _match_sheet_name(sheet_names, ["PLANILHA NFs - Entrada de Dados", "PLANILHA NFs", "NFs"])
-        orcamento_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇAMENTO - Entrada de", "PLANILHA ORCAMENTO"])
-        orcado_realizado_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇADOxREALIZADO", "PLANILHA ORCADOxREALIZADO"])
-        consolidado_sheet = _match_sheet_name(sheet_names, ["PLANILHA CONSOLIDADO", "CONSOLIDADO"])
-        resumo_sheet = _match_sheet_name(sheet_names, ["RESUMO CONSOLIDADOS - CLIENTE", "RESUMO CONSOLIDADOS"])
-        resumo_raw = _read_sheet_raw(workbook_bytes, resumo_sheet)
-        payload = _fallback_structured_payload()
-        payload["resumo_meta"] = _extract_sheet_metadata(resumo_raw)
+    working = table.rename(columns=rename_map).copy()
+    month_columns: dict[str, str] = {}
+    for column in working.columns:
+        month_key = _parse_month_key(column)
+        if month_key is not None and column not in {"item", "subitem", "descricao", "verba_total"}:
+            month_columns[column] = month_key
 
-        try:
-            payload["nfs"] = _parse_nfs_sheet(workbook_bytes, nfs_sheet)
-        except Exception as exc:
-            print(f"[custos_analyzer] Falha ao processar sheet NFs: {exc}")
-            payload["nfs"] = []
+    working = working.rename(columns=month_columns)
+    base_columns = [column for column in ["item", "subitem", "descricao", "verba_total"] if column in working.columns]
+    selected_columns = base_columns + list(month_columns.values())
+    normalized = working.loc[:, selected_columns].copy()
+    for column in ["verba_total", *month_columns.values()]:
+        if column in normalized.columns:
+            normalized[column] = pd.to_numeric(normalized[column], errors="coerce").fillna(0)
+    if "item" in normalized.columns:
+        normalized = normalized[~normalized["item"].astype("string").str.strip().fillna("").eq("")]
+    report = validate_df(
+        normalized,
+        {
+            "required": ["descricao", "verba_total"],
+            "numeric": ["verba_total", *month_columns.values()],
+            "date": [],
+            "non_empty": ["descricao"],
+        },
+    )
+    return _attach_quality(normalized.reset_index(drop=True), report), asdict(report)
 
-        try:
-            payload["consolidado"] = _parse_consolidado_sheet(workbook_bytes, consolidado_sheet)
-        except Exception as exc:
-            print(f"[custos_analyzer] Falha ao processar sheet Consolidado: {exc}")
-            payload["consolidado"] = []
 
-        try:
-            payload["orcamento_flat"] = _parse_orcamento_flat_sheet(workbook_bytes, orcamento_sheet)
-            payload["orcamento"] = {
-                "budget": payload["orcamento_flat"],
-                "mapas": [],
-            }
-        except Exception as exc:
-            print(f"[custos_analyzer] Falha ao processar sheet Orcamento: {exc}")
-            payload["orcamento_flat"] = []
-            payload["orcamento"] = {"budget": [], "mapas": []}
+def _parse_resumo_sheet(
+    workbook_bytes: bytes,
+    sheet_name: str | None,
+) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
+    if not sheet_name:
+        return pd.DataFrame(columns=list(RESUMO_COLUMN_MAP.keys())), _empty_report(), {}
 
-        try:
-            payload["orcado_realizado"] = _parse_orcado_realizado_sheet_defensive(workbook_bytes, orcado_realizado_sheet)
-        except Exception as exc:
-            print(f"[custos_analyzer] Falha ao processar sheet Orcado x Realizado: {exc}")
-            payload["orcado_realizado"] = []
+    raw = _read_sheet_raw(workbook_bytes, sheet_name)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=list(RESUMO_COLUMN_MAP.keys())), _empty_report(), {}
 
-        try:
-            payload["resumo"] = _parse_resumo_sheet(workbook_bytes, resumo_sheet)
-        except Exception as exc:
-            print(f"[custos_analyzer] Falha ao processar sheet Resumo: {exc}")
-            payload["resumo"] = []
+    metadata = _extract_metadata_from_resumo(raw)
+    try:
+        table = _promote_header(
+            raw,
+            ["TOTAL GERAL", "TAXA ADMINISTRAÇÃO", "MATERIAL", "MÃO OBRA", "FORNECEDOR"],
+        )
+    except HeaderNotFoundError:
+        table = _promote_header(raw, ["TOTAL GERAL", "TAXA ADMINISTRAÇÃO", "MATERIAL"])
 
-        return payload
-    except Exception as exc:
-        print(f"[custos_analyzer] Falha geral no parse estruturado de custos: {exc}")
-        return _fallback_structured_payload()
+    normalized = canonicalize_resumo_frame(table)
+    report = validate_df(
+        normalized,
+        {
+            "required": ["total_geral"],
+            "numeric": [
+                "material_servico",
+                "mao_obra_empr",
+                "mao_obra_tempo",
+                "staff",
+                "servicos_sem_taxa_adm",
+                "total",
+                "taxa_administracao",
+                "taxa_pct",
+                "total_geral",
+            ],
+            "date": ["data_vencimento", "data_recebimento"],
+            "non_empty": [],
+        },
+    )
+    return _attach_quality(normalized, report), asdict(report), metadata
 
 
 def parse_custos_workbook_bytes(workbook_bytes: bytes) -> dict[str, Any]:
-    return _parse_custos_workbook_bytes(workbook_bytes)
+    try:
+        workbook = pd.ExcelFile(BytesIO(workbook_bytes))
+    except Exception as exc:
+        logger.exception("Falha ao abrir workbook de custos: %s", exc)
+        return {
+            "nfs": pd.DataFrame(columns=list(NFS_COLUMN_MAP.keys())),
+            "orcamento": {"budget": pd.DataFrame(), "mapas": pd.DataFrame()},
+            "orcado_realizado": pd.DataFrame(),
+            "consolidado": pd.DataFrame(),
+            "resumo": pd.DataFrame(),
+            "quality_reports": {},
+            "metadata": {},
+        }
+
+    sheet_names = workbook.sheet_names
+    nfs_sheet = _match_sheet_name(sheet_names, ["PLANILHA NFs - Entrada de Dados", "PLANILHA NFs", "NFs"])
+    consolidado_sheet = _match_sheet_name(sheet_names, ["PLANILHA CONSOLIDADO", "CONSOLIDADO"])
+    orcamento_sheet = _match_sheet_name(sheet_names, ["PLANILHA ORÇAMENTO - Entrada de", "PLANILHA ORCAMENTO"])
+    orcado_realizado_sheet = _match_sheet_name(
+        sheet_names,
+        ["PLANILHA ORÇADOxREALIZADO", "PLANILHA ORCADOxREALIZADO"],
+    )
+    resumo_sheet = _match_sheet_name(sheet_names, ["RESUMO CONSOLIDADOS - CLIENTE", "RESUMO CONSOLIDADOS"])
+
+    result: dict[str, Any] = {
+        "nfs": pd.DataFrame(columns=list(NFS_COLUMN_MAP.keys())),
+        "orcamento": {"budget": pd.DataFrame(), "mapas": pd.DataFrame()},
+        "orcado_realizado": pd.DataFrame(),
+        "consolidado": pd.DataFrame(columns=list(CONSOLIDADO_COLUMN_MAP.keys())),
+        "resumo": pd.DataFrame(columns=list(RESUMO_COLUMN_MAP.keys())),
+        "quality_reports": {},
+        "metadata": {},
+    }
+
+    try:
+        result["nfs"], result["quality_reports"]["nfs"] = _parse_nfs_sheet(workbook_bytes, nfs_sheet)
+    except Exception as exc:
+        logger.exception("Falha ao processar sheet NFs: %s", exc)
+        result["nfs"] = pd.DataFrame(columns=list(NFS_COLUMN_MAP.keys()))
+        result["quality_reports"]["nfs"] = _empty_report()
+
+    try:
+        result["consolidado"], result["quality_reports"]["consolidado"] = _parse_consolidado_sheet(
+            workbook_bytes,
+            consolidado_sheet,
+        )
+    except Exception as exc:
+        logger.exception("Falha ao processar sheet Consolidado: %s", exc)
+        result["consolidado"] = pd.DataFrame(columns=list(CONSOLIDADO_COLUMN_MAP.keys()))
+        result["quality_reports"]["consolidado"] = _empty_report()
+
+    try:
+        budget_df, mapas_df, budget_report = _parse_orcamento_sheet(workbook_bytes, orcamento_sheet)
+        result["orcamento"] = {"budget": budget_df, "mapas": mapas_df}
+        result["quality_reports"]["orcamento"] = budget_report
+    except Exception as exc:
+        logger.exception("Falha ao processar sheet Orcamento: %s", exc)
+        result["orcamento"] = {"budget": pd.DataFrame(), "mapas": pd.DataFrame()}
+        result["quality_reports"]["orcamento"] = _empty_report()
+
+    try:
+        result["orcado_realizado"], result["quality_reports"]["orcado_realizado"] = _parse_orcado_realizado_sheet(
+            workbook_bytes,
+            orcado_realizado_sheet,
+        )
+    except Exception as exc:
+        logger.exception("Falha ao processar sheet Orcado x Realizado: %s", exc)
+        result["orcado_realizado"] = pd.DataFrame()
+        result["quality_reports"]["orcado_realizado"] = _empty_report()
+
+    try:
+        resumo_df, resumo_report, metadata = _parse_resumo_sheet(workbook_bytes, resumo_sheet)
+        result["resumo"] = resumo_df
+        result["quality_reports"]["resumo"] = resumo_report
+        result["metadata"] = metadata
+    except Exception as exc:
+        logger.exception("Falha ao processar sheet Resumo: %s", exc)
+        result["resumo"] = pd.DataFrame(columns=list(RESUMO_COLUMN_MAP.keys()))
+        result["quality_reports"]["resumo"] = _empty_report()
+
+    return result
 
 
 def parse_custos_workbook(path: str) -> dict[str, Any]:
-    return _parse_custos_workbook_bytes(Path(path).read_bytes())
+    return parse_custos_workbook_bytes(Path(path).read_bytes())
+
+
+def _safe_month_label(timestamp: pd.Timestamp) -> str:
+    month_labels = {
+        1: "Jan",
+        2: "Fev",
+        3: "Mar",
+        4: "Abr",
+        5: "Mai",
+        6: "Jun",
+        7: "Jul",
+        8: "Ago",
+        9: "Set",
+        10: "Out",
+        11: "Nov",
+        12: "Dez",
+    }
+    return month_labels.get(timestamp.month, str(timestamp.month))
+
+
+def _positive_value_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Retorna apenas linhas de Custos com VALOR numerico maior que zero."""
+    if df.empty or "valor" not in df.columns:
+        return pd.DataFrame(columns=df.columns)
+    working = df.copy()
+    working["valor"] = pd.to_numeric(working["valor"], errors="coerce")
+    return working[working["valor"].notna() & (working["valor"] != 0)].copy()
+
+
+def _extract_tax_pct(resumo: pd.DataFrame, total_valor: float, valor_com_taxa: float) -> float:
+    """Extrai a taxa administrativa percentual do resumo ou calcula por diferença."""
+    taxa_pct = 0.0
+    if not resumo.empty and "taxa_pct" in resumo.columns:
+        taxa_values = pd.to_numeric(resumo["taxa_pct"], errors="coerce").dropna()
+        taxa_values = taxa_values[taxa_values != 0]
+        if not taxa_values.empty:
+            raw_value = float(taxa_values.median())
+            taxa_pct = raw_value * 100 if 0 < raw_value <= 1 else raw_value
+    if taxa_pct == 0 and total_valor:
+        taxa_pct = ((valor_com_taxa - total_valor) / total_valor) * 100
+    return round(float(taxa_pct), 2)
+
+
+def build_custos_summary(
+    nfs: pd.DataFrame,
+    resumo: pd.DataFrame | None = None,
+    default_tax_pct: float = 0.0,
+) -> dict[str, Any]:
+    """Calcula KPIs de Custos com as formulas oficiais do dashboard."""
+    nfs_frame = canonicalize_nfs_frame(nfs)
+    resumo_frame = canonicalize_resumo_frame(resumo)
+    valid_nfs = _positive_value_frame(nfs_frame)
+    total_valor = float(valid_nfs["valor"].sum()) if "valor" in valid_nfs.columns else 0.0
+    total_nfs = int(len(valid_nfs))
+
+    if not resumo_frame.empty and "total_geral" in resumo_frame.columns:
+        total_geral = pd.to_numeric(resumo_frame["total_geral"], errors="coerce").fillna(0)
+        valor_com_taxa = float(total_geral[total_geral != 0].sum())
+    else:
+        valor_com_taxa = 0.0
+
+    taxa_adm_pct = _extract_tax_pct(resumo_frame, total_valor, valor_com_taxa)
+    if taxa_adm_pct == 0 and default_tax_pct:
+        taxa_adm_pct = default_tax_pct * 100 if 0 < default_tax_pct <= 1 else default_tax_pct
+    if valor_com_taxa == 0:
+        valor_com_taxa = total_valor * (1 + (taxa_adm_pct / 100))
+
+    situacao = (
+        valid_nfs["situacao_planilha"].fillna("").astype(str).map(_normalize_text)
+        if "situacao_planilha" in valid_nfs.columns
+        else pd.Series([""] * len(valid_nfs), index=valid_nfs.index)
+    )
+    datas = (
+        pd.to_datetime(valid_nfs["data_vencimento"], errors="coerce", dayfirst=True)
+        if "data_vencimento" in valid_nfs.columns
+        else pd.Series(pd.NaT, index=valid_nfs.index)
+    )
+    nfs_em_aberto = int(((~situacao.eq("PAGO")) & datas.notna()).sum())
+
+    by_natureza: list[dict[str, Any]] = []
+    if "natureza" in valid_nfs.columns and "valor" in valid_nfs.columns:
+        grouped = (
+            valid_nfs.groupby("natureza", dropna=False)["valor"]
+            .sum()
+            .reset_index()
+            .sort_values("valor", ascending=False)
+        )
+        by_natureza = [
+            {
+                "natureza": str(row["natureza"] or "Nao informado"),
+                "valor": round(float(row["valor"] or 0), 2),
+                "percentual": round((float(row["valor"] or 0) / total_valor) * 100, 2) if total_valor else 0.0,
+            }
+            for _, row in grouped.iterrows()
+        ]
+
+    return {
+        "total_nfs": total_nfs,
+        "total_valor": round(total_valor, 2),
+        "valor_com_taxa": round(float(valor_com_taxa), 2),
+        "taxa_adm_pct": round(float(taxa_adm_pct), 2),
+        "nfs_em_aberto": nfs_em_aberto,
+        "by_natureza": by_natureza,
+    }
+
+
+def get_top_fornecedores(path: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Retorna os principais fornecedores de um workbook de custos."""
+    structured = parse_custos_workbook(path)
+    frame = canonicalize_nfs_frame(structured.get("nfs"))
+    if frame.empty:
+        frame = canonicalize_consolidado_frame(structured.get("consolidado"))
+    valid = _positive_value_frame(frame)
+    if valid.empty or "fornecedor" not in valid.columns:
+        return []
+    grouped = (
+        valid.assign(fornecedor=valid["fornecedor"].fillna("").astype(str).str.strip())
+        .query("fornecedor != ''")
+        .groupby("fornecedor", dropna=False)
+        .agg(total_valor=("valor", "sum"), count_nfs=("nf", "count"))
+        .reset_index()
+        .sort_values("total_valor", ascending=False)
+        .head(limit)
+    )
+    total = float(valid["valor"].sum())
+    return [
+        {
+            "fornecedor": str(row["fornecedor"]),
+            "total_valor": round(float(row["total_valor"] or 0), 2),
+            "count_nfs": int(row["count_nfs"]),
+            "pct_do_total": round((float(row["total_valor"] or 0) / total) * 100, 2) if total else 0.0,
+        }
+        for _, row in grouped.iterrows()
+    ]
 
 
 class CustosAnalyzer:
-    def __init__(self, nfs: pd.DataFrame, consolidado: pd.DataFrame, meta: dict[str, Any] | None = None):
-        self.nfs = nfs.copy()
-        self.cons = consolidado.copy()
+    def __init__(
+        self,
+        nfs: pd.DataFrame,
+        consolidado: pd.DataFrame,
+        meta: dict[str, Any] | None = None,
+        resumo: pd.DataFrame | None = None,
+    ):
+        self.nfs = canonicalize_nfs_frame(nfs)
+        self.cons = canonicalize_consolidado_frame(consolidado)
         self.meta = meta or {}
-        self._ensure_types()
+        self.resumo = canonicalize_resumo_frame(resumo)
 
-    def _ensure_types(self) -> None:
-        for df in (self.nfs, self.cons):
-            for col in ("Valor", "ValorItem", "SaldoPlanilha", "ApropriValor"):
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-            for col in ("DataVencto",):
-                if col in df.columns:
-                    df[col] = pd.to_datetime(df[col], errors="coerce")
+    def _nfs_with_dates(self) -> pd.DataFrame:
+        if "data_vencimento" not in self.nfs.columns:
+            return pd.DataFrame(columns=self.nfs.columns)
+        working = self.nfs.copy()
+        working["data_vencimento"] = pd.to_datetime(working["data_vencimento"], errors="coerce", dayfirst=True)
+        return working[working["data_vencimento"].notna()].copy()
 
     def get_summary(self) -> dict[str, Any]:
-        nfs = self.nfs
-        total_valor = float(nfs["Valor"].sum()) if "Valor" in nfs.columns else 0
-        total_nfs = len(nfs)
-        unique_forn = int(nfs["Fornecedor"].nunique()) if "Fornecedor" in nfs.columns else 0
-        unique_cons = int(nfs["NumConsolidado"].nunique()) if "NumConsolidado" in nfs.columns else 0
+        official_summary = build_custos_summary(self.nfs, self.resumo)
+        total_valor = official_summary["total_valor"]
+        total_nfs = official_summary["total_nfs"]
+        unique_forn = int(self.nfs.get("fornecedor", pd.Series(dtype=object)).nunique())
+        unique_cons = int(self.nfs.get("n_consolidado", pd.Series(dtype=object)).nunique())
+        avg_nf = total_valor / total_nfs if total_nfs else 0.0
 
-        avg_nf = total_valor / total_nfs if total_nfs > 0 else 0
-
-        data_min = nfs["DataVencto"].min() if "DataVencto" in nfs.columns and nfs["DataVencto"].notna().any() else None
-        data_max = nfs["DataVencto"].max() if "DataVencto" in nfs.columns and nfs["DataVencto"].notna().any() else None
-
-        cons_total = float(self.cons["Valor"].sum()) if "Valor" in self.cons.columns else 0
-        cons_count = len(self.cons)
+        dated = self._nfs_with_dates()
+        data_min = dated["data_vencimento"].min() if not dated.empty else None
+        data_max = dated["data_vencimento"].max() if not dated.empty else None
+        cons_total = float(self.cons.get("valor", pd.Series(dtype=float)).fillna(0).sum())
 
         return {
-            "obra": self.meta.get("Obra", ""),
-            "endereco": self.meta.get("Endereco", ""),
-            "periodo": self.meta.get("Periodo", ""),
+            "obra": self.meta.get("obra", self.meta.get("Obra", "")),
+            "periodo": self.meta.get("periodo", self.meta.get("Periodo", "")),
             "total_nfs": total_nfs,
             "total_valor": round(total_valor, 2),
+            "valor_com_taxa": official_summary["valor_com_taxa"],
+            "taxa_adm_pct": official_summary["taxa_adm_pct"],
+            "nfs_em_aberto": official_summary["nfs_em_aberto"],
+            "by_natureza": official_summary["by_natureza"],
             "valor_medio_nf": round(avg_nf, 2),
             "unique_fornecedores": unique_forn,
             "unique_consolidados": unique_cons,
-            "data_inicio": str(data_min.date()) if data_min is not None and pd.notna(data_min) else "",
-            "data_fim": str(data_max.date()) if data_max is not None and pd.notna(data_max) else "",
+            "data_inicio": data_min.date().isoformat() if pd.notna(data_min) else "",
+            "data_fim": data_max.date().isoformat() if pd.notna(data_max) else "",
             "consolidado_atual": {
-                "total_nfs": cons_count,
+                "total_nfs": int(len(self.cons)),
                 "total_valor": round(cons_total, 2),
             },
         }
 
     def get_fornecedor_ranking(self, limit: int = 20) -> list[dict[str, Any]]:
-        if self.nfs.empty or "Fornecedor" not in self.nfs.columns:
+        if self.nfs.empty or "fornecedor" not in self.nfs.columns:
             return []
+
+        working = self.nfs.copy()
+        working["fornecedor"] = (
+            working["fornecedor"]
+            .fillna("")
+            .astype(str)
+            .map(str.strip)
+        )
+        working = working[working["fornecedor"] != ""].copy()
+        if working.empty:
+            return []
+
+        working["_fornecedor_key"] = working["fornecedor"].str.casefold()
         grouped = (
-            self.nfs.groupby("Fornecedor")
-            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"))
+            working.groupby("_fornecedor_key", dropna=False)
+            .agg(
+                fornecedor=("fornecedor", "first"),
+                valor=("valor", "sum"),
+                count=("nf", "count"),
+            )
             .reset_index()
-            .sort_values("total_valor", ascending=False)
+            .sort_values("valor", ascending=False)
             .head(limit)
         )
-        total_geral = float(self.nfs["Valor"].sum()) if "Valor" in self.nfs.columns else 0.0
+        total_geral = float(working.get("valor", pd.Series(dtype=float)).fillna(0).sum())
         return [
             {
-                "fornecedor": str(row["Fornecedor"]),
-                "total_valor": round(float(row["total_valor"]), 2),
-                "qtd_nfs": int(row["qtd_nfs"]),
-                "pct_total": round(float(row["total_valor"]) / total_geral * 100, 1) if total_geral > 0 else 0.0,
+                "fornecedor": str(row["fornecedor"] or "Sem fornecedor"),
+                "valor": round(float(row["valor"] or 0), 2),
+                "participacao": round((float(row["valor"] or 0) / total_geral) * 100, 2) if total_geral else 0.0,
+                "count": int(row["count"]),
+                "total_valor": round(float(row["valor"] or 0), 2),
+                "pct_total": round((float(row["valor"] or 0) / total_geral) * 100, 2) if total_geral else 0.0,
+                "qtd_nfs": int(row["count"]),
             }
             for _, row in grouped.iterrows()
         ]
 
     def get_natureza_breakdown(self) -> list[dict[str, Any]]:
-        if self.nfs.empty or "Natureza" not in self.nfs.columns:
+        if self.nfs.empty or "natureza" not in self.nfs.columns:
             return []
         grouped = (
-            self.nfs.groupby("Natureza")
-            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"))
+            self.nfs.groupby("natureza", dropna=False)
+            .agg(total_valor=("valor", "sum"), qtd_nfs=("nf", "count"))
             .reset_index()
             .sort_values("total_valor", ascending=False)
         )
         return [
             {
-                "natureza": str(row["Natureza"]),
-                "total_valor": round(float(row["total_valor"]), 2),
+                "natureza": str(row["natureza"] or ""),
+                "total_valor": round(float(row["total_valor"] or 0), 2),
                 "qtd_nfs": int(row["qtd_nfs"]),
             }
             for _, row in grouped.iterrows()
         ]
 
     def get_pagamento_breakdown(self) -> list[dict[str, Any]]:
-        if self.nfs.empty or "CondPagto" not in self.nfs.columns:
+        if self.nfs.empty or "boleto_deposito" not in self.nfs.columns:
             return []
         grouped = (
-            self.nfs.groupby("CondPagto")
-            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"))
+            self.nfs.groupby("boleto_deposito", dropna=False)
+            .agg(total_valor=("valor", "sum"), qtd_nfs=("nf", "count"))
             .reset_index()
             .sort_values("total_valor", ascending=False)
         )
         return [
             {
-                "metodo": str(row["CondPagto"]),
-                "total_valor": round(float(row["total_valor"]), 2),
+                "metodo": str(row["boleto_deposito"] or ""),
+                "total_valor": round(float(row["total_valor"] or 0), 2),
                 "qtd_nfs": int(row["qtd_nfs"]),
             }
             for _, row in grouped.iterrows()
         ]
 
     def get_monthly_timeline(self) -> list[dict[str, Any]]:
-        if self.nfs.empty or "DataVencto" not in self.nfs.columns:
-            return []
-        working = self.nfs[self.nfs["DataVencto"].notna()].copy()
+        working = self._nfs_with_dates()
         if working.empty:
             return []
-        working["MesAno"] = working["DataVencto"].dt.to_period("M").astype(str)
+        working["mes_ano"] = working["data_vencimento"].dt.to_period("M").dt.to_timestamp()
         grouped = (
-            working.groupby("MesAno")
-            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"), fornecedores=("Fornecedor", "nunique"))
+            working.groupby("mes_ano")
+            .agg(total_valor=("valor", "sum"), qtd_nfs=("nf", "count"), fornecedores=("fornecedor", "nunique"))
             .reset_index()
-            .sort_values("MesAno")
+            .sort_values("mes_ano")
         )
         return [
             {
-                "mes": str(row["MesAno"]),
-                "total_valor": round(float(row["total_valor"]), 2),
+                "mes": row["mes_ano"].date().isoformat(),
+                "mes_nome": _safe_month_label(row["mes_ano"]),
+                "total_valor": round(float(row["total_valor"] or 0), 2),
                 "qtd_nfs": int(row["qtd_nfs"]),
                 "fornecedores": int(row["fornecedores"]),
             }
@@ -791,18 +899,18 @@ class CustosAnalyzer:
         ]
 
     def get_consolidado_breakdown(self) -> list[dict[str, Any]]:
-        if self.nfs.empty or "NumConsolidado" not in self.nfs.columns:
+        if self.nfs.empty or "n_consolidado" not in self.nfs.columns:
             return []
         grouped = (
-            self.nfs.groupby("NumConsolidado")
-            .agg(total_valor=("Valor", "sum"), qtd_nfs=("NF", "count"), fornecedores=("Fornecedor", "nunique"))
+            self.nfs.groupby("n_consolidado", dropna=False)
+            .agg(total_valor=("valor", "sum"), qtd_nfs=("nf", "count"), fornecedores=("fornecedor", "nunique"))
             .reset_index()
-            .sort_values("NumConsolidado")
+            .sort_values("n_consolidado")
         )
         return [
             {
-                "consolidado": str(row["NumConsolidado"]),
-                "total_valor": round(float(row["total_valor"]), 2),
+                "consolidado": str(row["n_consolidado"] or ""),
+                "total_valor": round(float(row["total_valor"] or 0), 2),
                 "qtd_nfs": int(row["qtd_nfs"]),
                 "fornecedores": int(row["fornecedores"]),
             }
@@ -812,60 +920,63 @@ class CustosAnalyzer:
     def get_top_nfs(self, limit: int = 20) -> list[dict[str, Any]]:
         if self.nfs.empty:
             return []
-        top = self.nfs.nlargest(limit, "Valor") if "Valor" in self.nfs.columns else self.nfs.head(limit)
+        ordered = self.nfs.sort_values("valor", ascending=False).head(limit)
         return [
             {
-                "fornecedor": str(row.get("Fornecedor", "")),
-                "nf": str(row.get("NF", "")),
-                "mapa": str(row.get("MapaPrecos", "")),
-                "valor": round(float(row.get("Valor", 0)), 2) if pd.notna(row.get("Valor")) else 0.0,
-                "data_vencto": str(row["DataVencto"].date()) if pd.notna(row.get("DataVencto")) else "",
-                "cond_pagto": str(row.get("CondPagto", "")),
-                "consolidado": str(row.get("NumConsolidado", "")),
+                "fornecedor": str(row.get("fornecedor", "") or ""),
+                "nf": str(row.get("nf", "") or ""),
+                "mapa": str(row.get("mapa_precos", "") or ""),
+                "valor": round(float(row.get("valor", 0) or 0), 2),
+                "data_vencto": (
+                    pd.to_datetime(row.get("data_vencimento"), errors="coerce", dayfirst=True).date().isoformat()
+                    if pd.notna(pd.to_datetime(row.get("data_vencimento"), errors="coerce", dayfirst=True))
+                    else ""
+                ),
+                "cond_pagto": str(row.get("boleto_deposito", "") or ""),
+                "consolidado": str(row.get("n_consolidado", "") or ""),
             }
-            for _, row in top.iterrows()
+            for _, row in ordered.iterrows()
         ]
 
     def get_consolidado_detail(self) -> list[dict[str, Any]]:
         if self.cons.empty:
             return []
-        return [
-            {
-                "num": str(row.get("NumConsolidado", "")),
-                "fornecedor": str(row.get("Fornecedor", "")),
-                "nf": str(row.get("NF", "")),
-                "mapa": str(row.get("Mapa", "")),
-                "natureza": str(row.get("Natureza", "")),
-                "cond_pagto": str(row.get("CondPagto", "")),
-                "data_vencto": str(row["DataVencto"].date()) if pd.notna(row.get("DataVencto")) else "",
-                "valor": round(float(row.get("Valor", 0)), 2) if pd.notna(row.get("Valor")) else 0.0,
-            }
-            for _, row in self.cons.iterrows()
-        ]
+        rows: list[dict[str, Any]] = []
+        for _, row in self.cons.iterrows():
+            parsed_date = pd.to_datetime(row.get("data_vencimento"), errors="coerce", dayfirst=True)
+            rows.append(
+                {
+                    "num": str(row.get("n_consolidado", "") or ""),
+                    "fornecedor": str(row.get("fornecedor", "") or ""),
+                    "nf": str(row.get("nf", "") or ""),
+                    "mapa": str(row.get("mapa", "") or ""),
+                    "natureza": str(row.get("natureza", "") or ""),
+                    "cond_pagto": str(row.get("cond_pagto", "") or ""),
+                    "data_vencto": parsed_date.date().isoformat() if pd.notna(parsed_date) else "",
+                    "valor": round(float(row.get("valor", 0) or 0), 2),
+                }
+            )
+        return rows
 
     def get_all_nfs(self) -> list[dict[str, Any]]:
         if self.nfs.empty:
             return []
-        result: list[dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         for _, row in self.nfs.iterrows():
-            fornecedor = str(row.get("Fornecedor") or "").strip()
-            if not fornecedor:
-                continue
-            valor = row.get("Valor")
-            data_vencto = row.get("DataVencto")
-            result.append(
+            parsed_date = pd.to_datetime(row.get("data_vencimento"), errors="coerce", dayfirst=True)
+            rows.append(
                 {
-                    "fornecedor": fornecedor,
-                    "nf": str(row.get("NF") or ""),
-                    "num_consolidado": str(row.get("NumConsolidado") or ""),
-                    "mapa": str(row.get("MapaPrecos") or ""),
-                    "natureza": str(row.get("Natureza") or ""),
-                    "cond_pagto": str(row.get("CondPagto") or ""),
-                    "data_vencto": str(data_vencto.date()) if pd.notna(data_vencto) else "",
-                    "valor": round(float(valor), 2) if pd.notna(valor) else 0.0,
+                    "fornecedor": str(row.get("fornecedor", "") or ""),
+                    "nf": str(row.get("nf", "") or ""),
+                    "num_consolidado": str(row.get("n_consolidado", "") or ""),
+                    "mapa": str(row.get("mapa_precos", "") or ""),
+                    "natureza": str(row.get("natureza", "") or ""),
+                    "cond_pagto": str(row.get("boleto_deposito", "") or ""),
+                    "data_vencto": parsed_date.date().isoformat() if pd.notna(parsed_date) else "",
+                    "valor": round(float(row.get("valor", 0) or 0), 2),
                 }
             )
-        return result
+        return rows
 
     def get_consolidated_report(self) -> dict[str, Any]:
         return {

@@ -2,11 +2,16 @@
 
 import React, { useEffect, useMemo, useState } from "react"
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
+  ComposedChart,
+  Legend,
   Line,
-  LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -14,49 +19,117 @@ import {
 } from "recharts"
 
 import { fetchApiJson } from "../api/analytics"
+import { formatBRL, formatDate as formatDateValue, formatInt, formatPct } from "../lib/formatters"
+import { SchemaGuard } from "./SchemaGuard"
 
-type TabId = "nfs" | "consolidado" | "orcado-realizado" | "resumo"
+type TabId = "visao-geral" | "nfs" | "consolidado" | "resumo-forecast"
 type GenericRow = Record<string, unknown>
-type OrcadoRealizadoItem = {
-  item: string
-  descricao: string
-  verba_total: number
-  periodos: Array<{ periodo: number; desembolso: number }>
+
+type ExecutiveSummary = {
+  total_budget: number
+  total_realizado: number
+  saldo: number
+  pct_consumido: number
+  total_nfs: number
+  fornecedores_ativos: number
+  meses_cobertos: number
+  data_inicio: string | null
+  data_fim: string | null
+  risk_level: "baixo" | "medio" | "alto"
+  quality_score: number
+}
+
+type BurnRateItem = {
+  mes: string
+  mes_nome: string
+  valor_nfs: number
+  valor_acumulado: number
+  orcamento_acumulado: number
+  saldo_mes: number
+  by_natureza?: Array<{ natureza: string; valor: number }>
+}
+
+type SupplierConcentration = {
+  top_10: Array<{ fornecedor: string; valor_total: number; pct_total: number; count_nfs: number }>
+  herfindahl_index: number
+  risk_level: "baixo" | "medio" | "alto"
+}
+
+type ForecastResponse = {
+  projected_final_cost: number
+  projected_monthly: Array<{
+    mes_offset: number
+    valor_previsto: number
+    lower_bound: number
+    upper_bound: number
+    projected_cumulative: number
+  }>
+  overrun_probability: number
+  estimated_completion_month: string | null
+  confidence_interval_90: [number, number]
+  method: string
+  data_points_used: number
+  mode?: string
+}
+
+type OverdueItem = {
+  fornecedor: string
+  nf: string
+  valor: number
+  data_vencimento: string | null
+  days_overdue: number
+  natureza: string
+}
+
+type PaginatedResponse<T> = {
+  data: T[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
+
+type SupplierRankingItem = {
+  fornecedor: string
+  valor: number
+  participacao: number
+  count: number
+}
+
+const BRAND_GREEN = "#0b4f3a"
+const BRAND_GREEN_DARK = "#08382a"
+const ACCENT_TEAL = "#00b4d8"
+const ACCENT_BLUE = "#4f8ef7"
+const ACCENT_AMBER = "#f5a623"
+const ACCENT_RED = "#ef4444"
+const ACCENT_PURPLE = "#a78bfa"
+const ACCENT_GREEN = "#34c97e"
+const SERIES_COLORS = ["#4f8ef7", "#34c97e", "#f5a623", "#a78bfa", "#ef4444", "#06b6d4", "#f97316", "#ec4899"]
+const PANEL: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid rgba(11,79,58,0.10)",
+  borderRadius: 14,
+  padding: 20,
+  boxShadow: "0 2px 12px rgba(11,79,58,0.07)",
+  fontFamily: "'Inter', system-ui, sans-serif",
+}
+const DARK_CARD: React.CSSProperties = {
+  background: "rgba(15,23,42,0.82)",
+  borderRadius: 12,
+  border: "1px solid rgba(79,142,247,0.13)",
+  padding: "16px 20px",
+  fontFamily: "'Inter', system-ui, sans-serif",
 }
 
 const TAB_LABELS: Array<{ id: TabId; label: string }> = [
+  { id: "visao-geral", label: "Visão Geral" },
   { id: "nfs", label: "NFs" },
   { id: "consolidado", label: "Consolidado" },
-  { id: "orcado-realizado", label: "Orcado x Realizado" },
-  { id: "resumo", label: "Resumo" },
+  { id: "resumo-forecast", label: "Resumo / Forecast" },
 ]
-
-const NATUREZA_ORDER = [
-  "Material / Servico",
-  "Mao Obra Empr.",
-  "Mao Obra Tempo.",
-  "Staff",
-  "Servicos s/ TxAdm",
-]
-const SITUACAO_OPTIONS = ["Todas", "A PAGAR", "PAGO", "VENCIDO"]
 
 const PAGE_SIZE = 50
-
-function DashboardSkeleton() {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} style={cardSkeletonStyle} />
-        ))}
-      </div>
-      <div style={filterSkeletonStyle} />
-      <div style={panelSkeletonStyle} />
-      <div style={panelSkeletonStyle} />
-      <style>{skeletonStyle}</style>
-    </div>
-  )
-}
+const SITUACAO_OPTIONS = ["Todas", "A PAGAR", "PAGO", "VENCIDO"]
 
 function normalizeText(value: unknown) {
   return String(value ?? "")
@@ -66,14 +139,18 @@ function normalizeText(value: unknown) {
     .trim()
 }
 
-function formatCurrency(value: number) {
-  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })
-}
-
 function parseNumber(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0
-  if (typeof value !== "string") return 0
-  const cleaned = value.replace(/\s/g, "").replace(/\./g, "").replace(",", ".").replace(/[^\d.-]/g, "")
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0
+  }
+  if (typeof value !== "string") {
+    return 0
+  }
+  const cleaned = value
+    .replace(/\s/g, "")
+    .replace(/\.(?=\d{3}(?:,|$))/g, "")
+    .replace(",", ".")
+    .replace(/[^\d.-]/g, "")
   const parsed = Number(cleaned)
   return Number.isFinite(parsed) ? parsed : 0
 }
@@ -84,17 +161,27 @@ function parseDateValue(value: unknown) {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-function selectMultiValues(options: HTMLOptionsCollection) {
-  return Array.from(options)
-    .filter((option) => option.selected)
-    .map((option) => option.value)
+function formatCurrency(value: number) {
+  return formatBRL(value)
 }
 
-function resolveSituacaoLabel(rawSituacao: unknown, rawDate: unknown) {
+function formatCompactCurrency(value: number) {
+  return formatBRL(value)
+}
+
+function formatDate(value: unknown) {
+  const parsed = parseDateValue(value)
+  return parsed ? formatDateValue(parsed) : "-"
+}
+
+function getValue(row: GenericRow, key: string) {
+  return row[key]
+}
+
+function resolveSituation(rawSituacao: unknown, rawDate: unknown) {
   const situacao = normalizeText(rawSituacao)
   if (situacao.includes("pago")) return "PAGO"
   if (situacao.includes("venc")) return "VENCIDO"
-
   const dueDate = parseDateValue(rawDate)
   if (dueDate) {
     const today = new Date()
@@ -102,37 +189,29 @@ function resolveSituacaoLabel(rawSituacao: unknown, rawDate: unknown) {
     dueDate.setHours(0, 0, 0, 0)
     if (dueDate < today) return "VENCIDO"
   }
-
   return "A PAGAR"
 }
 
-function formatDate(value: unknown) {
-  if (!value) return "-"
-  const parsed = new Date(String(value))
-  if (Number.isNaN(parsed.getTime())) return String(value)
-  return parsed.toLocaleDateString("pt-BR")
+function sortRows(rows: GenericRow[], key: string, direction: "asc" | "desc", isDate = false, isNumeric = false) {
+  return [...rows].sort((left, right) => {
+    const leftValue = getValue(left, key)
+    const rightValue = getValue(right, key)
+    let comparison = 0
+    if (isNumeric) {
+      comparison = parseNumber(leftValue) - parseNumber(rightValue)
+    } else if (isDate) {
+      comparison = (parseDateValue(leftValue)?.getTime() ?? 0) - (parseDateValue(rightValue)?.getTime() ?? 0)
+    } else {
+      comparison = String(leftValue ?? "").localeCompare(String(rightValue ?? ""), "pt-BR", {
+        numeric: true,
+        sensitivity: "base",
+      })
+    }
+    return direction === "asc" ? comparison : -comparison
+  })
 }
 
-function findColumn(rows: GenericRow[], candidates: string[]) {
-  const keys = Object.keys(rows[0] ?? {})
-  for (const candidate of candidates) {
-    const normalizedCandidate = normalizeText(candidate)
-    const match = keys.find((key) => normalizeText(key) === normalizedCandidate)
-    if (match) return match
-  }
-  for (const candidate of candidates) {
-    const normalizedCandidate = normalizeText(candidate)
-    const match = keys.find((key) => normalizeText(key).includes(normalizedCandidate))
-    if (match) return match
-  }
-  return null
-}
-
-function getValue(row: GenericRow, column: string | null) {
-  return column ? row[column] : undefined
-}
-
-function paginateRows<T>(rows: T[], page: number) {
+function paginate<T>(rows: T[], page: number) {
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
   const start = (safePage - 1) * PAGE_SIZE
@@ -145,668 +224,1139 @@ function paginateRows<T>(rows: T[], page: number) {
   }
 }
 
-function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (page: number) => void }) {
+type TooltipEntry = { color?: string; name?: string; value?: number | string }
+
+function CustomTooltip({
+  active,
+  label,
+  payload,
+}: {
+  active?: boolean
+  label?: string | number
+  payload?: TooltipEntry[]
+}) {
+  if (!active || !payload?.length) return null
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: "1px solid rgba(11,79,58,0.15)",
+        borderRadius: 10,
+        padding: "10px 14px",
+        boxShadow: "0 10px 24px rgba(15,23,42,0.10)",
+      }}
+    >
+      <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 800, color: "#0f172a" }}>{label}</p>
+      {payload.map((entry) => (
+        <div
+          key={`${entry.name}-${entry.value}`}
+          style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#475569", marginTop: 4 }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 999,
+              background: entry.color ?? ACCENT_BLUE,
+              display: "inline-block",
+            }}
+          />
+          <span style={{ fontWeight: 600 }}>{entry.name}</span>
+          <span style={{ marginLeft: "auto", color: "#0f172a", fontWeight: 700 }}>
+            {typeof entry.value === "number" ? formatCurrency(entry.value) : String(entry.value ?? "-")}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function EmptyState({
+  icon,
+  title,
+  message,
+}: {
+  icon: string
+  title: string
+  message: string
+}) {
+  return (
+    <div
+      style={{
+        ...PANEL,
+        minHeight: 220,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        color: "#64748b",
+      }}
+    >
+      <span style={{ fontSize: 42, lineHeight: 1, marginBottom: 14 }}>{icon}</span>
+      <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{title}</h3>
+      <p style={{ margin: "10px 0 0", maxWidth: 360, fontSize: 13, lineHeight: 1.6 }}>{message}</p>
+    </div>
+  )
+}
+
+function PanelSkeleton({ height = 220, dark = false }: { height?: number; dark?: boolean }) {
+  return (
+    <div
+      style={{
+        ...(dark ? DARK_CARD : PANEL),
+        height,
+        background: dark
+          ? "linear-gradient(90deg, rgba(30,41,59,0.72), rgba(51,65,85,0.85), rgba(30,41,59,0.72))"
+          : "linear-gradient(90deg, rgba(226,232,240,0.9), rgba(241,245,249,0.98), rgba(226,232,240,0.9))",
+        backgroundSize: "200% 100%",
+        animation: "custos-wave 1.4s ease infinite",
+      }}
+    />
+  )
+}
+
+function Pagination({
+  page,
+  totalPages,
+  start,
+  end,
+  total,
+  onChange,
+}: {
+  page: number
+  totalPages: number
+  start: number
+  end: number
+  total: number
+  onChange: (page: number) => void
+}) {
   if (totalPages <= 1) return null
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
-      <span style={{ color: "#64748b", fontSize: 13 }}>
-        Pagina {page} de {totalPages}
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, gap: 12 }}>
+      <span style={{ fontSize: 13, color: "#64748b" }}>
+        Exibindo {formatInt(start + 1)}-{formatInt(end)} de {formatInt(total)}
       </span>
       <div style={{ display: "flex", gap: 8 }}>
-        <button type="button" style={pagerButtonStyle} onClick={() => onChange(Math.max(1, page - 1))}>
+        <button type="button" style={secondaryButtonStyle} onClick={() => onChange(Math.max(1, page - 1))}>
           Anterior
         </button>
-        <button type="button" style={pagerButtonStyle} onClick={() => onChange(Math.min(totalPages, page + 1))}>
-          Proxima
+        <button type="button" style={secondaryButtonStyle} onClick={() => onChange(Math.min(totalPages, page + 1))}>
+          Próxima
         </button>
       </div>
     </div>
   )
 }
 
-function EmptyTabMessage({ message }: { message: string }) {
-  return (
-    <section style={panelStyle}>
-      <div style={{ minHeight: 220, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ margin: 0, color: "#64748b", fontSize: 14 }}>{message}</p>
-      </div>
-    </section>
-  )
-}
-
 export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) => {
+  const [activeTab, setActiveTab] = useState<TabId>("visao-geral")
+  const [hasFetchedTab, setHasFetchedTab] = useState<Record<TabId, boolean>>({
+    "visao-geral": false,
+    nfs: false,
+    consolidado: false,
+    "resumo-forecast": false,
+  })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<TabId>("nfs")
   const [nfsRows, setNfsRows] = useState<GenericRow[]>([])
   const [consolidadoRows, setConsolidadoRows] = useState<GenericRow[]>([])
-  const [orcadoRealizadoRows, setOrcadoRealizadoRows] = useState<OrcadoRealizadoItem[]>([])
   const [resumoRows, setResumoRows] = useState<GenericRow[]>([])
+  const [executiveSummary, setExecutiveSummary] = useState<ExecutiveSummary | null>(null)
+  const [burnRate, setBurnRate] = useState<BurnRateItem[]>([])
+  const [supplierConcentration, setSupplierConcentration] = useState<SupplierConcentration | null>(null)
+  const [forecast, setForecast] = useState<ForecastResponse | null>(null)
+  const [overdueRows, setOverdueRows] = useState<OverdueItem[]>([])
   const [selectedNaturezas, setSelectedNaturezas] = useState<string[]>([])
   const [selectedConsolidadoNaturezas, setSelectedConsolidadoNaturezas] = useState<string[]>([])
   const [selectedSituacao, setSelectedSituacao] = useState("Todas")
-  const [consolidadoFornecedorSearch, setConsolidadoFornecedorSearch] = useState("")
+  const [fornecedorSearch, setFornecedorSearch] = useState("")
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
   const [consolidadoDateFrom, setConsolidadoDateFrom] = useState("")
   const [consolidadoDateTo, setConsolidadoDateTo] = useState("")
-  const [selectedItem, setSelectedItem] = useState("")
+  const [nfsSort, setNfsSort] = useState<{ key: string; direction: "asc" | "desc" }>({
+    key: "DATA VENCTO",
+    direction: "desc",
+  })
+  const [consolidadoSort, setConsolidadoSort] = useState<{ key: string; direction: "asc" | "desc" }>({
+    key: "DATA VENCTO",
+    direction: "desc",
+  })
   const [nfsPage, setNfsPage] = useState(1)
   const [consolidadoPage, setConsolidadoPage] = useState(1)
+  const [expandedConsolidados, setExpandedConsolidados] = useState<string[]>([])
+  const [hiddenNaturezas, setHiddenNaturezas] = useState<string[]>([])
+  const [showAllOverdue, setShowAllOverdue] = useState(false)
+
+  useEffect(() => {
+    setHasFetchedTab({
+      "visao-geral": false,
+      nfs: false,
+      consolidado: false,
+      "resumo-forecast": false,
+    })
+    setNfsRows([])
+    setConsolidadoRows([])
+    setResumoRows([])
+    setExecutiveSummary(null)
+    setBurnRate([])
+    setSupplierConcentration(null)
+    setForecast(null)
+    setOverdueRows([])
+  }, [sessionId])
 
   useEffect(() => {
     let active = true
-    setLoading(true)
-    setError(null)
-
-    Promise.all([
-      fetchApiJson<GenericRow[]>(`/api/custos/${sessionId}/nfs`),
-      fetchApiJson<GenericRow[]>(`/api/custos/${sessionId}/consolidado`),
-      fetchApiJson<OrcadoRealizadoItem[]>(`/api/custos/${sessionId}/orcado_realizado`),
-      fetchApiJson<GenericRow[]>(`/api/custos/${sessionId}/resumo`),
-    ])
-      .then(([nextNfs, nextConsolidado, nextOrcadoRealizado, nextResumo]) => {
-        if (!active) return
-        setNfsRows(nextNfs)
-        setConsolidadoRows(nextConsolidado)
-        setOrcadoRealizadoRows(nextOrcadoRealizado)
-        setResumoRows(nextResumo)
-        setSelectedItem(nextOrcadoRealizado[0]?.item ?? "")
-      })
-      .catch((fetchError: unknown) => {
-        if (!active) return
-        setError(fetchError instanceof Error ? fetchError.message : "Erro ao carregar dados de custos.")
-      })
-      .finally(() => {
+    const loadTabData = async () => {
+      if (hasFetchedTab[activeTab]) {
         if (active) setLoading(false)
-      })
+        return
+      }
+
+      setLoading(true)
+      setError(null)
+
+      try {
+        if (activeTab === "visao-geral") {
+          const [nextNfs, nextExecutive, nextBurnRate, nextSuppliers, nextForecast, nextOverdue] = await Promise.all([
+            fetchApiJson<PaginatedResponse<GenericRow>>(`/api/custos/${sessionId}/nfs?page=1&page_size=5000`).catch(() => ({ data: [], total: 0, page: 1, page_size: 5000, pages: 0 })),
+            fetchApiJson<ExecutiveSummary>(`/api/analytics/${sessionId}/executive-summary`).catch(() => null),
+            fetchApiJson<BurnRateItem[]>(`/api/analytics/${sessionId}/burn-rate`).catch(() => []),
+            fetchApiJson<SupplierRankingItem[]>(`/api/templates/custos/fornecedor-ranking/${sessionId}?limit=10`).catch(() => []),
+            fetchApiJson<ForecastResponse>(`/api/analytics/${sessionId}/forecast?horizon_months=4`).catch(() => null),
+            fetchApiJson<OverdueItem[]>(`/api/analytics/${sessionId}/overdue`).catch(() => []),
+          ])
+          if (!active) return
+          const hhi = nextSuppliers.reduce((sum, item) => sum + (item.participacao / 100) ** 2, 0)
+          setNfsRows(nextNfs.data ?? [])
+          setExecutiveSummary(nextExecutive)
+          setBurnRate(nextBurnRate)
+          setSupplierConcentration({
+            top_10: nextSuppliers.map((item) => ({
+              fornecedor: item.fornecedor,
+              valor_total: item.valor,
+              pct_total: item.participacao,
+              count_nfs: item.count,
+            })),
+            herfindahl_index: Math.round(hhi * 10000) / 10000,
+            risk_level: hhi > 0.25 ? "alto" : hhi > 0.15 ? "medio" : "baixo",
+          })
+          setForecast(nextForecast)
+          setOverdueRows(nextOverdue)
+          setHiddenNaturezas([])
+        }
+
+        if (activeTab === "nfs") {
+          const nextNfs = await fetchApiJson<PaginatedResponse<GenericRow>>(`/api/custos/${sessionId}/nfs?page=1&page_size=5000`).catch(() => ({ data: [], total: 0, page: 1, page_size: 5000, pages: 0 }))
+          if (!active) return
+          setNfsRows(nextNfs.data ?? [])
+        }
+
+        if (activeTab === "consolidado") {
+          const nextConsolidado = await fetchApiJson<PaginatedResponse<GenericRow>>(`/api/custos/${sessionId}/consolidado?page=1&page_size=5000`).catch(() => ({ data: [], total: 0, page: 1, page_size: 5000, pages: 0 }))
+          if (!active) return
+          setConsolidadoRows(nextConsolidado.data ?? [])
+          setExpandedConsolidados([])
+        }
+
+        if (activeTab === "resumo-forecast") {
+          const [nextResumo, nextForecast, nextOverdue] = await Promise.all([
+            fetchApiJson<GenericRow[] | { rows?: GenericRow[] }>(`/api/custos/${sessionId}/resumo`).catch(() => []),
+            fetchApiJson<ForecastResponse>(`/api/analytics/${sessionId}/forecast?horizon_months=4`).catch(() => null),
+            fetchApiJson<OverdueItem[]>(`/api/analytics/${sessionId}/overdue`).catch(() => []),
+          ])
+          if (!active) return
+          setResumoRows(Array.isArray(nextResumo) ? nextResumo : nextResumo.rows ?? [])
+          setForecast(nextForecast)
+          setOverdueRows(nextOverdue)
+        }
+
+        if (active) {
+          setHasFetchedTab((current) => ({ ...current, [activeTab]: true }))
+        }
+      } catch (fetchError: unknown) {
+        if (!active) return
+        setError(fetchError instanceof Error ? fetchError.message : "Erro ao carregar o dashboard de custos.")
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    loadTabData()
 
     return () => {
       active = false
     }
-  }, [sessionId])
+  }, [activeTab, hasFetchedTab, sessionId])
 
-  const nfsColumns = useMemo(() => {
-    return {
-      consolidado: findColumn(nfsRows, ["NumConsolidado", "Nº CONSOLIDADO", "N CONSOLIDADO"]),
-      fornecedor: findColumn(nfsRows, ["Fornecedor", "FORNECEDOR"]),
-      nf: findColumn(nfsRows, ["NF"]),
-      natureza: findColumn(nfsRows, ["Natureza", "NATUREZA"]),
-      dataVencto: findColumn(nfsRows, ["DataVencto", "DATA VENCTO"]),
-      valor: findColumn(nfsRows, ["Valor", "VALOR"]),
-      situacao: findColumn(nfsRows, ["SituacaoPlanilha", "SITUACAO PLANILHA", "SITUACAO"]),
-      saldo: findColumn(nfsRows, ["SaldoPlanilha", "SALDO PLANILHA"]),
-    }
-  }, [nfsRows])
+  const naturezaOptions = useMemo(
+    () =>
+      Array.from(new Set(nfsRows.map((row) => String(row["NATUREZA"] ?? "").trim()).filter(Boolean))).sort((left, right) =>
+        left.localeCompare(right, "pt-BR"),
+      ),
+    [nfsRows],
+  )
 
-  const consolidadoColumns = useMemo(() => {
-    return {
-      natureza: findColumn(consolidadoRows, ["Natureza", "NATUREZA"]),
-      fornecedor: findColumn(consolidadoRows, ["Fornecedor", "FORNECEDOR"]),
-      dataVencto: findColumn(consolidadoRows, ["DataVencto", "DATA VENCTO"]),
-      valor: findColumn(consolidadoRows, ["Valor", "VALOR"]),
-      apropriValor: findColumn(consolidadoRows, ["ApropriValor", "VALOR APROPRIADO"]),
-    }
-  }, [consolidadoRows])
-
-  const resumoColumns = useMemo(() => {
-    const keys = Object.keys(resumoRows[0] ?? {})
-    const totalGeral =
-      keys.find((key) => {
-        const normalized = normalizeText(key)
-        return normalized.includes("total") && normalized.includes("geral")
-      }) ?? null
-    const taxaAdm =
-      keys.find((key) => {
-        const normalized = normalizeText(key)
-        return normalized.includes("taxa") && normalized.includes("adm")
-      }) ?? null
-    const materialServico =
-      keys.find((key) => {
-        const normalized = normalizeText(key)
-        return normalized.includes("material") && normalized.includes("servico")
-      }) ?? null
-    const maoObraEmpreitada =
-      keys.find((key) => {
-        const normalized = normalizeText(key)
-        return normalized.includes("mao obra") && normalized.includes("empreitada")
-      }) ?? null
-    const maoObraTempo =
-      keys.find((key) => {
-        const normalized = normalizeText(key)
-        return normalized.includes("mao obra") && normalized.includes("tempo")
-      }) ?? null
-    return { totalGeral, taxaAdm, materialServico, maoObraEmpreitada, maoObraTempo, all: keys }
-  }, [resumoRows])
+  const consolidadoNaturezaOptions = useMemo(
+    () =>
+      Array.from(new Set(consolidadoRows.map((row) => String(row["NATUREZA"] ?? "").trim()).filter(Boolean))).sort((left, right) =>
+        left.localeCompare(right, "pt-BR"),
+      ),
+    [consolidadoRows],
+  )
 
   const filteredNfs = useMemo(() => {
-    return nfsRows.filter((row) => {
-      const natureza = String(getValue(row, nfsColumns.natureza) ?? "").trim()
+    const filtered = nfsRows.filter((row) => {
+      const natureza = String(row["NATUREZA"] ?? "").trim()
+      const fornecedor = String(row["FORNECEDOR"] ?? "").trim()
+      const situacao = resolveSituation(row["SITUAÇÃO PLANILHA"], row["DATA VENCTO"])
+      const dueDate = parseDateValue(row["DATA VENCTO"])
       const matchesNatureza = selectedNaturezas.length === 0 || selectedNaturezas.includes(natureza)
-      const situacaoLabel = resolveSituacaoLabel(
-        getValue(row, nfsColumns.situacao),
-        getValue(row, nfsColumns.dataVencto),
-      )
-      const matchesSituacao = selectedSituacao === "Todas" || situacaoLabel === selectedSituacao
-      return matchesNatureza && matchesSituacao
+      const matchesSituacao = selectedSituacao === "Todas" || situacao === selectedSituacao
+      const matchesFornecedor =
+        !fornecedorSearch || normalizeText(fornecedor).includes(normalizeText(fornecedorSearch))
+      const matchesDateFrom = !dateFrom || (dueDate !== null && dueDate >= new Date(`${dateFrom}T00:00:00`))
+      const matchesDateTo = !dateTo || (dueDate !== null && dueDate <= new Date(`${dateTo}T23:59:59`))
+      return matchesNatureza && matchesSituacao && matchesFornecedor && matchesDateFrom && matchesDateTo
     })
-  }, [nfsColumns.dataVencto, nfsColumns.natureza, nfsColumns.situacao, nfsRows, selectedNaturezas, selectedSituacao])
+    return sortRows(
+      filtered,
+      nfsSort.key,
+      nfsSort.direction,
+      nfsSort.key === "DATA VENCTO",
+      nfsSort.key === "VALOR",
+    )
+  }, [dateFrom, dateTo, fornecedorSearch, nfsRows, nfsSort.direction, nfsSort.key, selectedNaturezas, selectedSituacao])
 
   const filteredConsolidado = useMemo(() => {
-    return consolidadoRows.filter((row) => {
-      const natureza = String(getValue(row, consolidadoColumns.natureza) ?? "").trim()
-      const fornecedor = String(getValue(row, consolidadoColumns.fornecedor) ?? "").trim()
-      const dataVencto = parseDateValue(getValue(row, consolidadoColumns.dataVencto))
+    const filtered = consolidadoRows.filter((row) => {
+      const natureza = String(row["NATUREZA"] ?? "").trim()
+      const dueDate = parseDateValue(row["DATA VENCTO"])
       const matchesNatureza =
         selectedConsolidadoNaturezas.length === 0 || selectedConsolidadoNaturezas.includes(natureza)
-      const matchesFornecedor =
-        !consolidadoFornecedorSearch ||
-        normalizeText(fornecedor).includes(normalizeText(consolidadoFornecedorSearch))
-      const matchesDateFrom = !consolidadoDateFrom || (dataVencto !== null && dataVencto >= new Date(`${consolidadoDateFrom}T00:00:00`))
-      const matchesDateTo = !consolidadoDateTo || (dataVencto !== null && dataVencto <= new Date(`${consolidadoDateTo}T23:59:59`))
-      return matchesNatureza && matchesFornecedor && matchesDateFrom && matchesDateTo
+      const matchesDateFrom =
+        !consolidadoDateFrom || (dueDate !== null && dueDate >= new Date(`${consolidadoDateFrom}T00:00:00`))
+      const matchesDateTo =
+        !consolidadoDateTo || (dueDate !== null && dueDate <= new Date(`${consolidadoDateTo}T23:59:59`))
+      return matchesNatureza && matchesDateFrom && matchesDateTo
     })
-  }, [
-    consolidadoColumns.dataVencto,
-    consolidadoColumns.fornecedor,
-    consolidadoColumns.natureza,
-    consolidadoDateFrom,
-    consolidadoDateTo,
-    consolidadoFornecedorSearch,
-    consolidadoRows,
-    selectedConsolidadoNaturezas,
-  ])
+    return sortRows(
+      filtered,
+      consolidadoSort.key,
+      consolidadoSort.direction,
+      consolidadoSort.key === "DATA VENCTO",
+      consolidadoSort.key === "VALOR",
+    )
+  }, [consolidadoDateFrom, consolidadoDateTo, consolidadoRows, consolidadoSort.direction, consolidadoSort.key, selectedConsolidadoNaturezas])
 
-  const naturezaOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(
-        nfsRows
-          .map((row) => String(getValue(row, nfsColumns.natureza) ?? "").trim())
-          .filter(Boolean),
-      ),
-    )
-    const prioritized = NATUREZA_ORDER.filter((option) =>
-      values.some((value) => normalizeText(value) === normalizeText(option)),
-    )
-    const remaining = values.filter(
-      (value) => !prioritized.some((option) => normalizeText(option) === normalizeText(value)),
-    )
-    return [...prioritized, ...remaining]
-  }, [nfsColumns.natureza, nfsRows])
+  const nfsSummary = useMemo(() => {
+    const totalFiltered = filteredNfs.reduce((sum, row) => sum + parseNumber(row["VALOR"]), 0)
+    return { total: totalFiltered, count: filteredNfs.length, all: nfsRows.length }
+  }, [filteredNfs, nfsRows.length])
 
-  const consolidadoNaturezaOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(
-        consolidadoRows
-          .map((row) => String(getValue(row, consolidadoColumns.natureza) ?? "").trim())
-          .filter(Boolean),
-      ),
-    )
-    const prioritized = NATUREZA_ORDER.filter((option) =>
-      values.some((value) => normalizeText(value) === normalizeText(option)),
-    )
-    const remaining = values.filter(
-      (value) => !prioritized.some((option) => normalizeText(option) === normalizeText(value)),
-    )
-    return [...prioritized, ...remaining]
-  }, [consolidadoColumns.natureza, consolidadoRows])
+  const nfsPageData = paginate(filteredNfs, nfsPage)
 
-  const nfsKpis = useMemo(() => {
-    const totalValor = filteredNfs.reduce((sum, row) => sum + parseNumber(getValue(row, nfsColumns.valor)), 0)
-    const valorEmAberto = filteredNfs.reduce((sum, row) => {
-      const situacao = resolveSituacaoLabel(getValue(row, nfsColumns.situacao), getValue(row, nfsColumns.dataVencto))
-      return situacao === "A PAGAR" || situacao === "VENCIDO"
-        ? sum + parseNumber(getValue(row, nfsColumns.valor))
-        : sum
-    }, 0)
-    const fornecedores = new Set(
-      filteredNfs
-        .map((row) => String(getValue(row, nfsColumns.fornecedor) ?? "").trim())
-        .filter(Boolean),
-    )
-    return {
-      totalNfs: filteredNfs.length,
-      totalValor,
-      valorEmAberto,
-      fornecedores: fornecedores.size,
+  const consolidadoGroups = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { consolidado: string; total: number; count: number; items: GenericRow[]; fornecedor: string }
+    >()
+    for (const row of filteredConsolidado) {
+      const consolidado = String(row["Nº CONSOLIDADO"] ?? "Sem consolidado")
+      const current = grouped.get(consolidado) ?? {
+        consolidado,
+        total: 0,
+        count: 0,
+        items: [],
+        fornecedor: String(row["FORNECEDOR"] ?? ""),
+      }
+      current.items.push(row)
+      current.count += 1
+      current.total += parseNumber(row["VALOR"])
+      grouped.set(consolidado, current)
     }
-  }, [filteredNfs, nfsColumns.dataVencto, nfsColumns.fornecedor, nfsColumns.situacao, nfsColumns.valor])
+    return Array.from(grouped.values()).sort((left, right) => right.total - left.total)
+  }, [filteredConsolidado])
 
-  const naturezaChart = useMemo(() => {
+  const consolidadoPageData = paginate(consolidadoGroups, consolidadoPage)
+
+  const piePagamentoData = useMemo(() => {
     const grouped = new Map<string, number>()
-    for (const row of filteredNfs) {
-      const natureza = String(getValue(row, nfsColumns.natureza) ?? "Sem natureza").trim() || "Sem natureza"
-      grouped.set(natureza, (grouped.get(natureza) ?? 0) + parseNumber(getValue(row, nfsColumns.valor)))
+    for (const row of nfsRows) {
+      const method = String(row["BOLETO/DEPÓSITO"] ?? "Não informado").trim() || "Não informado"
+      grouped.set(method, (grouped.get(method) ?? 0) + parseNumber(row["VALOR"]))
+    }
+    return Array.from(grouped.entries()).map(([name, value]) => ({ name, value }))
+  }, [nfsRows])
+
+  const consolidadoBarData = useMemo(() => {
+    const grouped = new Map<string, number>()
+    for (const row of nfsRows) {
+      const consolidado = String(row["Nº CONSOLIDADO"] ?? "Sem consolidado")
+      grouped.set(consolidado, (grouped.get(consolidado) ?? 0) + parseNumber(row["VALOR"]))
     }
     return Array.from(grouped.entries())
-      .map(([natureza, valor]) => ({ natureza, valor }))
+      .map(([consolidado, valor]) => ({ consolidado, valor }))
       .sort((left, right) => right.valor - left.valor)
-  }, [filteredNfs, nfsColumns.natureza, nfsColumns.valor])
+      .slice(0, 12)
+  }, [nfsRows])
 
-  const consolidadoKpis = useMemo(() => {
-    return {
-      pagamentos: filteredConsolidado.length,
-      valorTotal: filteredConsolidado.reduce(
-        (sum, row) => sum + parseNumber(getValue(row, consolidadoColumns.valor)),
-        0,
+  const monthlyNaturezaData = useMemo(() => {
+    const allNaturezas = Array.from(
+      new Set(
+        burnRate.flatMap((item) => item.by_natureza?.map((natureza) => natureza.natureza) ?? []),
       ),
-      valorApropriado: filteredConsolidado.reduce(
-        (sum, row) => sum + parseNumber(getValue(row, consolidadoColumns.apropriValor)),
-        0,
-      ),
-    }
-  }, [consolidadoColumns.apropriValor, consolidadoColumns.valor, filteredConsolidado])
-
-  const orcadoSummaryRows = useMemo(() => {
-    return orcadoRealizadoRows.map((row) => {
-      const realizado = row.periodos.reduce((sum, periodo) => sum + Number(periodo.desembolso || 0), 0)
-      return {
-        item: row.item,
-        descricao: row.descricao,
-        verbaTotal: row.verba_total,
-        realizado,
-        saldo: row.verba_total - realizado,
+    )
+    return burnRate.map((item) => {
+      const next: Record<string, string | number> = {
+        mes: item.mes,
+        mes_nome: item.mes_nome,
+        valor_nfs: item.valor_nfs,
+        valor_acumulado: item.valor_acumulado,
       }
+      for (const natureza of allNaturezas) {
+        const match = item.by_natureza?.find((entry) => entry.natureza === natureza)
+        next[natureza] = match?.valor ?? 0
+      }
+      return next
     })
-  }, [orcadoRealizadoRows])
+  }, [burnRate])
 
-  const selectedOrcadoItem = useMemo(() => {
-    return orcadoRealizadoRows.find((row) => row.item === selectedItem) ?? orcadoRealizadoRows[0] ?? null
-  }, [orcadoRealizadoRows, selectedItem])
+  const visibleNaturezas = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          burnRate.flatMap((item) => item.by_natureza?.map((natureza) => natureza.natureza) ?? []),
+        ),
+      ).filter((natureza) => !hiddenNaturezas.includes(natureza)),
+    [burnRate, hiddenNaturezas],
+  )
 
-  const orcadoChartRows = useMemo(() => {
-    if (!selectedOrcadoItem) return []
-    return selectedOrcadoItem.periodos
-      .slice()
-      .sort((left, right) => left.periodo - right.periodo)
-      .map((periodo) => ({
-        periodo: periodo.periodo,
-        verba: selectedOrcadoItem.verba_total,
-        desembolso: Number(periodo.desembolso || 0),
-      }))
-  }, [selectedOrcadoItem])
+  const resumoTotals = useMemo(() => {
+    return resumoRows.reduce<{ totalGeral: number; materialServico: number; maoObra: number; taxaAdm: number }>(
+      (acc, row) => ({
+        totalGeral: acc.totalGeral + parseNumber(row["TOTAL GERAL"]),
+        materialServico: acc.materialServico + parseNumber(row["MATERIAL/SERVIÇO"]),
+        maoObra:
+          acc.maoObra + parseNumber(row["MÃO OBRA EMPREITADA"]) + parseNumber(row["MÃO OBRA TEMPO"]),
+        taxaAdm: acc.taxaAdm + parseNumber(row["TAXA ADMINISTRAÇÃO"]),
+      }),
+      { totalGeral: 0, materialServico: 0, maoObra: 0, taxaAdm: 0 },
+    )
+  }, [resumoRows])
 
-  const resumoKpis = useMemo(() => {
-    return {
-      totalGeral: resumoRows.reduce(
-        (sum, row) => sum + parseNumber(getValue(row, resumoColumns.totalGeral)),
-        0,
-      ),
-      totalMaterialServico: resumoRows.reduce(
-        (sum, row) => sum + parseNumber(getValue(row, resumoColumns.materialServico)),
-        0,
-      ),
-      totalMaoObra: resumoRows.reduce(
-        (sum, row) =>
-          sum +
-          parseNumber(getValue(row, resumoColumns.maoObraEmpreitada)) +
-          parseNumber(getValue(row, resumoColumns.maoObraTempo)),
-        0,
-      ),
-      taxaAdministracao: resumoRows.reduce(
-        (sum, row) => sum + parseNumber(getValue(row, resumoColumns.taxaAdm)),
-        0,
-      ),
-    }
-  }, [
-    resumoColumns.maoObraEmpreitada,
-    resumoColumns.maoObraTempo,
-    resumoColumns.materialServico,
-    resumoColumns.taxaAdm,
-    resumoColumns.totalGeral,
-    resumoRows,
-  ])
+  const latestMonthValue = burnRate[burnRate.length - 1]?.valor_nfs ?? 0
 
-  const pagedNfs = paginateRows(filteredNfs, nfsPage)
-  const pagedConsolidado = paginateRows(filteredConsolidado, consolidadoPage)
+  const topSupplierText = supplierConcentration
+    ? `HHI: ${formatPct(supplierConcentration.herfindahl_index * 100)} - Concentracao: ${supplierConcentration.risk_level}`
+    : "Sem concentracao calculada."
+  const topSuppliers = supplierConcentration?.top_10 ?? []
 
-  const handleResumoExport = () => {
-    fetch(`/api/export/${sessionId}`)
-      .then((response) => response.blob())
-      .then((blob) => {
-        const anchor = document.createElement("a")
-        anchor.href = URL.createObjectURL(blob)
-        anchor.download = "export.xlsx"
-        anchor.click()
-      })
+  const forecastChartData = useMemo(() => {
+    const historical = burnRate.map((item) => ({
+      label: item.mes_nome,
+      historico: item.valor_nfs,
+      forecast: null,
+      lower: null,
+      upper: null,
+    }))
+    const projected = (forecast?.projected_monthly ?? []).map((item) => ({
+      label: `+${item.mes_offset}`,
+      historico: null,
+      forecast: item.valor_previsto,
+      lower: item.lower_bound,
+      upper: item.upper_bound,
+    }))
+    return [...historical, ...projected]
+  }, [burnRate, forecast])
+
+  const overdueVisible = showAllOverdue ? overdueRows : overdueRows.slice(0, 10)
+
+  const hasNfsFilters = selectedNaturezas.length > 0 || selectedSituacao !== "Todas" || fornecedorSearch || dateFrom || dateTo
+  const hasConsolidadoFilters = selectedConsolidadoNaturezas.length > 0 || consolidadoDateFrom || consolidadoDateTo
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 20 }}>
+          {Array.from({ length: 6 }).map((_, index) => (
+            <PanelSkeleton key={index} height={110} dark />
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 20 }}>
+          <PanelSkeleton height={320} />
+          <div style={{ display: "grid", gap: 20 }}>
+            <PanelSkeleton height={150} />
+            <PanelSkeleton height={150} />
+          </div>
+        </div>
+        <PanelSkeleton height={360} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 20 }}>
+          {Array.from({ length: 3 }).map((_, index) => (
+            <PanelSkeleton key={index} height={180} />
+          ))}
+        </div>
+        <style>{skeletonAnimation}</style>
+      </div>
+    )
   }
 
-  if (loading) return <DashboardSkeleton />
-
   if (error) {
-    return <EmptyTabMessage message={error} />
+    return <EmptyState icon="⚠" title="Erro ao carregar custos" message={error} />
+  }
+
+  if (nfsRows.length === 0 && consolidadoRows.length === 0 && resumoRows.length === 0) {
+    return (
+      <EmptyState
+        icon="📂"
+        title="Dados de custos indisponíveis"
+        message="Este dashboard requer um arquivo com colunas como NATUREZA, FORNECEDOR, VALOR e DATA VENCTO."
+      />
+    )
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <SchemaGuard requires={["custos", "orcamento"]}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20, fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#f1f5f9" }}>Controle de Custos</h2>
-        <p style={{ margin: "4px 0 0", fontSize: 13, color: "#94a3b8" }}>
-          NFs, consolidado, orcado x realizado e resumo financeiro do arquivo enviado.
+        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>Controle de Custos</h2>
+        <p style={{ margin: "6px 0 0", fontSize: 13, color: "#64748b" }}>
+          Visão executiva de NFs, consolidado, forecast e concentração de fornecedores.
         </p>
       </div>
 
-      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: 8, gap: 16 }}>
-        {TAB_LABELS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              border: "none",
-              background: "transparent",
-              borderBottom: activeTab === tab.id ? "2px solid #0b4f3a" : "2px solid transparent",
-              color: activeTab === tab.id ? "#0b4f3a" : "#64748b",
-              fontWeight: activeTab === tab.id ? 700 : 600,
-              padding: "0 2px 10px",
-              cursor: "pointer",
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div style={{ display: "flex", gap: 12, borderBottom: "1px solid #dbe4ea", overflowX: "auto" }}>
+        {TAB_LABELS.map((tab) => {
+          const isActive = activeTab === tab.id
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                border: "none",
+                background: "transparent",
+                borderBottom: isActive ? `3px solid ${BRAND_GREEN}` : "3px solid transparent",
+                color: isActive ? BRAND_GREEN : "#64748b",
+                padding: "0 4px 12px",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {tab.label}
+            </button>
+          )
+        })}
       </div>
 
-      {activeTab === "nfs" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+      {activeTab === "visao-geral" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 20 }}>
             {[
-              { label: "Total NFs", value: nfsKpis.totalNfs.toLocaleString("pt-BR") },
-              { label: "Valor Total", value: formatCurrency(nfsKpis.totalValor) },
-              { label: "Valor em Aberto", value: formatCurrency(nfsKpis.valorEmAberto) },
-              { label: "Fornecedores", value: nfsKpis.fornecedores.toLocaleString("pt-BR") },
+              { label: "Total NFs", value: formatInt(executiveSummary?.total_nfs ?? nfsRows.length), color: ACCENT_BLUE },
+              {
+                label: "Valor Total",
+                value: formatCurrency(executiveSummary?.total_realizado ?? nfsSummary.total),
+                color: ACCENT_BLUE,
+              },
+              {
+                label: "Média / NF",
+                value: formatCurrency((executiveSummary?.total_realizado ?? nfsSummary.total) / Math.max(executiveSummary?.total_nfs ?? nfsRows.length, 1)),
+                color: ACCENT_AMBER,
+              },
+              {
+                label: "Fornecedores",
+                value: formatInt(executiveSummary?.fornecedores_ativos ?? new Set(nfsRows.map((row) => row["FORNECEDOR"])).size),
+                color: ACCENT_PURPLE,
+              },
+              { label: "Consolidados", value: formatInt(consolidadoBarData.length), color: ACCENT_TEAL },
+              { label: "Período Atual", value: formatCurrency(latestMonthValue), color: ACCENT_RED },
             ].map((card) => (
-              <div key={card.label} style={metricCardStyle}>
-                <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>
-                  {card.label}
-                </p>
-                <p style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 800, color: "#0b4f3a" }}>{card.value}</p>
+              <div key={card.label} style={DARK_CARD}>
+                <p style={darkLabelStyle}>{card.label}</p>
+                <p style={{ margin: "10px 0 0", fontSize: 27, fontWeight: 800, color: card.color }}>{card.value}</p>
               </div>
             ))}
           </div>
 
-          <section style={panelStyle}>
-            <h3 style={panelTitleStyle}>Valor por Natureza</h3>
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={naturezaChart} layout="vertical" margin={{ top: 8, right: 20, left: 0, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-                <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={(value: number) => `R$ ${(value / 1000).toFixed(0)}k`} />
-                <YAxis type="category" dataKey="natureza" width={180} tick={{ fill: "#0f172a", fontSize: 11 }} />
-                <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
-                <Bar dataKey="valor" fill="#0b4f3a" radius={[0, 6, 6, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </section>
+          <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 20 }}>
+            <section style={PANEL}>
+              <div style={panelHeaderStyle}>
+                <div>
+                  <h3 style={panelTitleStyle}>Top 10 Fornecedores</h3>
+                  <p style={panelSubtitleStyle}>Participação no valor realizado</p>
+                </div>
+              </div>
+              {topSuppliers.length > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={topSuppliers} layout="vertical" margin={{ top: 8, right: 20, left: 12, bottom: 8 }}>
+                      <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={formatCompactCurrency} />
+                      <YAxis dataKey="fornecedor" type="category" width={180} tick={{ fill: "#0f172a", fontSize: 11 }} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Bar dataKey="valor_total" radius={[0, 8, 8, 0]}>
+                        {topSuppliers.map((entry, index) => (
+                          <Cell key={`${entry.fornecedor}-${index}`} fill={SERIES_COLORS[index % SERIES_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <p style={{ margin: "14px 0 0", fontSize: 12, color: "#64748b", fontWeight: 700 }}>{topSupplierText}</p>
+                </>
+              ) : (
+                <EmptyState icon="🏗" title="Sem fornecedores" message="Não há fornecedores suficientes para montar o ranking." />
+              )}
+            </section>
 
-          <div style={filterPanelStyle}>
-            <label style={filterLabelStyle}>
-              Natureza
-              <select
-                multiple
-                value={selectedNaturezas}
-                onChange={(event) => {
-                  setSelectedNaturezas(selectMultiValues(event.currentTarget.options))
-                  setNfsPage(1)
-                }}
-                style={filterSelectStyle}
-              >
-                {naturezaOptions.map((natureza) => (
-                  <option key={natureza} value={natureza}>
-                    {natureza}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={filterLabelStyle}>
-              Situacao
-              <select
-                value={selectedSituacao}
-                onChange={(event) => {
-                  setSelectedSituacao(event.target.value)
-                  setNfsPage(1)
-                }}
-                style={filterInputStyle}
-              >
-                {SITUACAO_OPTIONS.map((situacao) => (
-                  <option key={situacao} value={situacao}>
-                    {situacao}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedNaturezas([])
-                setSelectedSituacao("Todas")
-                setNfsPage(1)
-              }}
-              style={resetButtonStyle}
-            >
-              Limpar Filtros
-            </button>
+            <div style={{ display: "grid", gap: 20 }}>
+              <section style={PANEL}>
+                <div style={panelHeaderStyle}>
+                  <div>
+                    <h3 style={panelTitleStyle}>Método de Pagamento</h3>
+                    <p style={panelSubtitleStyle}>Composição por valor de NF</p>
+                  </div>
+                </div>
+                {piePagamentoData.length ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <PieChart>
+                      <Pie data={piePagamentoData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={3}>
+                        {piePagamentoData.map((entry, index) => (
+                          <Cell key={`${entry.name}-${index}`} fill={SERIES_COLORS[index % SERIES_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend verticalAlign="middle" align="right" layout="vertical" wrapperStyle={{ fontSize: 12 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyState icon="💳" title="Sem pagamentos" message="Não há métodos de pagamento suficientes para o gráfico." />
+                )}
+              </section>
+
+              <section style={PANEL}>
+                <div style={panelHeaderStyle}>
+                  <div>
+                    <h3 style={panelTitleStyle}>Valor por Consolidado</h3>
+                    <p style={panelSubtitleStyle}>Top consolidados por valor</p>
+                  </div>
+                </div>
+                {consolidadoBarData.length ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={consolidadoBarData}>
+                      <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                      <XAxis dataKey="consolidado" tick={{ fill: "#64748b", fontSize: 11 }} />
+                      <YAxis tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={formatCompactCurrency} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Bar dataKey="valor" fill={ACCENT_TEAL} radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyState icon="📦" title="Sem consolidados" message="Não há consolidados suficientes para visualização." />
+                )}
+              </section>
+            </div>
           </div>
 
-          <section style={panelStyle}>
-            <h3 style={panelTitleStyle}>Tabela de NFs</h3>
+          <section style={PANEL}>
+            <div style={panelHeaderStyle}>
+              <div>
+                <h3 style={panelTitleStyle}>Evolução Mensal — Custos por Natureza</h3>
+                <p style={panelSubtitleStyle}>Barras empilhadas por natureza e linha de acumulado</p>
+              </div>
+            </div>
+            {monthlyNaturezaData.length ? (
+              <>
+                <ResponsiveContainer width="100%" height={340}>
+                  <ComposedChart data={monthlyNaturezaData}>
+                    <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                    <XAxis dataKey="mes_nome" tick={{ fill: "#64748b", fontSize: 11 }} />
+                    <YAxis yAxisId="left" tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={formatCompactCurrency} />
+                    <YAxis yAxisId="right" orientation="right" tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={formatCompactCurrency} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend />
+                    {visibleNaturezas.map((natureza, index) => (
+                      <Bar key={natureza} yAxisId="left" dataKey={natureza} stackId="naturezas" fill={SERIES_COLORS[index % SERIES_COLORS.length]} radius={index === visibleNaturezas.length - 1 ? [8, 8, 0, 0] : [0, 0, 0, 0]} />
+                    ))}
+                    <Line yAxisId="right" type="monotone" dataKey="valor_acumulado" stroke={BRAND_GREEN} strokeWidth={3} dot={{ r: 3 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+                  {Array.from(
+                    new Set(
+                      burnRate.flatMap((item) => item.by_natureza?.map((natureza) => natureza.natureza) ?? []),
+                    ),
+                  ).map((natureza, index) => {
+                    const hidden = hiddenNaturezas.includes(natureza)
+                    return (
+                      <button
+                        key={natureza}
+                        type="button"
+                        onClick={() =>
+                          setHiddenNaturezas((current) =>
+                            hidden ? current.filter((item) => item !== natureza) : [...current, natureza],
+                          )
+                        }
+                        style={{
+                          border: "1px solid rgba(11,79,58,0.12)",
+                          background: hidden ? "#f8fafc" : "#fff",
+                          color: hidden ? "#94a3b8" : "#0f172a",
+                          borderRadius: 999,
+                          padding: "7px 12px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: 999,
+                            background: SERIES_COLORS[index % SERIES_COLORS.length],
+                            display: "inline-block",
+                            marginRight: 8,
+                          }}
+                        />
+                        {natureza}
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            ) : (
+              <EmptyState icon="📈" title="Sem evolução mensal" message="Ainda não há histórico suficiente para montar a evolução mensal." />
+            )}
+          </section>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 20 }}>
+            <section style={PANEL}>
+              <h3 style={panelTitleStyle}>Orçado vs Realizado</h3>
+              <p style={panelSubtitleStyle}>Percentual de consumo do orçamento</p>
+              <p style={{ margin: "18px 0 10px", fontSize: 28, fontWeight: 800, color: riskColor(executiveSummary?.pct_consumido ?? 0) }}>
+                {formatPct(executiveSummary?.pct_consumido ?? 0)}
+              </p>
+              <div style={progressTrackStyle}>
+                <div
+                  style={{
+                    ...progressFillStyle,
+                    width: `${Math.min(executiveSummary?.pct_consumido ?? 0, 100)}%`,
+                    background: riskColor(executiveSummary?.pct_consumido ?? 0),
+                  }}
+                />
+              </div>
+              <p style={{ margin: "12px 0 0", fontSize: 12, color: "#64748b" }}>
+                Saldo atual: {formatCurrency(executiveSummary?.saldo ?? 0)}
+              </p>
+            </section>
+
+            <section style={PANEL}>
+              <h3 style={panelTitleStyle}>Custo Previsto Final</h3>
+              <p style={panelSubtitleStyle}>Projeção com regressão linear</p>
+              <p style={{ margin: "18px 0 6px", fontSize: 28, fontWeight: 800, color: ACCENT_BLUE }}>
+                {formatCurrency(forecast?.projected_final_cost ?? 0)}
+              </p>
+              <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                ± {formatCurrency(((forecast?.confidence_interval_90?.[1] ?? 0) - (forecast?.projected_final_cost ?? 0)) || 0)}
+              </p>
+            </section>
+
+            <section style={PANEL}>
+              <h3 style={panelTitleStyle}>Probabilidade de Estouro</h3>
+              <p style={panelSubtitleStyle}>Risco de ultrapassar o orçamento</p>
+              <p style={{ margin: "18px 0 10px", fontSize: 28, fontWeight: 800, color: riskColor((forecast?.overrun_probability ?? 0) * 100) }}>
+                {formatPct((forecast?.overrun_probability ?? 0) * 100)}
+              </p>
+              <div style={progressTrackStyle}>
+                <div
+                  style={{
+                    ...progressFillStyle,
+                    width: `${Math.min((forecast?.overrun_probability ?? 0) * 100, 100)}%`,
+                    background: riskColor((forecast?.overrun_probability ?? 0) * 100),
+                  }}
+                />
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "nfs" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <section style={PANEL}>
+            <div style={filterRowStyle}>
+              <label style={filterLabelStyle}>
+                Natureza
+                <select
+                  multiple
+                  value={selectedNaturezas}
+                  onChange={(event) => {
+                    setSelectedNaturezas(Array.from(event.target.selectedOptions, (option) => option.value))
+                    setNfsPage(1)
+                  }}
+                  style={{ ...selectStyle, width: 200, minHeight: 96 }}
+                >
+                  {naturezaOptions.map((natureza) => (
+                    <option key={natureza} value={natureza}>
+                      {natureza}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={filterLabelStyle}>
+                Situação
+                <select value={selectedSituacao} onChange={(event) => setSelectedSituacao(event.target.value)} style={{ ...inputStyle, width: 180 }}>
+                  {SITUACAO_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={filterLabelStyle}>
+                Fornecedor
+                <input value={fornecedorSearch} onChange={(event) => setFornecedorSearch(event.target.value)} placeholder="Buscar fornecedor" style={{ ...inputStyle, width: 220 }} />
+              </label>
+              <label style={filterLabelStyle}>
+                Data vencto de
+                <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} style={inputStyle} />
+              </label>
+              <label style={filterLabelStyle}>
+                até
+                <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} style={inputStyle} />
+              </label>
+              <button
+                type="button"
+                style={primaryButtonStyle}
+                onClick={() => {
+                  setSelectedNaturezas([])
+                  setSelectedSituacao("Todas")
+                  setFornecedorSearch("")
+                  setDateFrom("")
+                  setDateTo("")
+                  setNfsPage(1)
+                }}
+              >
+                Limpar
+              </button>
+              {hasNfsFilters && <span style={activeBadgeStyle}>Filtros ativos</span>}
+            </div>
+          </section>
+
+          <p style={{ margin: 0, fontSize: 13, color: "#64748b", fontWeight: 600 }}>
+            Exibindo {formatInt(nfsSummary.count)} de {formatInt(nfsSummary.all)} NFs — Total filtrado: {formatCurrency(nfsSummary.total)}
+          </p>
+
+          <section style={PANEL}>
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
                 <thead>
                   <tr>
                     {[
-                      ["NumConsolidado", nfsColumns.consolidado],
-                      ["Fornecedor", nfsColumns.fornecedor],
-                      ["NF", nfsColumns.nf],
-                      ["Natureza", nfsColumns.natureza],
-                      ["DataVencto", nfsColumns.dataVencto],
-                      ["Valor", nfsColumns.valor],
-                      ["SituacaoPlanilha", nfsColumns.situacao],
-                      ["SaldoPlanilha", nfsColumns.saldo],
-                    ].map(([label, column]) => (
-                      <th key={label} style={thStyle}>
-                        {column ?? label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagedNfs.rows.map((row, index) => (
-                    <tr key={`${getValue(row, nfsColumns.nf)}-${index}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.02)" : "transparent" }}>
-                      <td style={tdStyle}>{String(getValue(row, nfsColumns.consolidado) ?? "-")}</td>
-                      <td style={tdStyle}>{String(getValue(row, nfsColumns.fornecedor) ?? "-")}</td>
-                      <td style={tdStyle}>{String(getValue(row, nfsColumns.nf) ?? "-")}</td>
-                      <td style={tdStyle}>{String(getValue(row, nfsColumns.natureza) ?? "-")}</td>
-                      <td style={tdStyle}>{formatDate(getValue(row, nfsColumns.dataVencto))}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>
-                        {formatCurrency(parseNumber(getValue(row, nfsColumns.valor)))}
-                      </td>
-                      <td style={tdStyle}>{String(getValue(row, nfsColumns.situacao) ?? "-")}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>
-                        {formatCurrency(parseNumber(getValue(row, nfsColumns.saldo)))}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Pagination page={pagedNfs.page} totalPages={pagedNfs.totalPages} onChange={setNfsPage} />
-          </section>
-        </div>
-      )}
-
-      {activeTab === "consolidado" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
-            {[
-              { label: "Pagamentos", value: consolidadoKpis.pagamentos.toLocaleString("pt-BR") },
-              { label: "Valor Total", value: formatCurrency(consolidadoKpis.valorTotal) },
-              { label: "Valor Apropriado", value: formatCurrency(consolidadoKpis.valorApropriado) },
-            ].map((card) => (
-              <div key={card.label} style={metricCardStyle}>
-                <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>
-                  {card.label}
-                </p>
-                <p style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 800, color: "#0b4f3a" }}>{card.value}</p>
-              </div>
-            ))}
-          </div>
-
-          <div style={filterPanelStyle}>
-            <label style={filterLabelStyle}>
-              Natureza
-              <select
-                multiple
-                value={selectedConsolidadoNaturezas}
-                onChange={(event) => {
-                  setSelectedConsolidadoNaturezas(selectMultiValues(event.currentTarget.options))
-                  setConsolidadoPage(1)
-                }}
-                style={filterSelectStyle}
-              >
-                {consolidadoNaturezaOptions.map((natureza) => (
-                  <option key={natureza} value={natureza}>
-                    {natureza}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={filterLabelStyle}>
-              Fornecedor
-              <input
-                type="text"
-                value={consolidadoFornecedorSearch}
-                onChange={(event) => {
-                  setConsolidadoFornecedorSearch(event.target.value)
-                  setConsolidadoPage(1)
-                }}
-                placeholder="Buscar fornecedor"
-                style={filterInputStyle}
-              />
-            </label>
-            <label style={filterLabelStyle}>
-              Data Vencto de
-              <input
-                type="date"
-                value={consolidadoDateFrom}
-                onChange={(event) => {
-                  setConsolidadoDateFrom(event.target.value)
-                  setConsolidadoPage(1)
-                }}
-                style={dateInputStyle}
-              />
-            </label>
-            <label style={filterLabelStyle}>
-              ate
-              <input
-                type="date"
-                value={consolidadoDateTo}
-                onChange={(event) => {
-                  setConsolidadoDateTo(event.target.value)
-                  setConsolidadoPage(1)
-                }}
-                style={dateInputStyle}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedConsolidadoNaturezas([])
-                setConsolidadoFornecedorSearch("")
-                setConsolidadoDateFrom("")
-                setConsolidadoDateTo("")
-                setConsolidadoPage(1)
-              }}
-              style={resetButtonStyle}
-            >
-              Limpar Filtros
-            </button>
-          </div>
-
-          <section style={panelStyle}>
-            <h3 style={panelTitleStyle}>Tabela Consolidada</h3>
-            <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 13 }}>
-              Exibindo {filteredConsolidado.length.toLocaleString("pt-BR")} de {consolidadoRows.length.toLocaleString("pt-BR")} registros - Total: {formatCurrency(consolidadoKpis.valorTotal)}
-            </p>
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    {Object.keys(consolidadoRows[0] ?? {}).map((column) => (
-                      <th key={column} style={thStyle}>
+                      "Nº CONSOLIDADO",
+                      "COD",
+                      "FORNECEDOR",
+                      "NF",
+                      "MAPA PREÇOS",
+                      "NATUREZA",
+                      "BOLETO/DEPÓSITO",
+                      "DATA VENCTO",
+                      "VALOR",
+                      "ITEM PLANILHA",
+                      "SITUAÇÃO PLANILHA",
+                      "SALDO PLANILHA",
+                    ].map((column) => (
+                      <th
+                        key={column}
+                        style={thStyle}
+                        onClick={() => {
+                          if (!["VALOR", "DATA VENCTO", "FORNECEDOR"].includes(column)) return
+                          setNfsSort((current) => ({
+                            key: column,
+                            direction: current.key === column && current.direction === "asc" ? "desc" : "asc",
+                          }))
+                        }}
+                      >
                         {column}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {pagedConsolidado.rows.map((row, index) => (
-                    <tr key={`${index}-${String(getValue(row, consolidadoColumns.fornecedor) ?? "")}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.02)" : "transparent" }}>
-                      {Object.keys(consolidadoRows[0] ?? {}).map((column) => {
-                        const normalized = normalizeText(column)
-                        const cell = row[column]
-                        const isDate = normalized.includes("data")
-                        const isCurrency = normalized.includes("valor")
-                        return (
-                          <td key={column} style={{ ...tdStyle, textAlign: isCurrency ? "right" : "left" }}>
-                            {isDate
-                              ? formatDate(cell)
-                              : isCurrency
-                                ? formatCurrency(parseNumber(cell))
-                                : String(cell ?? "-")}
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
+                  {nfsPageData.rows.map((row, index) => {
+                    const situacao = resolveSituation(row["SITUAÇÃO PLANILHA"], row["DATA VENCTO"])
+                    const natureza = String(row["NATUREZA"] ?? "").trim()
+                    return (
+                      <tr
+                        key={`${String(row["NF"] ?? "")}-${index}`}
+                        style={{
+                          background: index % 2 === 0 ? "#fff" : "#f9fafb",
+                          boxShadow: natureza ? "none" : `inset 3px 0 0 ${ACCENT_AMBER}`,
+                        }}
+                      >
+                        <td style={tdStyle}>{String(row["Nº CONSOLIDADO"] ?? "-")}</td>
+                        <td style={tdStyle}>{String(row["COD"] ?? "-")}</td>
+                        <td style={tdStyle}>{String(row["FORNECEDOR"] ?? "-")}</td>
+                        <td style={tdStyle}>{String(row["NF"] ?? "-")}</td>
+                        <td style={tdStyle}>{String(row["MAPA PREÇOS"] ?? "-")}</td>
+                        <td style={tdStyle}>{natureza || "-"}</td>
+                        <td style={tdStyle}>{String(row["BOLETO/DEPÓSITO"] ?? "-")}</td>
+                        <td style={tdStyle}>{formatDate(row["DATA VENCTO"])}</td>
+                        <td style={{ ...tdStyle, ...numberCellStyle }}>{formatCurrency(parseNumber(row["VALOR"]))}</td>
+                        <td style={tdStyle}>{String(row["ITEM PLANILHA"] ?? "-")}</td>
+                        <td style={tdStyle}>
+                          <span style={statusBadgeStyle(situacao)}>{situacao}</span>
+                        </td>
+                        <td style={{ ...tdStyle, ...numberCellStyle }}>{formatCurrency(parseNumber(row["SALDO PLANILHA"]))}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
-            <Pagination page={pagedConsolidado.page} totalPages={pagedConsolidado.totalPages} onChange={setConsolidadoPage} />
+            <Pagination
+              page={nfsPageData.page}
+              totalPages={nfsPageData.totalPages}
+              start={nfsPageData.start}
+              end={nfsPageData.end}
+              total={filteredNfs.length}
+              onChange={setNfsPage}
+            />
           </section>
         </div>
       )}
 
-      {activeTab === "orcado-realizado" && (
-        orcadoRealizadoRows.length === 0 ? (
-          <EmptyTabMessage message="Dados de Orcado x Realizado nao disponiveis neste arquivo." />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={filterPanelStyle}>
+      {activeTab === "consolidado" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <section style={PANEL}>
+            <div style={filterRowStyle}>
               <label style={filterLabelStyle}>
-                ITEM
+                Data de
+                <input type="date" value={consolidadoDateFrom} onChange={(event) => setConsolidadoDateFrom(event.target.value)} style={inputStyle} />
+              </label>
+              <label style={filterLabelStyle}>
+                até
+                <input type="date" value={consolidadoDateTo} onChange={(event) => setConsolidadoDateTo(event.target.value)} style={inputStyle} />
+              </label>
+              <label style={filterLabelStyle}>
+                Natureza
                 <select
-                  value={selectedOrcadoItem?.item ?? ""}
-                  onChange={(event) => setSelectedItem(event.target.value)}
-                  style={filterInputStyle}
+                  multiple
+                  value={selectedConsolidadoNaturezas}
+                  onChange={(event) => {
+                    setSelectedConsolidadoNaturezas(Array.from(event.target.selectedOptions, (option) => option.value))
+                    setConsolidadoPage(1)
+                  }}
+                  style={{ ...selectStyle, width: 220, minHeight: 96 }}
                 >
-                  {orcadoRealizadoRows.map((row) => (
-                    <option key={row.item} value={row.item}>
-                      {row.item} - {row.descricao}
+                  {consolidadoNaturezaOptions.map((natureza) => (
+                    <option key={natureza} value={natureza}>
+                      {natureza}
                     </option>
                   ))}
                 </select>
               </label>
+              <button
+                type="button"
+                style={primaryButtonStyle}
+                onClick={() => {
+                  setConsolidadoDateFrom("")
+                  setConsolidadoDateTo("")
+                  setSelectedConsolidadoNaturezas([])
+                  setConsolidadoPage(1)
+                }}
+              >
+                Limpar
+              </button>
+              {hasConsolidadoFilters && <span style={activeBadgeStyle}>Filtros ativos</span>}
             </div>
+          </section>
 
-            <section style={panelStyle}>
-              <h3 style={panelTitleStyle}>Verba x Desembolso</h3>
+          <p style={{ margin: 0, fontSize: 13, color: "#64748b", fontWeight: 600 }}>
+            Exibindo {formatInt(filteredConsolidado.length)} de {formatInt(consolidadoRows.length)} — Total:{" "}
+            {formatCurrency(filteredConsolidado.reduce((sum, row) => sum + parseNumber(row["VALOR"]), 0))}
+          </p>
+
+          <section style={PANEL}>
+            {consolidadoPageData.rows.length ? (
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {consolidadoPageData.rows.map((group) => {
+                    const expanded = expandedConsolidados.includes(group.consolidado)
+                    return (
+                      <div key={group.consolidado} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedConsolidados((current) =>
+                              expanded ? current.filter((item) => item !== group.consolidado) : [...current, group.consolidado],
+                            )
+                          }
+                          style={{
+                            width: "100%",
+                            border: "none",
+                            background: "#f8fafc",
+                            padding: "12px 16px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            cursor: "pointer",
+                            fontSize: 13,
+                            fontWeight: 700,
+                            color: "#0f172a",
+                          }}
+                        >
+                          <span>{group.consolidado} — {group.fornecedor || "Fornecedor não informado"}</span>
+                          <span>{formatInt(group.count)} NFs • {formatCurrency(group.total)}</span>
+                        </button>
+                        {expanded && (
+                          <div style={{ overflowX: "auto" }}>
+                            <table style={tableStyle}>
+                              <thead>
+                                <tr>
+                                  {[
+                                    "Nº CONSOLIDADO",
+                                    "FORNECEDOR",
+                                    "NF",
+                                    "MAPA",
+                                    "NATUREZA",
+                                    "COND.PAGTO",
+                                    "DATA VENCTO",
+                                    "VALOR",
+                                    "ITEM APROPRIAÇÃO",
+                                    "VALOR APROPRIADO",
+                                  ].map((column) => (
+                                    <th key={column} style={thStyle}>
+                                      {column}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {group.items.map((row, index) => (
+                                  <tr key={`${group.consolidado}-${String(row["NF"] ?? "")}-${index}`} style={{ background: index % 2 === 0 ? "#fff" : "#f9fafb" }}>
+                                    <td style={tdStyle}>{String(row["Nº CONSOLIDADO"] ?? "-")}</td>
+                                    <td style={tdStyle}>{String(row["FORNECEDOR"] ?? "-")}</td>
+                                    <td style={tdStyle}>{String(row["NF"] ?? "-")}</td>
+                                    <td style={tdStyle}>{String(row["MAPA"] ?? "-")}</td>
+                                    <td style={tdStyle}>{String(row["NATUREZA"] ?? "-")}</td>
+                                    <td style={tdStyle}>{String(row["COND.PAGTO"] ?? "-")}</td>
+                                    <td style={tdStyle}>{formatDate(row["DATA VENCTO"])}</td>
+                                    <td style={{ ...tdStyle, ...numberCellStyle }}>{formatCurrency(parseNumber(row["VALOR"]))}</td>
+                                    <td style={tdStyle}>{String(row["ITEM APROPRIAÇÃO"] ?? "-")}</td>
+                                    <td style={{ ...tdStyle, ...numberCellStyle }}>{formatCurrency(parseNumber(row["VALOR APROPRIADO"]))}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+                <Pagination
+                  page={consolidadoPageData.page}
+                  totalPages={consolidadoPageData.totalPages}
+                  start={consolidadoPageData.start}
+                  end={consolidadoPageData.end}
+                  total={consolidadoGroups.length}
+                  onChange={setConsolidadoPage}
+                />
+              </>
+            ) : (
+              <EmptyState icon="📦" title="Sem consolidado" message="Nenhum consolidado atende aos filtros atuais." />
+            )}
+          </section>
+        </div>
+      )}
+
+      {activeTab === "resumo-forecast" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 20 }}>
+            {[
+              { label: "Total Geral", value: resumoTotals.totalGeral, color: ACCENT_GREEN },
+              { label: "Material/Serviço", value: resumoTotals.materialServico, color: ACCENT_BLUE },
+              { label: "Mão Obra Total", value: resumoTotals.maoObra, color: ACCENT_AMBER },
+              { label: "Taxa Adm Total", value: resumoTotals.taxaAdm, color: ACCENT_PURPLE },
+            ].map((card: { label: string; value: number; color: string }) => (
+              <div key={card.label} style={{ ...PANEL, borderTop: `3px solid ${card.color}` }}>
+                <p style={lightLabelStyle}>{card.label}</p>
+                <p style={{ margin: "10px 0 0", fontSize: 28, fontWeight: 800, color: "#0f172a" }}>
+                  {formatCurrency(card.value)}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <section style={{ ...DARK_CARD, padding: 20 }}>
+            <div style={panelHeaderStyle}>
+              <div>
+                <h3 style={{ ...panelTitleStyle, color: "#f8fafc" }}>Previsão de Custo Final</h3>
+                <p style={{ ...panelSubtitleStyle, color: "#94a3b8" }}>
+                  {forecast?.data_points_used ?? 0} meses de histórico analisados
+                </p>
+              </div>
+            </div>
+            <div style={{ textAlign: "center", marginBottom: 18 }}>
+              <p style={{ margin: 0, fontSize: 34, fontWeight: 800, color: ACCENT_BLUE }}>
+                {formatCurrency(forecast?.projected_final_cost ?? 0)}
+              </p>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#cbd5e1" }}>
+                {formatCurrency(forecast?.confidence_interval_90?.[0] ?? 0)} —{" "}
+                {formatCurrency(forecast?.confidence_interval_90?.[1] ?? 0)} (IC 90%)
+              </p>
+            </div>
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#cbd5e1", marginBottom: 8 }}>
+                <span>Probabilidade de estouro</span>
+                <span>{formatPct((forecast?.overrun_probability ?? 0) * 100)}</span>
+              </div>
+              <div style={{ ...progressTrackStyle, background: "rgba(148,163,184,0.18)" }}>
+                <div
+                  style={{
+                    ...progressFillStyle,
+                    width: `${Math.min((forecast?.overrun_probability ?? 0) * 100, 100)}%`,
+                    background: riskColor((forecast?.overrun_probability ?? 0) * 100),
+                  }}
+                />
+              </div>
+            </div>
+            {forecastChartData.length ? (
               <ResponsiveContainer width="100%" height={320}>
-                <LineChart data={orcadoChartRows}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="periodo" tick={{ fill: "#64748b", fontSize: 11 }} />
-                  <YAxis tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={(value: number) => `R$ ${(value / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
-                  <Line type="monotone" dataKey="verba" stroke="#0b4f3a" strokeWidth={3} dot={false} />
-                  <Line type="monotone" dataKey="desembolso" stroke="#4f8ef7" strokeWidth={3} dot={{ r: 4 }} />
-                </LineChart>
+                <ComposedChart data={forecastChartData}>
+                  <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fill: "#cbd5e1", fontSize: 11 }} />
+                  <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} tickFormatter={formatCompactCurrency} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="upper" stroke="transparent" fill="rgba(167,139,250,0.14)" activeDot={false} />
+                  <Area type="monotone" dataKey="lower" stroke="transparent" fill="rgba(15,23,42,0.82)" activeDot={false} />
+                  <Bar dataKey="historico" fill={ACCENT_BLUE} radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="forecast" fill={ACCENT_PURPLE} radius={[8, 8, 0, 0]} />
+                </ComposedChart>
               </ResponsiveContainer>
-            </section>
+            ) : (
+              <EmptyState icon="📉" title="Sem forecast" message="Ainda não há dados suficientes para a previsão financeira." />
+            )}
+          </section>
 
-            <section style={panelStyle}>
-              <h3 style={panelTitleStyle}>Resumo</h3>
+          {overdueRows.length > 0 && (
+            <section style={PANEL}>
+              <div style={panelHeaderStyle}>
+                <div>
+                  <h3 style={panelTitleStyle}>⚠ NFs em Atraso</h3>
+                  <p style={panelSubtitleStyle}>Maiores atrasos por fornecedor</p>
+                </div>
+                <span style={activeBadgeStyle}>{overdueRows.length} itens</span>
+              </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={tableStyle}>
                   <thead>
                     <tr>
-                      {["ITEM", "DESCRICAO", "VERBA TOTAL", "REALIZADO", "SALDO"].map((column) => (
+                      {["Fornecedor", "NF", "Valor", "Vencimento", "Dias em Atraso"].map((column) => (
                         <th key={column} style={thStyle}>
                           {column}
                         </th>
@@ -814,245 +1364,222 @@ export const CustosDashboard: React.FC<{ sessionId: string }> = ({ sessionId }) 
                     </tr>
                   </thead>
                   <tbody>
-                    {orcadoSummaryRows.map((row) => (
-                      <tr key={row.item}>
-                        <td style={tdStyle}>{row.item}</td>
-                        <td style={tdStyle}>{row.descricao}</td>
-                        <td style={{ ...tdStyle, textAlign: "right" }}>{formatCurrency(row.verbaTotal)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right" }}>{formatCurrency(row.realizado)}</td>
-                        <td
-                          style={{
-                            ...tdStyle,
-                            textAlign: "right",
-                            fontWeight: 800,
-                            background: row.saldo < 0 ? "rgba(248,113,113,0.18)" : "rgba(34,197,94,0.18)",
-                            color: row.saldo < 0 ? "#991b1b" : "#166534",
-                          }}
-                        >
-                          {formatCurrency(row.saldo)}
-                        </td>
+                    {overdueVisible.map((row, index) => (
+                      <tr key={`${row.fornecedor}-${row.nf}-${index}`} style={{ background: index % 2 === 0 ? "#fff" : "#f9fafb" }}>
+                        <td style={tdStyle}>{row.fornecedor}</td>
+                        <td style={tdStyle}>{row.nf}</td>
+                        <td style={{ ...tdStyle, ...numberCellStyle }}>{formatCurrency(row.valor)}</td>
+                        <td style={tdStyle}>{formatDate(row.data_vencimento)}</td>
+                        <td style={{ ...tdStyle, ...numberCellStyle, color: ACCENT_RED }}>{formatInt(row.days_overdue)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              {overdueRows.length > 10 && (
+                <button type="button" style={{ ...primaryButtonStyle, marginTop: 16 }} onClick={() => setShowAllOverdue((current) => !current)}>
+                  {showAllOverdue ? "Ver menos" : "Ver todas"}
+                </button>
+              )}
             </section>
-          </div>
-        )
-      )}
-
-      {activeTab === "resumo" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-            {[
-              { label: "Total Geral", value: formatCurrency(resumoKpis.totalGeral) },
-              { label: "Total Material / Servico", value: formatCurrency(resumoKpis.totalMaterialServico) },
-              { label: "Total Mao Obra", value: formatCurrency(resumoKpis.totalMaoObra) },
-              { label: "Taxa Adm Total", value: formatCurrency(resumoKpis.taxaAdministracao) },
-            ].map((card) => (
-              <div key={card.label} style={metricCardStyle}>
-                <p style={{ margin: 0, fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>
-                  {card.label}
-                </p>
-                <p style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 800, color: "#0b4f3a" }}>{card.value}</p>
-              </div>
-            ))}
-          </div>
-
-          <section style={panelStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
-              <h3 style={{ ...panelTitleStyle, margin: 0 }}>Resumo Consolidado</h3>
-              <button type="button" onClick={handleResumoExport} style={resetButtonStyle}>
-                Exportar
-              </button>
-            </div>
-
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    {resumoColumns.all.map((column) => (
-                      <th key={column} style={thStyle}>
-                        {column}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {resumoRows.map((row, index) => (
-                    <tr key={`${index}-${String(row[resumoColumns.all[0] ?? ""] ?? "")}`} style={{ background: index % 2 === 0 ? "rgba(15,23,42,0.02)" : "transparent" }}>
-                      {resumoColumns.all.map((column) => {
-                        const normalized = normalizeText(column)
-                        const cell = row[column]
-                        const isDate = normalized.includes("data")
-                        const isCurrency =
-                          !normalized.includes("%") &&
-                          (normalized.includes("total") ||
-                            normalized.includes("taxa") ||
-                            normalized.includes("material") ||
-                            normalized.includes("obra") ||
-                            normalized.includes("staff") ||
-                            normalized.includes("servico"))
-                        return (
-                          <td key={column} style={{ ...tdStyle, textAlign: isCurrency ? "right" : "left" }}>
-                            {isDate
-                              ? formatDate(cell)
-                              : isCurrency
-                                ? formatCurrency(parseNumber(cell))
-                                : String(cell ?? "-")}
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          )}
         </div>
       )}
-    </div>
+      </div>
+    </SchemaGuard>
   )
 }
 
-const skeletonStyle = `
+function riskColor(value: number) {
+  if (value > 85) return ACCENT_RED
+  if (value > 70) return ACCENT_AMBER
+  return ACCENT_GREEN
+}
+
+const skeletonAnimation = `
   @keyframes custos-wave {
     0% { background-position: 200% 0; }
     100% { background-position: -200% 0; }
   }
 `
 
-const cardSkeletonStyle: React.CSSProperties = {
-  height: 110,
-  borderRadius: 16,
-  background: "linear-gradient(90deg, rgba(226,232,240,0.8), rgba(241,245,249,0.95), rgba(226,232,240,0.8))",
-  backgroundSize: "200% 100%",
-  animation: "custos-wave 1.4s ease infinite",
-}
-
-const panelSkeletonStyle: React.CSSProperties = {
-  ...cardSkeletonStyle,
-  height: 280,
-}
-
-const filterSkeletonStyle: React.CSSProperties = {
-  ...cardSkeletonStyle,
-  height: 88,
-}
-
-const filterPanelStyle: React.CSSProperties = {
+const panelHeaderStyle: React.CSSProperties = {
   display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
   gap: 12,
+  marginBottom: 16,
+}
+
+const panelTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 16,
+  fontWeight: 800,
+  color: "#0f172a",
+}
+
+const panelSubtitleStyle: React.CSSProperties = {
+  margin: "6px 0 0",
+  fontSize: 12,
+  color: "#64748b",
+}
+
+const darkLabelStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 11,
+  fontWeight: 800,
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  color: "#cbd5e1",
+}
+
+const lightLabelStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 11,
+  fontWeight: 800,
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  color: "#64748b",
+}
+
+const filterRowStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 20,
   flexWrap: "wrap",
   alignItems: "flex-end",
-  background: "#fff",
-  border: "1px solid rgba(11,79,58,0.12)",
-  borderRadius: 12,
-  padding: 16,
 }
 
 const filterLabelStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 6,
-  minWidth: 220,
-  color: "#64748b",
   fontSize: 11,
   fontWeight: 800,
+  color: "#64748b",
   textTransform: "uppercase",
-  letterSpacing: "0.05em",
+  letterSpacing: "0.06em",
 }
 
-const filterInputStyle: React.CSSProperties = {
-  background: "#fff",
-  border: "1px solid rgba(11,79,58,0.18)",
-  borderRadius: 8,
+const inputStyle: React.CSSProperties = {
+  height: 40,
+  borderRadius: 10,
+  border: "1px solid rgba(11,79,58,0.14)",
+  padding: "10px 12px",
+  fontSize: 13,
   color: "#0f172a",
-  padding: "8px 10px",
-  fontSize: 13,
-  height: 38,
-}
-
-const filterSelectStyle: React.CSSProperties = {
-  width: 220,
   background: "#fff",
-  border: "1px solid rgba(11,79,58,0.18)",
-  borderRadius: 8,
+}
+
+const selectStyle: React.CSSProperties = {
+  borderRadius: 10,
+  border: "1px solid rgba(11,79,58,0.14)",
+  padding: "10px 12px",
+  fontSize: 13,
   color: "#0f172a",
-  padding: "8px 10px",
-  fontSize: 13,
-  minHeight: 90,
+  background: "#fff",
 }
 
-const dateInputStyle: React.CSSProperties = {
-  border: "1px solid rgba(11,79,58,0.18)",
-  borderRadius: 8,
-  padding: "8px 10px",
-  fontSize: 13,
-  height: 38,
-}
-
-const resetButtonStyle: React.CSSProperties = {
-  background: "#0b4f3a",
-  color: "#fff",
+const primaryButtonStyle: React.CSSProperties = {
+  height: 40,
+  borderRadius: 10,
   border: "none",
-  borderRadius: 8,
-  padding: "9px 14px",
-  fontWeight: 800,
+  background: BRAND_GREEN,
+  color: "#fff",
+  padding: "0 16px",
+  fontSize: 13,
+  fontWeight: 700,
   cursor: "pointer",
 }
 
-const metricCardStyle: React.CSSProperties = {
+const secondaryButtonStyle: React.CSSProperties = {
+  height: 38,
+  borderRadius: 10,
+  border: "1px solid rgba(11,79,58,0.14)",
   background: "#fff",
-  border: "1px solid rgba(11,79,58,0.12)",
-  borderRadius: 12,
-  padding: "16px 20px",
-}
-
-const panelStyle: React.CSSProperties = {
-  background: "#fff",
-  border: "1px solid rgba(11,79,58,0.12)",
-  borderRadius: 12,
-  padding: 20,
-  boxShadow: "0 2px 8px rgba(11,79,58,0.08)",
-}
-
-const panelTitleStyle: React.CSSProperties = {
-  margin: "0 0 16px",
-  fontSize: 16,
-  fontWeight: 800,
   color: "#0f172a",
+  padding: "0 14px",
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: "pointer",
+}
+
+const activeBadgeStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  height: 28,
+  padding: "0 10px",
+  borderRadius: 999,
+  background: "rgba(79,142,247,0.10)",
+  color: "#1d4ed8",
+  fontSize: 12,
+  fontWeight: 700,
 }
 
 const tableStyle: React.CSSProperties = {
   width: "100%",
-  borderCollapse: "collapse",
+  borderCollapse: "separate",
+  borderSpacing: 0,
 }
 
 const thStyle: React.CSSProperties = {
+  position: "sticky",
+  top: 0,
   textAlign: "left",
   padding: "10px 12px",
-  borderBottom: "1px solid #e2e8f0",
+  background: "#f8fafc",
+  borderBottom: "2px solid #e2e8f0",
   fontSize: 11,
   fontWeight: 800,
-  color: "#64748b",
   textTransform: "uppercase",
+  color: "#64748b",
   whiteSpace: "nowrap",
+  zIndex: 1,
+  cursor: "pointer",
 }
 
 const tdStyle: React.CSSProperties = {
   padding: "10px 12px",
   borderBottom: "1px solid #e2e8f0",
+  fontSize: 13,
+  fontWeight: 500,
   color: "#0f172a",
   whiteSpace: "nowrap",
 }
 
-const pagerButtonStyle: React.CSSProperties = {
-  border: "1px solid rgba(11,79,58,0.18)",
-  background: "#fff",
-  color: "#0f172a",
-  borderRadius: 8,
-  padding: "8px 12px",
-  fontWeight: 700,
-  cursor: "pointer",
+const numberCellStyle: React.CSSProperties = {
+  textAlign: "right",
+  fontVariantNumeric: "tabular-nums",
+}
+
+const progressTrackStyle: React.CSSProperties = {
+  width: "100%",
+  height: 10,
+  background: "#e2e8f0",
+  borderRadius: 999,
+  overflow: "hidden",
+}
+
+const progressFillStyle: React.CSSProperties = {
+  height: "100%",
+  borderRadius: 999,
+}
+
+function statusBadgeStyle(status: string): React.CSSProperties {
+  const background =
+    status === "PAGO"
+      ? "rgba(52,201,126,0.12)"
+      : status === "VENCIDO"
+        ? "rgba(239,68,68,0.12)"
+        : "rgba(245,166,35,0.14)"
+  const color = status === "PAGO" ? "#15803d" : status === "VENCIDO" ? "#b91c1c" : "#b45309"
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 10px",
+    borderRadius: 999,
+    background,
+    color,
+    fontSize: 12,
+    fontWeight: 700,
+  }
 }

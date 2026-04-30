@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { API_BASE_URL } from "../api/client"
+import { fmtNum, fmtPct } from "../lib/formatters"
 
 interface AnalyticsProps {
   sessionId: string
@@ -45,13 +46,13 @@ const normalizeClusters = (kmeans: any): ClusterRow[] => {
     return sizes.map((size, index) => ({
       cluster: `Cluster ${index}`,
       size: Number(size) || 0,
-      percentage: total ? Number(((Number(size) / total) * 100).toFixed(1)) : 0,
+      percentage: total ? Math.round((Number(size) / total) * 1000) / 10 : 0,
     }))
   }
   return Object.entries(sizes).map(([cluster, size]) => ({
     cluster: `Cluster ${cluster}`,
     size: Number(size) || 0,
-    percentage: total ? Number(((Number(size) / total) * 100).toFixed(1)) : 0,
+    percentage: total ? Math.round((Number(size) / total) * 1000) / 10 : 0,
   }))
 }
 
@@ -93,10 +94,10 @@ export const ClusteringDashboard: React.FC<AnalyticsProps> = ({ sessionId }) => 
   const pcaRows = Array.isArray(explained)
     ? explained.map((value: number, index: number) => ({
       component: `PC${index + 1}`,
-      variance: Number((Number(value) * 100).toFixed(1)),
+      variance: Math.round(Number(value) * 1000) / 10,
     }))
     : []
-  const cumulativePct = cumulative?.length ? Number((Number(cumulative[cumulative.length - 1]) * 100).toFixed(1)) : Number((Number(pca?.total_variance_explained ?? 0) * 100).toFixed(1))
+  const cumulativePct = cumulative?.length ? Math.round(Number(cumulative[cumulative.length - 1]) * 1000) / 10 : Math.round(Number(pca?.total_variance_explained ?? 0) * 1000) / 10
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, color: "#0f172a" }}>
@@ -176,8 +177,8 @@ export const ClusteringDashboard: React.FC<AnalyticsProps> = ({ sessionId }) => 
                   {clusterRows.map((row) => (
                     <tr key={row.cluster}>
                       <td style={tdStyle}>{row.cluster}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{row.size.toLocaleString("pt-BR")}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>{row.percentage.toLocaleString("pt-BR")}%</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#0b4f3a" }}>{fmtNum(row.size)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmtPct(row.percentage)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -201,7 +202,7 @@ export const ClusteringDashboard: React.FC<AnalyticsProps> = ({ sessionId }) => 
                   </BarChart>
                 </ResponsiveContainer>
                 <p style={{ margin: "12px 0 0", color: "#0b4f3a", fontWeight: 800 }}>
-                  {cumulativePct}% da variância explicada com {pcaRows.length} componentes
+                  {fmtPct(cumulativePct)} da variância explicada com {fmtNum(pcaRows.length)} componentes
                 </p>
               </>
             )}

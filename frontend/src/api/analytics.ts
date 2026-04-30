@@ -7,13 +7,9 @@ export interface UploadResponse {
   filename: string
   rows: number
   columns: number
-  format?: string
-  col_types: Record<string, string>
   preview: Record<string, unknown>[]
-  template: string | null
-  detected_schema: string[]
-  schema_types?: string[]
-  detected_sheets?: string[]
+  schema_types: string[]
+  detected_sheets: string[]
 }
 
 export interface EfetivoSummary {

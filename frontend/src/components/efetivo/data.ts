@@ -51,7 +51,7 @@ export function buildBranchRows(workRows: WorkRow[]): BranchRow[] {
     .map(([filial, funcionarios]) => ({
       filial,
       funcionarios,
-      percentage: totalFuncionarios ? Number(((funcionarios / totalFuncionarios) * 100).toFixed(1)) : 0,
+      percentage: totalFuncionarios ? Math.round((funcionarios / totalFuncionarios) * 1000) / 10 : 0,
     }))
     .sort((left, right) => right.funcionarios - left.funcionarios)
 }
