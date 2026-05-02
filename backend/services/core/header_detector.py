@@ -39,7 +39,11 @@ def find_header_row(
     upper_bound = min(len(df_raw), max(search_limit, 1))
 
     for row_index in range(upper_bound):
-        row_values = {_normalize_cell(value) for value in df_raw.iloc[row_index].tolist() if pd.notna(value)}
+        row_values = {
+            normalized
+            for value in df_raw.iloc[row_index].tolist()
+            if pd.notna(value) and (normalized := _normalize_cell(value))
+        }
         if not row_values:
             continue
 

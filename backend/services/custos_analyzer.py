@@ -142,7 +142,22 @@ def _promote_header(df_raw: pd.DataFrame, required_cols: list[str]) -> pd.DataFr
     ]
     table = table.dropna(axis=0, how="all").dropna(axis=1, how="all")
     table.attrs["source_name"] = df_raw.attrs.get("source_name", "")
+    table["_source_sheet"] = table.attrs["source_name"]
+    table["_source_row"] = [header_row + 2 + index for index in range(len(table))]
     return table.reset_index(drop=True)
+
+
+def _append_source_columns(normalized: pd.DataFrame, source: pd.DataFrame) -> pd.DataFrame:
+    if normalized.empty:
+        return normalized
+    for column in ("_source_sheet", "_source_row"):
+        if column in source.columns and column not in normalized.columns:
+            normalized[column] = source[column].values[: len(normalized)]
+    return normalized
+
+
+def _not_blank(series: pd.Series) -> pd.Series:
+    return series.fillna("").astype(str).str.strip().ne("")
 
 
 def _attach_quality(df: pd.DataFrame, report: DataQualityReport) -> pd.DataFrame:
@@ -219,10 +234,17 @@ def canonicalize_nfs_frame(df: pd.DataFrame | None) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame(columns=list(NFS_COLUMN_MAP.keys()))
     normalized = normalize_df(df, NFS_COLUMN_MAP)
-    if "fornecedor" in normalized.columns and "valor" in normalized.columns:
-        normalized = normalized[~(normalized["fornecedor"].isna() & normalized["valor"].isna())]
+    normalized = _append_source_columns(normalized, df)
     if "data_vencimento" in normalized.columns:
         normalized["data_vencimento"] = pd.to_datetime(normalized["data_vencimento"], errors="coerce", dayfirst=True)
+    if "valor" in normalized.columns:
+        normalized["valor"] = pd.to_numeric(normalized["valor"], errors="coerce")
+    if {"fornecedor", "valor"}.issubset(normalized.columns):
+        has_supplier = _not_blank(normalized["fornecedor"])
+        has_value = normalized["valor"].notna() & normalized["valor"].ne(0)
+        normalized = normalized[has_supplier & has_value].copy()
+    if "natureza" in normalized.columns:
+        normalized = normalized[_not_blank(normalized["natureza"])].copy()
     return normalized.reset_index(drop=True)
 
 
@@ -230,8 +252,18 @@ def canonicalize_consolidado_frame(df: pd.DataFrame | None) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame(columns=list(CONSOLIDADO_COLUMN_MAP.keys()))
     normalized = normalize_df(df, CONSOLIDADO_COLUMN_MAP)
+    normalized = _append_source_columns(normalized, df)
     if "data_vencimento" in normalized.columns:
         normalized["data_vencimento"] = pd.to_datetime(normalized["data_vencimento"], errors="coerce", dayfirst=True)
+    if "valor" in normalized.columns:
+        normalized["valor"] = pd.to_numeric(normalized["valor"], errors="coerce")
+    if {"fornecedor", "natureza", "valor"}.issubset(normalized.columns):
+        normalized = normalized[
+            _not_blank(normalized["fornecedor"])
+            & _not_blank(normalized["natureza"])
+            & normalized["valor"].notna()
+            & normalized["valor"].ne(0)
+        ].copy()
     return normalized.reset_index(drop=True)
 
 
@@ -239,6 +271,7 @@ def canonicalize_budget_frame(df: pd.DataFrame | None) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame(columns=list(ORCAMENTO_BUDGET_COLUMN_MAP.keys()))
     normalized = normalize_df(df, ORCAMENTO_BUDGET_COLUMN_MAP)
+    normalized = _append_source_columns(normalized, df)
     if "item" in normalized.columns and "custo_total" in normalized.columns:
         normalized = normalized[
             ~(
@@ -268,6 +301,7 @@ def canonicalize_resumo_frame(df: pd.DataFrame | None) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame(columns=list(RESUMO_COLUMN_MAP.keys()))
     normalized = normalize_df(df, RESUMO_COLUMN_MAP)
+    normalized = _append_source_columns(normalized, df)
     numeric_cols = [
         column
         for column in normalized.columns
@@ -279,6 +313,12 @@ def canonicalize_resumo_frame(df: pd.DataFrame | None) -> pd.DataFrame:
     for column in ["data_vencimento", "data_recebimento"]:
         if column in normalized.columns:
             normalized[column] = pd.to_datetime(normalized[column], errors="coerce", dayfirst=True)
+    value_columns = [column for column in ["total", "total_geral", "taxa_administracao"] if column in normalized.columns]
+    if value_columns:
+        has_money = pd.Series(False, index=normalized.index)
+        for column in value_columns:
+            has_money = has_money | pd.to_numeric(normalized[column], errors="coerce").fillna(0).ne(0)
+        normalized = normalized[has_money].copy()
     return normalized.reset_index(drop=True)
 
 
@@ -301,6 +341,7 @@ def canonicalize_orcado_realizado_frame(df: pd.DataFrame | None) -> pd.DataFrame
             remaining_months[month_key] = pd.to_numeric(df[column], errors="coerce").fillna(0)
     for column_name, series in remaining_months.items():
         explicit[column_name] = series.values[: len(explicit)]
+    explicit = _append_source_columns(explicit, df)
     return explicit.reset_index(drop=True)
 
 
@@ -648,8 +689,9 @@ def _extract_tax_pct(resumo: pd.DataFrame, total_valor: float, valor_com_taxa: f
         if not taxa_values.empty:
             raw_value = float(taxa_values.median())
             taxa_pct = raw_value * 100 if 0 < raw_value <= 1 else raw_value
-    if taxa_pct == 0 and total_valor:
-        taxa_pct = ((valor_com_taxa - total_valor) / total_valor) * 100
+    if taxa_pct == 0 and total_valor and valor_com_taxa > 0:
+        calculated_pct = ((valor_com_taxa - total_valor) / total_valor) * 100
+        taxa_pct = calculated_pct if calculated_pct > 0 else 0.0
     return round(float(taxa_pct), 2)
 
 

@@ -108,17 +108,31 @@ def _to_float(value: Any) -> float:
     return float(parsed) if pd.notna(parsed) else 0.0
 
 
+def _to_string(value: Any) -> str:
+    """Converte valores pandas/NaN em string segura para JSON."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
 def _new_nfs_row(row: pd.Series) -> dict[str, Any]:
     """Serializa uma linha de NF no contrato novo."""
     return {
-        "consolidado": str(row.get("n_consolidado", "") or ""),
-        "fornecedor": str(row.get("fornecedor", "") or ""),
-        "nf": str(row.get("nf", "") or ""),
-        "natureza": str(row.get("natureza", "") or ""),
+        "consolidado": _to_string(row.get("n_consolidado", "")),
+        "fornecedor": _to_string(row.get("fornecedor", "")),
+        "nf": _to_string(row.get("nf", "")),
+        "natureza": _to_string(row.get("natureza", "")),
         "valor": round(_to_float(row.get("valor")), 2),
         "data_vencto": _iso_or_none(row.get("data_vencimento")),
-        "pagamento": str(row.get("boleto_deposito", "") or ""),
-        "situacao": str(row.get("situacao_planilha", "") or ""),
+        "pagamento": _to_string(row.get("boleto_deposito", "")),
+        "situacao": _to_string(row.get("situacao_planilha", "")),
+        "source_sheet": _to_string(row.get("_source_sheet", "")),
+        "source_row": row.get("_source_row"),
     }
 
 
@@ -142,6 +156,8 @@ def _legacy_nfs_row(row: pd.Series) -> dict[str, Any]:
         "SITUAÇÃO PLANILHA": row.get("situacao_planilha"),
         "SITUAÃ‡ÃƒO PLANILHA": row.get("situacao_planilha"),
         "SALDO PLANILHA": row.get("saldo_planilha"),
+        "ORIGEM ABA": row.get("_source_sheet"),
+        "LINHA ORIGEM": row.get("_source_row"),
     }
 
 
@@ -267,6 +283,8 @@ async def get_custos_consolidado(
                 "ITEM APROPRIAÇÃO": row.get("apropriacao_item"),
                 "ITEM APROPRIAÃ‡ÃƒO": row.get("apropriacao_item"),
                 "VALOR APROPRIADO": row.get("apropriacao_valor"),
+                "ORIGEM ABA": row.get("_source_sheet"),
+                "LINHA ORIGEM": row.get("_source_row"),
             }
             for _, row in legacy_source.iterrows()
         ]
@@ -310,7 +328,7 @@ async def get_custos_fluxo(
                 "mes": str(label),
                 "valor_total": round(float(group["valor"].sum()), 2),
                 "by_natureza": [
-                    {"natureza": str(row["natureza"] or "Nao informado"), "valor": round(float(row["valor"] or 0), 2)}
+                    {"natureza": _to_string(row["natureza"]) or "Nao informado", "valor": round(_to_float(row["valor"]), 2)}
                     for _, row in by_natureza.iterrows()
                 ],
             }
@@ -330,15 +348,15 @@ async def get_custos_orcado_realizado(session_id: str) -> list[dict[str, Any]]:
     payload = []
     for _, row in frame.iterrows():
         periodos = [
-            {"periodo": int(column), "desembolso": round(float(row.get(column, 0) or 0), 2)}
+            {"periodo": int(column), "desembolso": round(_to_float(row.get(column, 0)), 2)}
             for column in month_columns
-            if float(row.get(column, 0) or 0) != 0
+            if _to_float(row.get(column, 0)) != 0
         ]
         payload.append(
             {
-                "item": str(row.get("item", "") or ""),
-                "descricao": str(row.get("descricao", "") or ""),
-                "verba_total": round(float(row.get("verba_total", 0) or 0), 2),
+                "item": _to_string(row.get("item", "")),
+                "descricao": _to_string(row.get("descricao", "")),
+                "verba_total": round(_to_float(row.get("verba_total", 0)), 2),
                 "periodos": periodos,
             }
         )

@@ -75,8 +75,13 @@ def test_upload_can_append_boletim_medicao_family_from_sample_16(client) -> None
     assert medicao_payload["metadata"]["tipo_documento"] == "boletim_medicao"
     assert medicao_payload["metadata"]["num_boletins"] >= 4
     assert medicao_payload["classificacao_variacao"] == "neutro"
+    assert medicao_payload["valor_mao_obra"] > 0
+    assert medicao_payload["valor_abatido_fornecedor"] > 0
+    assert medicao_payload["valor_liquido"] < medicao_payload["valor_mao_obra"]
 
     dataset_response = client.get(f"/api/cross/{session_id}/dataset")
     assert dataset_response.status_code == 200
     dataset_payload = dataset_response.json()
     assert "boletim" in dataset_payload["columns"]
+    assert "valor_liquido" in dataset_payload["columns"]
+    assert "source_sheet" in dataset_payload["columns"]

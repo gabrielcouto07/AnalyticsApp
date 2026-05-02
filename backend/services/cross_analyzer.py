@@ -90,6 +90,7 @@ def build_cross_dataset(efetivo_df: pd.DataFrame, medicao_data: dict[str, Any]) 
     total_diarias = float(pd.to_numeric(efetivo_df.get("quantidade_efetivo"), errors="coerce").fillna(0).sum()) if "quantidade_efetivo" in efetivo_df.columns else 0.0
     meses_ativos = max(len(efetivo_rows), 0)
     custo_negociado = float(medicao_summary.get("custo_negociado") or 0.0)
+    valor_liquido = float(medicao_summary.get("valor_liquido") or custo_negociado)
     efetivo_working = efetivo_df.copy()
     if "data" in efetivo_working.columns:
         efetivo_working["data"] = pd.to_datetime(efetivo_working["data"], errors="coerce")
@@ -138,6 +139,14 @@ def build_cross_dataset(efetivo_df: pd.DataFrame, medicao_data: dict[str, Any]) 
                     "funcoes_distintas": efetivo_row["funcoes_distintas"],
                     "custo_projeto_negociado": float(boletim.get("total") or 0.0),
                     "valor_total_boletim": float(boletim.get("valor_total_boletim") or boletim.get("total") or 0.0),
+                    "valor_mao_obra": float(boletim.get("valor_mao_obra") or boletim.get("total") or 0.0),
+                    "valor_equipamentos": float(boletim.get("valor_equipamentos") or 0.0),
+                    "valor_abatido_fornecedor": float(boletim.get("valor_abatido_fornecedor") or 0.0),
+                    "valor_liquido": float(boletim.get("valor_liquido") or boletim.get("total") or 0.0),
+                    "total_diarias_medicao": float(boletim.get("total_diarias") or 0.0),
+                    "periodo_inicio": boletim.get("periodo_inicio"),
+                    "periodo_fim": boletim.get("periodo_fim"),
+                    "source_sheet": boletim.get("sheet_name"),
                     "boletim": boletim.get("bm_numero") or boletim.get("sheet_name"),
                 }
             )
@@ -150,6 +159,11 @@ def build_cross_dataset(efetivo_df: pd.DataFrame, medicao_data: dict[str, Any]) 
                 "funcoes_distintas": row["funcoes_distintas"],
                 "custo_projeto_negociado": custo_negociado,
                 "valor_total_boletim": None,
+                "valor_mao_obra": float(medicao_summary.get("valor_mao_obra") or custo_negociado),
+                "valor_equipamentos": float(medicao_summary.get("valor_equipamentos") or 0.0),
+                "valor_abatido_fornecedor": float(medicao_summary.get("valor_abatido_fornecedor") or 0.0),
+                "valor_liquido": valor_liquido,
+                "total_diarias_medicao": float(medicao_summary.get("total_diarias") or 0.0),
             }
             for row in efetivo_rows
         ]
@@ -173,7 +187,12 @@ def build_cross_dataset(efetivo_df: pd.DataFrame, medicao_data: dict[str, Any]) 
         "desconto_percentual": float(medicao_summary.get("desconto_pct") or 0.0),
         "classificacao_variacao": medicao_summary.get("classificacao_variacao"),
         "ratio_custo_por_diaria": round(custo_negociado / total_diarias, 4) if total_diarias else 0.0,
+        "ratio_liquido_por_diaria": round(valor_liquido / total_diarias, 4) if total_diarias else 0.0,
         "ratio_custo_por_mes": round(custo_negociado / meses_ativos, 4) if meses_ativos else 0.0,
+        "valor_mao_obra": float(medicao_summary.get("valor_mao_obra") or 0.0),
+        "valor_equipamentos": float(medicao_summary.get("valor_equipamentos") or 0.0),
+        "valor_abatido_fornecedor": float(medicao_summary.get("valor_abatido_fornecedor") or 0.0),
+        "valor_liquido": valor_liquido,
         "rows": rows,
         "columns": list(rows[0].keys()) if rows else ["mes", "total_diarias", "fornecedores", "funcoes_distintas", "custo_projeto_negociado"],
         "source_granularity": source_granularity,

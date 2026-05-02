@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import type { DataQualityReport } from "../api/analytics"
 import { fetchApiJson } from "../api/analytics"
 
-type MedicaoTab = "proposta" | "itens" | "qualidade"
+type MedicaoTab = "proposta" | "periodos" | "itens" | "qualidade"
 
 type BoletimResumo = {
   sheet_name: string
@@ -17,6 +17,17 @@ type BoletimResumo = {
   valor_total_boletim: number
   total_itens: number
   num_itens: number
+  total_equipamentos?: number
+  valor_mao_obra?: number
+  valor_equipamentos?: number
+  valor_retencao_contratual?: number
+  valor_abatido_fornecedor?: number
+  valor_bruto?: number
+  valor_liquido?: number
+  total_diarias?: number
+  funcoes_distintas?: number
+  periodo_inicio?: string | null
+  periodo_fim?: string | null
   mes_ref?: string | null
 }
 
@@ -52,6 +63,13 @@ type MedicaoSummaryResponse = {
   media_por_boletim?: number
   maior_boletim?: BoletimResumo | null
   menor_boletim?: BoletimResumo | null
+  valor_mao_obra?: number
+  valor_equipamentos?: number
+  valor_abatido_fornecedor?: number
+  valor_bruto?: number
+  valor_liquido?: number
+  total_diarias?: number
+  funcoes_distintas?: number
   tipo_documento?: string
 }
 
@@ -65,9 +83,18 @@ type MedicaoItem = {
   total: number
   tipo_celula: string
   observacao?: string | null
+  tipo_item?: "servico" | "mao_obra" | "equipamento" | string
+  funcao?: string | null
+  diarias?: number | null
+  valor_unitario?: number | null
+  valor_subtotal?: number | null
+  valor_equipamento?: number | null
+  source_row?: number | null
   sheet_name?: string | null
   bm_numero?: string | number | null
   periodo_medicao?: string | null
+  periodo_inicio?: string | null
+  periodo_fim?: string | null
 }
 
 type MedicaoItemsResponse = {
@@ -77,12 +104,6 @@ type MedicaoItemsResponse = {
 type MedicaoDashboardProps = {
   sessionId: string
 }
-
-const TABS: Array<{ id: MedicaoTab; label: string }> = [
-  { id: "proposta", label: "Proposta / Boletins" },
-  { id: "itens", label: "Itens" },
-  { id: "qualidade", label: "Qualidade" },
-]
 
 function formatCurrency(value: number | null | undefined) {
   if (typeof value !== "number" || Number.isNaN(value)) return "-"
@@ -137,7 +158,7 @@ function getVariationPresentation(summary: MedicaoSummaryResponse | null) {
   }
   if (variationType === "acrescimo") {
     return {
-      label: "Acrescimo",
+      label: "Acréscimo",
       value: formatCurrency(summary?.diferenca_valor ?? 0),
       percent: formatPercentRatio(summary?.variacao_percentual ?? null),
       className: "border-orange-200 bg-orange-50/80",
@@ -145,7 +166,7 @@ function getVariationPresentation(summary: MedicaoSummaryResponse | null) {
     }
   }
   return {
-    label: "Sem variacao",
+    label: "Sem variação",
     value: formatCurrency(0),
     percent: "0%",
     className: "border-slate-200 bg-slate-50",
@@ -190,6 +211,15 @@ export const MedicaoDashboard: React.FC<MedicaoDashboardProps> = ({ sessionId })
   const boletins = useMemo(() => summary?.boletins ?? [], [summary?.boletins])
   const isBoletimWorkbook = (summary?.metadata?.tipo_documento ?? summary?.tipo_documento) === "boletim_medicao"
   const variation = getVariationPresentation(summary)
+  const tabs = useMemo<Array<{ id: MedicaoTab; label: string }>>(
+    () => [
+      { id: "proposta", label: isBoletimWorkbook ? "Resumo" : "Proposta" },
+      ...(isBoletimWorkbook ? [{ id: "periodos" as const, label: "Períodos / Boletins" }] : []),
+      { id: "itens", label: isBoletimWorkbook ? "Detalhes" : "Itens" },
+      { id: "qualidade", label: "Qualidade" },
+    ],
+    [isBoletimWorkbook],
+  )
 
   const boletimOptions = useMemo(
     () => ["consolidado", ...boletins.map((boletim) => boletim.sheet_name)],
@@ -274,7 +304,7 @@ export const MedicaoDashboard: React.FC<MedicaoDashboardProps> = ({ sessionId })
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const isActive = activeTab === tab.id
           return (
             <button
@@ -320,18 +350,27 @@ export const MedicaoDashboard: React.FC<MedicaoDashboardProps> = ({ sessionId })
           )}
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            {[
-              { label: "Custo Inicial", value: formatCurrency(summary?.custo_inicial), className: "border-slate-200 bg-white/90", textClassName: "text-slate-950" },
-              { label: "Custo Negociado / Medido", value: formatCurrency(summary?.custo_negociado), className: "border-slate-200 bg-white/90", textClassName: "text-slate-950" },
-              { label: variation.label, value: variation.value, className: variation.className, textClassName: variation.textClassName },
-              { label: "Variacao %", value: variation.percent, className: variation.className, textClassName: variation.textClassName },
-              {
-                label: isBoletimWorkbook ? "Boletins" : "Itens",
-                value: String(isBoletimWorkbook ? (summary?.quantidade_boletins ?? 0) : (summary?.total_itens ?? summary?.num_itens ?? 0)),
-                className: "border-slate-200 bg-white/90",
-                textClassName: "text-slate-950",
-              },
-            ].map((card) => (
+            {(isBoletimWorkbook
+              ? [
+                  { label: "Mão de obra", value: formatCurrency(summary?.valor_mao_obra), className: "border-slate-200 bg-white/90", textClassName: "text-slate-950" },
+                  { label: "Equipamentos", value: formatCurrency(summary?.valor_equipamentos), className: "border-amber-200 bg-amber-50/80", textClassName: "text-amber-900" },
+                  { label: "Abatido fornecedor", value: formatCurrency(summary?.valor_abatido_fornecedor), className: "border-orange-200 bg-orange-50/80", textClassName: "text-orange-900" },
+                  { label: "Valor líquido", value: formatCurrency(summary?.valor_liquido), className: "border-emerald-200 bg-emerald-50/80", textClassName: "text-emerald-900" },
+                  { label: "Diárias", value: (summary?.total_diarias ?? 0).toLocaleString("pt-BR"), className: "border-slate-200 bg-white/90", textClassName: "text-slate-950" },
+                ]
+              : [
+                  { label: "Custo Inicial", value: formatCurrency(summary?.custo_inicial), className: "border-slate-200 bg-white/90", textClassName: "text-slate-950" },
+                  { label: "Custo Negociado", value: formatCurrency(summary?.custo_negociado), className: "border-slate-200 bg-white/90", textClassName: "text-slate-950" },
+                  { label: variation.label, value: variation.value, className: variation.className, textClassName: variation.textClassName },
+                  { label: "Variação %", value: variation.percent, className: variation.className, textClassName: variation.textClassName },
+                  {
+                    label: "Itens",
+                    value: String(summary?.total_itens ?? summary?.num_itens ?? 0),
+                    className: "border-slate-200 bg-white/90",
+                    textClassName: "text-slate-950",
+                  },
+                ]
+            ).map((card) => (
               <div key={card.label} className={`rounded-[24px] border p-5 shadow-sm ${card.className}`}>
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{card.label}</p>
                 <p className={`mt-3 text-3xl font-bold ${card.textClassName}`}>{card.value}</p>
@@ -416,6 +455,54 @@ export const MedicaoDashboard: React.FC<MedicaoDashboardProps> = ({ sessionId })
         </div>
       )}
 
+      {activeTab === "periodos" && isBoletimWorkbook && (
+        <div className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-sm">
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold text-slate-950">Períodos e boletins</h3>
+            <p className="text-sm text-slate-500">
+              Cada linha preserva a aba MED, o período medido, mão de obra, equipamentos e abatimentos do fornecedor.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.14em] text-slate-500">
+                  <th className="px-3 py-3">Boletim</th>
+                  <th className="px-3 py-3">Período</th>
+                  <th className="px-3 py-3">Fornecedor</th>
+                  <th className="px-3 py-3">Diárias</th>
+                  <th className="px-3 py-3">Funções</th>
+                  <th className="px-3 py-3">Mão de obra</th>
+                  <th className="px-3 py-3">Equipamentos</th>
+                  <th className="px-3 py-3">Abatido</th>
+                  <th className="px-3 py-3">Líquido</th>
+                </tr>
+              </thead>
+              <tbody>
+                {boletins.map((boletim) => (
+                  <tr key={boletim.sheet_name} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-3 font-semibold text-slate-900">{boletim.sheet_name}</td>
+                    <td className="px-3 py-3 text-slate-700">
+                      <div>{boletim.periodo_medicao || "-"}</div>
+                      <div className="text-xs text-slate-500">
+                        {formatDate(boletim.periodo_inicio)} até {formatDate(boletim.periodo_fim)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">{boletim.fornecedor || "-"}</td>
+                    <td className="px-3 py-3 text-slate-700">{(boletim.total_diarias ?? 0).toLocaleString("pt-BR")}</td>
+                    <td className="px-3 py-3 text-slate-700">{boletim.funcoes_distintas ?? "-"}</td>
+                    <td className="px-3 py-3 font-semibold text-slate-900">{formatCurrency(boletim.valor_mao_obra)}</td>
+                    <td className="px-3 py-3 text-amber-800">{formatCurrency(boletim.valor_equipamentos)}</td>
+                    <td className="px-3 py-3 text-orange-800">{formatCurrency(boletim.valor_abatido_fornecedor)}</td>
+                    <td className="px-3 py-3 font-semibold text-emerald-800">{formatCurrency(boletim.valor_liquido)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {activeTab === "itens" && (
         <div className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-sm">
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -448,13 +535,15 @@ export const MedicaoDashboard: React.FC<MedicaoDashboardProps> = ({ sessionId })
               <thead>
                 <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.14em] text-slate-500">
                   <th className="px-3 py-3">Aba</th>
+                  <th className="px-3 py-3">Tipo</th>
                   <th className="px-3 py-3">Item</th>
                   <th className="px-3 py-3">Descricao</th>
-                  <th className="px-3 py-3">Qtd</th>
+                  <th className="px-3 py-3">{isBoletimWorkbook ? "Diárias / Qtd" : "Qtd"}</th>
                   <th className="px-3 py-3">Unidade</th>
-                  <th className="px-3 py-3">Valor inicial</th>
+                  <th className="px-3 py-3">{isBoletimWorkbook ? "Valor unit." : "Valor inicial"}</th>
                   <th className="px-3 py-3">Valor negociado</th>
                   <th className="px-3 py-3">Total</th>
+                  <th className="px-3 py-3">Origem</th>
                 </tr>
               </thead>
               <tbody>
@@ -472,6 +561,19 @@ export const MedicaoDashboard: React.FC<MedicaoDashboardProps> = ({ sessionId })
                   return (
                     <tr key={`${item.sheet_name}-${item.item}-${index}`} className={`border-b border-slate-100 ${rowClassName}`}>
                       <td className="px-3 py-3 text-slate-700">{item.sheet_name || "-"}</td>
+                      <td className="px-3 py-3">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            item.tipo_item === "equipamento"
+                              ? "bg-amber-100 text-amber-800"
+                              : item.tipo_item === "mao_obra"
+                                ? "bg-blue-100 text-blue-800"
+                                : "bg-violet-100 text-violet-800"
+                          }`}
+                        >
+                          {item.tipo_item === "mao_obra" ? "Mão de obra" : item.tipo_item === "equipamento" ? "Equipamento" : "Serviço"}
+                        </span>
+                      </td>
                       <td className="px-3 py-3 font-semibold text-slate-900">{item.item}</td>
                       <td className="px-3 py-3 text-slate-700">
                         <div className="space-y-1">
@@ -483,11 +585,14 @@ export const MedicaoDashboard: React.FC<MedicaoDashboardProps> = ({ sessionId })
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-3 text-slate-700">{item.quantidade.toLocaleString("pt-BR")}</td>
+                      <td className="px-3 py-3 text-slate-700">{(item.diarias ?? item.quantidade).toLocaleString("pt-BR")}</td>
                       <td className="px-3 py-3 text-slate-700">{item.unidade}</td>
-                      <td className="px-3 py-3 text-slate-700">{formatCurrency(item.valor_inicial)}</td>
+                      <td className="px-3 py-3 text-slate-700">{formatCurrency(item.valor_unitario ?? item.valor_inicial)}</td>
                       <td className="px-3 py-3 text-slate-700">{formatCurrency(item.valor_negociado)}</td>
                       <td className="px-3 py-3 font-semibold text-slate-900">{formatCurrency(item.total)}</td>
+                      <td className="px-3 py-3 text-xs text-slate-500">
+                        {item.source_row ? `linha ${item.source_row}` : "-"}
+                      </td>
                     </tr>
                   )
                 })}

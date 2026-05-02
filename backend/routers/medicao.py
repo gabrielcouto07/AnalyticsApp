@@ -56,6 +56,14 @@ async def get_medicao_items(session_id: str) -> dict:
     return json_safe({"items": items})
 
 
+@router.get("/{session_id}/periods")
+async def get_medicao_periods(session_id: str) -> dict:
+    file_entry = _get_medicao_file(session_id)
+    parsed = file_entry.parsed_data.get("medicao") or {}
+    periods = parsed.get("periods") or parsed.get("boletins") or []
+    return json_safe({"items": periods, "total": len(periods)})
+
+
 @router.get("/{session_id}/quality")
 async def get_medicao_quality(session_id: str) -> dict:
     file_entry = _get_medicao_file(session_id)

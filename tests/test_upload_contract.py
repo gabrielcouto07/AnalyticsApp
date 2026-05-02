@@ -53,3 +53,24 @@ def test_upload_sample_12_1_returns_custos_as_default_template(client) -> None:
     assert "custos" in payload["schema_types"]
     assert "orcamento" in payload["schema_types"]
     assert payload["template"] == "custos"
+
+    session_id = payload["session_id"]
+    nfs_response = client.get(f"/api/custos/{session_id}/nfs")
+    assert nfs_response.status_code == 200
+    nfs_payload = nfs_response.json()
+    assert nfs_payload["total"] >= 200
+    assert nfs_payload["items"][0]["fornecedor"]
+    assert nfs_payload["items"][0]["valor"] > 0
+    assert nfs_payload["items"][0]["source_sheet"].startswith("PLANILHA NFs")
+
+    resumo_response = client.get(f"/api/custos/{session_id}/resumo")
+    assert resumo_response.status_code == 200
+    resumo_payload = resumo_response.json()
+    assert resumo_payload["total_nfs"] >= 200
+    assert resumo_payload["total_valor"] > 1_000_000
+    assert resumo_payload["taxa_adm_pct"] >= 0
+    assert resumo_payload["valor_com_taxa"] >= resumo_payload["total_valor"]
+
+    consolidado_response = client.get(f"/api/custos/{session_id}/consolidado")
+    assert consolidado_response.status_code == 200
+    assert len(consolidado_response.json()["data"]) >= 40
