@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import advanced, analytics, charts, converter, data, export, filters, materiais, profiler, templates, upload
+from .routers import advanced, analytics, charts, converter, cross, data, export, filters, materiais, medicao, profiler, quality, templates, upload
 from .routers import custos as custos_router
 from .routers import efetivo_por_obra as por_obra_router
 from .routers import forecast as forecast_router
@@ -39,6 +39,9 @@ app.include_router(profiler.router)
 app.include_router(templates.router)
 app.include_router(templates.compare_router)
 app.include_router(materiais.router)
+app.include_router(medicao.router)
+app.include_router(cross.router)
+app.include_router(quality.router)
 
 
 @app.get("/")

@@ -25,6 +25,7 @@ export function UploadZone() {
   const [fileHint, setFileHint] = useState<string | null>(null)
   const setSession = useSessionStore((state) => state.setSession)
   const closeUpload = useSessionStore((state) => state.closeUpload)
+  const activeSessionId = useSessionStore((state) => state.activeSessionId)
 
   const handle = useCallback(async (file: File) => {
     const validationError = validateFile(file)
@@ -39,13 +40,16 @@ export function UploadZone() {
     setError(null)
 
     try {
-      const upload = await uploadFile(file, setUploadProgress)
+      const upload = await uploadFile(file, setUploadProgress, activeSessionId)
       setSession({
         session_id: upload.session_id,
         filename: upload.filename,
         rows: upload.rows,
         columns: upload.columns,
+        template: upload.template ?? null,
+        detected_schema: upload.detected_schema,
         schema_types: upload.schema_types,
+        data_quality: upload.data_quality ?? null,
       })
       closeUpload()
     } catch (uploadError: any) {
@@ -54,7 +58,7 @@ export function UploadZone() {
       setUploadProgress(100)
       setLoading(false)
     }
-  }, [closeUpload, setSession])
+  }, [activeSessionId, closeUpload, setSession])
 
   const onDrop = (event: DragEvent) => {
     event.preventDefault()

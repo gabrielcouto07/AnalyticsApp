@@ -95,13 +95,14 @@ def test_custos_orcamento_endpoints_from_workbook(client) -> None:
     custos_nfs = client.get(f"/api/custos/{session_id}/nfs")
     assert custos_nfs.status_code == 200
     custos_nfs_payload = custos_nfs.json()
-    assert len(custos_nfs_payload) == 2
-    assert any("FORNECEDOR" in key.upper() for key in custos_nfs_payload[0].keys())
+    assert custos_nfs_payload["total"] == 2
+    assert len(custos_nfs_payload["items"]) == 2
+    assert any("FORNECEDOR" in key.upper() for key in custos_nfs_payload["data"][0].keys())
 
     custos_consolidado = client.get(f"/api/custos/{session_id}/consolidado")
     assert custos_consolidado.status_code == 200
     custos_consolidado_payload = custos_consolidado.json()
-    assert len(custos_consolidado_payload) == 2
+    assert len(custos_consolidado_payload["items"]) == 2
 
     custos_orcado_realizado = client.get(f"/api/custos/{session_id}/orcado_realizado")
     assert custos_orcado_realizado.status_code == 200
@@ -112,8 +113,8 @@ def test_custos_orcamento_endpoints_from_workbook(client) -> None:
     custos_resumo = client.get(f"/api/custos/{session_id}/resumo")
     assert custos_resumo.status_code == 200
     resumo_payload = custos_resumo.json()
-    assert len(resumo_payload) == 2
-    assert any("TOTAL GERAL" in key.upper() for key in resumo_payload[0].keys())
+    assert len(resumo_payload["rows"]) == 2
+    assert any("TOTAL GERAL" in key.upper() for key in resumo_payload["rows"][0].keys())
 
     budget = client.get(f"/api/orcamento/{session_id}/flat")
     assert budget.status_code == 200
@@ -123,5 +124,5 @@ def test_custos_orcamento_endpoints_from_workbook(client) -> None:
     mapas = client.get(f"/api/orcamento/{session_id}/mapas")
     assert mapas.status_code == 200
     mapas_payload = mapas.json()
-    assert len(mapas_payload) == 3
-    assert any("VALOR_MAPA" in key.upper() for key in mapas_payload[0].keys())
+    assert len(mapas_payload["items"]) == 3
+    assert any("VALOR_ALOCADO" in key.upper() for key in mapas_payload["items"][0].keys())

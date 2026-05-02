@@ -11,27 +11,27 @@ from backend.services.schema_detector import detect_schema
     [
         (
             {
-                "Sheet1": pd.DataFrame(
-                    columns=["CARGO/FUNÇÃO", "FORNECEDOR", "FILIAL/OBRA", "PERÍODO"],
-                )
+                "Sheet1": pd.DataFrame(columns=["CARGO/FUNCAO", "FORNECEDOR", "FILIAL/OBRA", "PERIODO"]),
             },
             ["efetivo"],
         ),
         (
             {
-                "Sheet1": pd.DataFrame(
-                    columns=["NATUREZA", "FORNECEDOR", "NF", "DATA VENCTO", "VALOR"],
-                )
+                "Sheet1": pd.DataFrame(columns=["NATUREZA", "FORNECEDOR", "NF", "DATA VENCTO", "VALOR"]),
             },
             ["custos"],
         ),
         (
             {
-                "Sheet1": pd.DataFrame(
-                    columns=["CUSTO TOTAL", "QTD", "DESCRIÇÃO", "UNID"],
-                )
+                "Sheet1": pd.DataFrame(columns=["CUSTO TOTAL", "QTD", "DESCRICAO", "UNID"]),
             },
             ["orcamento"],
+        ),
+        (
+            {
+                "MP": pd.DataFrame(columns=["ITEM", "DESCRICAO", "QUANTIDADE", "UNIDADE", "VALOR"]),
+            },
+            ["medicao"],
         ),
         (
             {
@@ -41,7 +41,13 @@ from backend.services.schema_detector import detect_schema
         ),
         (
             {
-                "Efetivo": pd.DataFrame(columns=["CARGO/FUNÇÃO", "FILIAL/OBRA"]),
+                "PLANILHA CONSOLIDADO": pd.DataFrame(columns=["FORNECEDOR", "NF", "VALOR", "DATA VENCTO"]),
+            },
+            ["custos"],
+        ),
+        (
+            {
+                "Efetivo": pd.DataFrame(columns=["CARGO/FUNCAO", "FILIAL/OBRA"] + [str(day) for day in range(1, 25)]),
                 "Custos": pd.DataFrame(columns=["NATUREZA", "FORNECEDOR", "NF", "VALOR"]),
             },
             ["efetivo", "custos"],
@@ -50,3 +56,30 @@ from backend.services.schema_detector import detect_schema
 )
 def test_detect_schema(sheets: dict[str, pd.DataFrame], expected: list[str]) -> None:
     assert detect_schema(sheets) == expected
+
+
+def test_detect_schema_uses_filename_hint_for_consolidated_costs() -> None:
+    sheets = {
+        "Resumo": pd.DataFrame(columns=["FORNECEDOR", "NF", "VALOR"]),
+    }
+
+    detected = detect_schema(sheets, filename="12.1 - BD_Planilha Controle Custos_Consolidados NOVA 09_2024 (1).xlsx")
+
+    assert "custos" in detected
+
+
+def test_detect_schema_identifies_boletim_medicao_family_from_med_sheets() -> None:
+    sheets = {
+        "MED 01": pd.DataFrame(
+            [
+                ["OBRA: FKR-018 - RIL", None, None],
+                ["ITEM", "DESCRIÇÃO", "TOTAL DESTA MEDIÇÃO"],
+                [1, "DIÁRIA DE SERVENTE", 24948],
+            ]
+        ),
+        "Auxiliar": pd.DataFrame([[1, 2, 3]]),
+    }
+
+    detected = detect_schema(sheets, filename="16.3 - BD_Boletim Medição Elevare.xlsx")
+
+    assert "medicao" in detected

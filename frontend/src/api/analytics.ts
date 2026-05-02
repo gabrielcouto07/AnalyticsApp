@@ -8,8 +8,27 @@ export interface UploadResponse {
   rows: number
   columns: number
   preview: Record<string, unknown>[]
+  template?: string
   schema_types: string[]
+  detected_schema: string[]
   detected_sheets: string[]
+  data_quality?: DataQualityReport
+}
+
+export interface DataQualityReport {
+  total_cells: number
+  empty_cells: number
+  zero_cells: number
+  dash_cells: number
+  na_cells: number
+  error_cells: number
+  formula_cells: number
+  fractional_values: number
+  inconsistent_types: string[]
+  cell_errors_detail: Array<{ sheet: string; row: number; col: number; raw_value: string }>
+  schema_warnings: string[]
+  normalization_notes: string[]
+  format_confidence?: number
 }
 
 export interface EfetivoSummary {
@@ -165,9 +184,13 @@ export type OrcamentoMapasResponse = OrcamentoMapaRow[]
 export async function uploadFile(
   file: File,
   onProgress?: (percent: number) => void,
+  sessionId?: string | null,
 ): Promise<UploadResponse> {
   const form = new FormData()
   form.append('file', file)
+  if (sessionId) {
+    form.append('session_id', sessionId)
+  }
   const { data } = await api.post<UploadResponse>('/api/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (event: AxiosProgressEvent) => {

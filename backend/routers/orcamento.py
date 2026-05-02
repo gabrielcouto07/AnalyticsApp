@@ -10,7 +10,7 @@ from ..services.custos_analyzer import (
     canonicalize_mapas_frame,
     canonicalize_orcado_realizado_frame,
 )
-from ..session import Session, get_session
+from ..session import Session, find_session_file, get_session
 from ..utils.json_utils import json_safe
 
 
@@ -28,6 +28,13 @@ def _get_session_or_404(session_id: str) -> Session:
 def _structured_data(session: Session) -> dict[str, Any]:
     """Extrai dados estruturados do upload quando disponíveis."""
     structured = session.extras.get("structured_data")
+    if isinstance(structured, dict):
+        return structured
+    file_entry = find_session_file(session, {"orcamento", "custos"})
+    if file_entry is None:
+        return {}
+    parsed = file_entry.parsed_data.get("custos") or {}
+    structured = parsed.get("structured_data")
     return structured if isinstance(structured, dict) else {}
 
 

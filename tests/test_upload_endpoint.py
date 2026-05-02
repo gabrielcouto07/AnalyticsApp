@@ -14,15 +14,13 @@ def test_upload_csv_detects_efetivo_schema(client) -> None:
     assert response.status_code == 200
     payload = response.json()
 
-    assert payload == {
-        "session_id": payload["session_id"],
-        "filename": "efetivo.csv",
-        "rows": 1,
-        "columns": 4,
-        "schema_types": ["efetivo"],
-        "detected_sheets": ["efetivo"],
-        "preview": payload["preview"],
-    }
+    assert payload["filename"] == "efetivo.csv"
+    assert payload["rows"] == 1
+    assert payload["columns"] == 4
+    assert payload["schema_types"] == ["efetivo"]
+    assert payload["detected_schema"] == ["efetivo"]
+    assert payload["detected_sheets"] == ["efetivo"]
+    assert "data_quality" in payload
     assert isinstance(payload["session_id"], str)
     assert isinstance(payload["preview"], list)
 

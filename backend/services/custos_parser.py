@@ -5,6 +5,7 @@ Compatibility adapter for custos workbook parsing.
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Any
 
 import pandas as pd

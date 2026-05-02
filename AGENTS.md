@@ -471,3 +471,31 @@ Every dashboard that requires a specific schema must render a designed empty sta
 - **API errors**: always return `{ "detail": "human-readable message" }` with appropriate HTTP status
 - **DataFrames**: never mutate in place in service functions — always return new DataFrames
 - **NaN safety**: wrap all `pd.isna()` calls with `isinstance(val, (int, float))` guard before calling
+
+## ERP Integration Path
+
+When this app is embedded into or connected to the ERP system, the following
+architectural constraints must be respected:
+
+### Session Layer
+- Sessions today are keyed by file upload (UUID). In the ERP, sessions will
+  be keyed by (obra_id, periodo). The session_id format must remain opaque
+  strings — no code should assume UUID format.
+- The parsed DataFrame cache (cache.py → _parsed_cache) will need to be
+  replaced with a Redis or Memcached layer when running multi-worker.
+
+### Parser Layer
+- All parsers in backend/services/ read from bytes (BytesIO). This is
+  intentional — they are agnostic to the source. In the ERP, the bytes
+  will come from the database BLOB column instead of file upload.
+  No parser should accept a file path — always bytes + filename string.
+
+### Authentication
+- The /api/upload endpoint and all session-scoped routes need Bearer token
+  authentication before ERP integration. Add auth middleware stub but do
+  not implement until ERP SSO is defined.
+
+### Performance Targets
+- Upload + parse: < 3 seconds for files up to 5MB (current Efetivo: ~2MB ✓)
+- Any aggregation endpoint: < 500ms with warm cache
+- Detail/list endpoints with pagination: < 200ms per page

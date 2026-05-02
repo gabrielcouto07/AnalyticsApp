@@ -244,6 +244,10 @@ def _convert_to_numeric(series: pd.Series) -> Tuple[pd.Series, float]:
     return numeric, parsed_ratio
 
 
+def _strip_text_series(series: pd.Series) -> pd.Series:
+    return series.astype("string").fillna("").str.strip()
+
+
 def _infer_column_type(series: pd.Series) -> Tuple[str, pd.Series, float]:
     if pd.api.types.is_datetime64_any_dtype(series):
         return "date", pd.to_datetime(series, errors="coerce"), 1.0
@@ -649,7 +653,7 @@ def _detect_end_of_data(df: pd.DataFrame, blank_threshold: int = 10, min_active_
     active_cols = []
     for col_idx in range(len(df.columns)):
         try:
-            col_data = df.iloc[:mid_point, col_idx].fillna("").astype(str).str.strip()
+            col_data = _strip_text_series(df.iloc[:mid_point, col_idx])
             non_empty_count = (col_data != "").sum()
             ratio = float(non_empty_count) / float(max(mid_point, 1))
             if ratio >= 0.3:  # Pelo menos 30% de dados reais (não-vazios)
@@ -665,7 +669,7 @@ def _detect_end_of_data(df: pd.DataFrame, blank_threshold: int = 10, min_active_
     last_data_indices = []
     for col_idx in active_cols:
         try:
-            col_data = df.iloc[:, col_idx].fillna("").astype(str).str.strip()
+            col_data = _strip_text_series(df.iloc[:, col_idx])
             non_empty = (col_data != "")
             if non_empty.any():
                 last_idx = int(non_empty[::-1].idxmax())
@@ -697,7 +701,7 @@ def _detect_end_of_data(df: pd.DataFrame, blank_threshold: int = 10, min_active_
     consecutive_empty = 0
     for idx in range(cutoff_idx + 1, len(df)):
         try:
-            row_data = df.iloc[idx].fillna("").astype(str).str.strip()
+            row_data = _strip_text_series(df.iloc[idx])
             if (row_data == "").all():
                 consecutive_empty += 1
                 if consecutive_empty >= blank_threshold:

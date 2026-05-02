@@ -1,6 +1,8 @@
 export { EfetivoDashboard } from "./EfetivoDashboard"
 export { CustosDashboard } from "./CustosDashboard"
+export { MedicaoDashboard } from "./MedicaoDashboard"
 export { OrcamentoDashboard } from "./OrcamentoDashboard"
+export { CrossAnalysisDashboard } from "./CrossAnalysisDashboard"
 export { TemplateSelection } from "./TemplateSelection"
 export { UploadZone } from "./UploadZone"
 

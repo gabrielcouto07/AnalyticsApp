@@ -20,7 +20,7 @@ export interface WorkRow {
 }
 
 export interface BranchRow {
-  filial: string
+  obra: string
   funcionarios: number
   percentage: number
 }

@@ -1,0 +1,32 @@
+Diagnostico 12.1 - BD_Planilha Controle Custos_Consolidados NOVA 09_2024 (1).xlsx
+
+Resumo
+- A planilha 12.1 estava entrando como generica/nula no fluxo de upload.
+- O problema principal foi a deteccao de schema muito restrita para workbook consolidado de custos.
+- O arquivo e grande, com 508 linhas x 511 colunas, e depende de heuristicas por nome do arquivo e estrutura das sheets.
+
+Erros encontrados
+- A primeira versao do detector nao reconhecia o workbook 12.1 apenas pelo nome "Consolidados".
+- A deteccao baseava-se demais em colunas cruas, o que fazia o workbook cair em generic quando os headers nao batiam de forma perfeita.
+- Isso fazia a interface abrir o arquivo, mas sem liberar os dashboards de custos/orcamento.
+
+Acertos ja confirmados
+- Upload do arquivo 12.1 funciona no browser.
+- O parser de workbook nao quebra com o arquivo grande.
+- O detector de schema foi ajustado para usar o nome do arquivo como pista adicional.
+- Foi criado teste de regressao cobrindo o caso 12.1.
+- O teste de schema_detector passou com sucesso.
+
+Melhorias aplicadas
+- Adicionada heuristica por filename para custos consolidado.
+- Adicionada cobertura de teste para evitar regressao do caso 12.1.
+- Mantida a compatibilidade com os demais arquivos de samples.
+
+O que ainda merece atencao
+- Validar o conjunto completo de dashboards quando a 12.1 for combinada com Efetivo.
+- Revisar se o workbook 12.1 deve ser classificado tambem como orcamento em alguns cenarios.
+- Conferir se a UI mostra o melhor dashboard por default quando um workbook de custos consolidado entra com varios schemas possiveis.
+
+Conclusao
+- O caso "completamente nula" apontava mais para deteccao/roteamento de schema do que para falha de leitura do arquivo.
+- A correcao principal foi tratar a 12.1 como workbook consolidado de custos com ajuda do nome do arquivo.

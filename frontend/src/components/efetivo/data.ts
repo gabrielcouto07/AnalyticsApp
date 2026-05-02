@@ -48,8 +48,8 @@ export function buildBranchRows(workRows: WorkRow[]): BranchRow[] {
       return acc
     }, new Map<string, number>()),
   )
-    .map(([filial, funcionarios]) => ({
-      filial,
+    .map(([obra, funcionarios]) => ({
+      obra,
       funcionarios,
       percentage: totalFuncionarios ? Math.round((funcionarios / totalFuncionarios) * 1000) / 10 : 0,
     }))

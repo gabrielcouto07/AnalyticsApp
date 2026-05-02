@@ -126,6 +126,8 @@ def normalize_df(df: pd.DataFrame, column_map: dict[str, Any]) -> pd.DataFrame:
                 break
 
     normalized = df.rename(columns=rename_map).copy()
+    if normalized.columns.duplicated().any():
+        normalized = normalized.T.groupby(level=0).first().T
     selected_cols = [column for column in column_map.keys() if column in normalized.columns]
     normalized = normalized.loc[:, selected_cols]
 

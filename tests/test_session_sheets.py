@@ -130,7 +130,9 @@ def test_multisheet_upload_persists_sheet_dict_and_endpoints_read_memory(client)
 
     nfs_response = client.get(f"/api/custos/{session_id}/nfs")
     assert nfs_response.status_code == 200
-    assert len(nfs_response.json()) == 2
+    nfs_payload = nfs_response.json()
+    assert nfs_payload["total"] == 2
+    assert len(nfs_payload["items"]) == 2
 
     budget_response = client.get(f"/api/orcamento/{session_id}/flat")
     assert budget_response.status_code == 200
@@ -139,5 +141,5 @@ def test_multisheet_upload_persists_sheet_dict_and_endpoints_read_memory(client)
     resumo_response = client.get(f"/api/custos/{session_id}/resumo")
     assert resumo_response.status_code == 200
     resumo_payload = resumo_response.json()
-    assert len(resumo_payload) == 2
-    assert any("TOTAL GERAL" in key.upper() for key in resumo_payload[0].keys())
+    assert len(resumo_payload["rows"]) == 2
+    assert any("TOTAL GERAL" in key.upper() for key in resumo_payload["rows"][0].keys())

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 
+import type { DataQualityReport } from '../api/analytics'
 import { getDefaultViewForSchema } from '../components/layout/navigation'
 
 interface SessionData {
@@ -13,6 +14,7 @@ interface SessionData {
   selectedTemplate: string | null
   suggestedTemplates: string[]
   schemaTypes: string[]
+  dataQuality: DataQualityReport | null
 }
 
 interface SessionState {
@@ -27,6 +29,7 @@ interface SessionState {
   colCount: number
   colTypes: Record<string, string>
   schemaTypes: string[]
+  dataQuality: DataQualityReport | null
   activeView: string
   selectedTemplate: string | null
   suggestedTemplates: string[]
@@ -41,6 +44,7 @@ interface SessionState {
     template?: string | null
     detected_schema?: string[]
     schema_types: string[]
+    data_quality?: DataQualityReport | null
     format?: string | null
   }) => void
   switchSession: (sessionId: string) => void
@@ -63,6 +67,7 @@ const emptySnapshot = {
   colCount: 0,
   colTypes: {},
   schemaTypes: [] as string[],
+  dataQuality: null as DataQualityReport | null,
   activeView: 'efetivo',
   selectedTemplate: null as string | null,
   suggestedTemplates: [] as string[],
@@ -80,14 +85,23 @@ function resolveSnapshot(session: SessionData | null) {
     colCount: session.colCount,
     colTypes: session.colTypes,
     schemaTypes: session.schemaTypes,
+    dataQuality: session.dataQuality,
     activeView: session.activeView,
     selectedTemplate: session.selectedTemplate,
     suggestedTemplates: session.suggestedTemplates,
   }
 }
 
-function resolveSessionView(template: string | null | undefined, schemaTypes: string[]) {
+function resolveSessionView(
+  template: string | null | undefined,
+  schemaTypes: string[],
+  detectedSchema?: string[] | undefined,
+) {
+  const prioritizedSchemas = (detectedSchema ?? []).filter((value) => value && value !== 'generic')
   if (template && template !== 'generic') return template
+  if (prioritizedSchemas.length > 0) {
+    return getDefaultViewForSchema(prioritizedSchemas)
+  }
   return getDefaultViewForSchema(schemaTypes)
 }
 
@@ -103,6 +117,7 @@ function deriveSchemaTypes(
 ) {
   const fallbackByTemplate: Record<string, string[]> = {
     efetivo: ['efetivo'],
+    medicao: ['medicao'],
     custos: ['custos'],
     orcamento: ['orcamento'],
     generic: ['generic'],
@@ -148,7 +163,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   setSession: (payload) =>
     set((state) => {
       const schemaTypes = deriveSchemaTypes(payload.template, payload.detected_schema, payload.schema_types)
-      const activeView = resolveSessionView(payload.template, schemaTypes)
+      const activeView = resolveSessionView(payload.template, schemaTypes, payload.detected_schema)
       const session: SessionData = {
         sessionId: payload.session_id,
         filename: payload.filename,
@@ -160,6 +175,7 @@ export const useSessionStore = create<SessionState>((set) => ({
         selectedTemplate: payload.template && payload.template !== 'generic' ? payload.template : null,
         suggestedTemplates: [],
         schemaTypes,
+        dataQuality: payload.data_quality ?? null,
       }
 
       return {

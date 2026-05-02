@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..services.efetivo_analyzer import EfetivoAnalyzer
-from ..session import Session, get_session
+from ..session import Session, find_session_file, get_session
 from ..utils.json_utils import json_safe
 
 
@@ -14,89 +13,86 @@ router = APIRouter(tags=["efetivo"])
 
 
 def _get_session_or_404(session_id: str) -> Session:
-    """Obtém a sessão atual ou retorna erro 404."""
     session = get_session(session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+        raise HTTPException(status_code=404, detail="Sessao nao encontrada")
     return session
 
 
-def _resolve_column(dataframe: pd.DataFrame, candidates: list[str]) -> str | None:
-    normalized = {str(column).strip().lower(): str(column) for column in dataframe.columns}
-    for candidate in candidates:
-        resolved = normalized.get(candidate.strip().lower())
-        if resolved:
-            return resolved
-    return None
+def _get_efetivo_analyzer(session_id: str) -> EfetivoAnalyzer:
+    session = _get_session_or_404(session_id)
+    file_entry = find_session_file(session, "efetivo")
+    if file_entry is None or file_entry.df.empty:
+        raise HTTPException(status_code=422, detail="Arquivo nao contem dados de Efetivo")
+    return EfetivoAnalyzer(file_entry.df)
 
 
-def _build_filial_payload(dataframe: pd.DataFrame) -> dict[str, Any]:
-    working = dataframe.copy()
-    quantidade_col = _resolve_column(working, ["Quantidade"])
-    obra_col = _resolve_column(working, ["Filial/Obra", "Obra"])
-    cargo_col = _resolve_column(working, ["Cargo/Função", "Cargo/Funcao", "Funcao"])
-    fornecedor_col = _resolve_column(working, ["Fornecedor"])
-    periodo_col = _resolve_column(working, ["Período", "Periodo"])
+@router.get("/{session_id}/summary")
+async def get_efetivo_summary_endpoint(session_id: str) -> dict[str, Any]:
+    analyzer = _get_efetivo_analyzer(session_id)
+    return json_safe(analyzer.get_summary())
 
-    if quantidade_col is None:
-        return {"items": [], "total_funcionarios": 0}
 
-    working[quantidade_col] = pd.to_numeric(working[quantidade_col], errors="coerce").fillna(0)
-    working = working[working[quantidade_col] > 0].copy()
-    if working.empty:
-        return {"items": [], "total_funcionarios": 0}
+@router.get("/{session_id}/by_supplier")
+async def get_efetivo_by_supplier(session_id: str) -> dict[str, Any]:
+    analyzer = _get_efetivo_analyzer(session_id)
+    return json_safe({"items": analyzer.get_by_supplier()})
 
-    if obra_col is None:
-        working["Filial/Obra"] = "Obra nao identificada"
-        obra_col = "Filial/Obra"
-    if cargo_col is None:
-        working["Cargo/Função"] = "Nao informado"
-        cargo_col = "Cargo/Função"
 
-    working[obra_col] = working[obra_col].fillna("").astype(str).str.strip().replace("", "Obra nao identificada")
-    working[cargo_col] = working[cargo_col].fillna("").astype(str).str.strip().replace("", "Nao informado")
+@router.get("/{session_id}/by_function")
+async def get_efetivo_by_function(session_id: str) -> dict[str, Any]:
+    analyzer = _get_efetivo_analyzer(session_id)
+    return json_safe({"items": analyzer.get_by_function()})
 
-    unique_cols = [column for column in [obra_col, cargo_col, fornecedor_col, periodo_col] if column is not None]
-    if len(unique_cols) >= 3:
-        deduped = working.drop_duplicates(subset=unique_cols).copy()
-    else:
-        deduped = working.copy()
 
-    grouped = (
-        deduped.groupby([obra_col, cargo_col], dropna=False)
-        .size()
-        .reset_index(name="funcionarios")
-        .sort_values(["funcionarios", obra_col, cargo_col], ascending=[False, True, True])
-    )
+@router.get("/{session_id}/monthly_evolution")
+async def get_efetivo_monthly_evolution(session_id: str) -> dict[str, Any]:
+    analyzer = _get_efetivo_analyzer(session_id)
+    return json_safe({"months": analyzer.get_monthly_evolution()})
 
-    total_funcionarios = int(grouped["funcionarios"].sum()) if not grouped.empty else 0
-    items = [
-        {
-            "filial_obra": str(row[obra_col]),
-            "cargo_funcao": str(row[cargo_col]),
-            "funcionarios": int(row["funcionarios"]),
-        }
-        for _, row in grouped.iterrows()
-    ]
-    return {
-        "items": items,
-        "total_funcionarios": total_funcionarios,
-    }
+
+@router.get("/{session_id}/calendar_heatmap")
+async def get_efetivo_calendar_heatmap(session_id: str) -> dict[str, Any]:
+    analyzer = _get_efetivo_analyzer(session_id)
+    return json_safe({"cells": analyzer.get_calendar_heatmap()})
+
+
+@router.get("/{session_id}/detail")
+async def get_efetivo_detail(
+    session_id: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=500),
+) -> dict[str, Any]:
+    analyzer = _get_efetivo_analyzer(session_id)
+    rows = analyzer.get_detail()
+    start = (page - 1) * per_page
+    items = rows[start : start + per_page]
+    return json_safe({"items": items, "total": len(rows), "page": page, "per_page": per_page})
 
 
 @router.get("/{session_id}/filial")
 async def get_efetivo_filial(session_id: str) -> dict[str, Any]:
-    """Retorna headcount agrupado por filial/obra e cargo/função."""
-    session = _get_session_or_404(session_id)
-    if session.df.empty:
-        raise HTTPException(status_code=422, detail="Arquivo não contém dados de Efetivo")
-    return json_safe(_build_filial_payload(session.df))
+    analyzer = _get_efetivo_analyzer(session_id)
+    rows = analyzer.get_by_supplier()
+    return json_safe({"items": rows, "total_funcionarios": len(rows)})
 
 
 @router.get("/{session_id}/por_obra")
 async def get_efetivo_por_obra(session_id: str) -> dict[str, Any]:
-    """Retorna a agregação de Efetivo por obra."""
-    session = _get_session_or_404(session_id)
-    if session.df.empty:
-        raise HTTPException(status_code=422, detail="Arquivo não contém dados de Efetivo")
-    return json_safe(EfetivoAnalyzer(session.df).get_por_obra_summary())
+    analyzer = _get_efetivo_analyzer(session_id)
+    summary = analyzer.get_summary()
+    return json_safe(
+        {
+            "obras": [
+                {
+                    "obra": summary.get("obra", ""),
+                    "headcount": summary.get("funcoes_distintas", 0),
+                    "total_diarias": summary.get("total_diarias", 0),
+                }
+            ],
+            "total_geral": {
+                "headcount": summary.get("funcoes_distintas", 0),
+                "total_diarias": summary.get("total_diarias", 0),
+            },
+        }
+    )

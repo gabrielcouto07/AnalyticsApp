@@ -149,7 +149,7 @@ def _budget_total(session_id: str) -> float:
 
 def _monthly_nfs(session_id: str) -> pd.DataFrame:
     nfs = _get_nfs_frame(session_id)
-    if nfs.empty or "data_vencimento" not in nfs.columns:
+    if nfs.empty or {"data_vencimento", "valor"} - set(nfs.columns):
         return pd.DataFrame()
     working = nfs[nfs["data_vencimento"].notna()].copy()
     if working.empty:

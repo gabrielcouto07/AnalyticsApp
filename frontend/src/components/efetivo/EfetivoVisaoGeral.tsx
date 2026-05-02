@@ -20,7 +20,7 @@ import {
   type EfetivoMonthData,
   type EfetivoTrendResponse,
 } from "../../api/analytics"
-import { formatBRL, formatDiarias, formatInt, formatPct } from "../../lib/formatters"
+import { formatDiarias, formatInt, formatPct } from "../../lib/formatters"
 import { useSessionStore } from "../../store/session"
 import { EmptyState } from "../layout/EmptyState"
 import { SCHEMA_REQUIRED_COLUMNS } from "../layout/schemaRequirements"
@@ -93,7 +93,6 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
   const [trendMedia, setTrendMedia] = useState<EfetivoTrendResponse | null>(null)
   const [anomalyDays, setAnomalyDays] = useState<number[]>([])
   const [workforceSummary, setWorkforceSummary] = useState<Array<Record<string, unknown>>>([])
-  const [costPerWorkerday, setCostPerWorkerday] = useState<Array<Record<string, unknown>>>([])
   const [forecast, setForecast] = useState<Record<string, unknown> | null>(null)
 
   useEffect(() => {
@@ -107,10 +106,9 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
       fetchApiJson<EfetivoTrendResponse>(`/api/templates/efetivo/trend/${sessionId}?column=fornecedores&window=7`),
       fetchApiJson<EfetivoAnomaliesResponse>(`/api/templates/efetivo/anomalies/${sessionId}?method=iqr`),
       fetchApiJson<Array<Record<string, unknown>>>(`/api/analytics/${sessionId}/workforce-summary`).catch(() => []),
-      fetchApiJson<Array<Record<string, unknown>>>(`/api/analytics/${sessionId}/cost-per-workerday`).catch(() => []),
       fetchApiJson<Record<string, unknown>>(`/api/analytics/${sessionId}/forecast?horizon_months=2`).catch(() => null),
     ])
-      .then(([base, totalTrend, mediaTrend, anomalies, nextWorkforceSummary, nextCostPerWorkerday, nextForecast]) => {
+      .then(([base, totalTrend, mediaTrend, anomalies, nextWorkforceSummary, nextForecast]) => {
         if (!active) return
         setSummary(base.summary)
         setMonths(base.months)
@@ -119,7 +117,6 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
         setTrendTotal(totalTrend)
         setTrendMedia(mediaTrend)
         setWorkforceSummary(nextWorkforceSummary)
-        setCostPerWorkerday(nextCostPerWorkerday)
         setForecast(nextForecast)
         setAnomalyDays(
           (anomalies.points ?? [])
@@ -369,7 +366,7 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
             <XAxis dataKey="periodo" tick={{ fill: "#64748b", fontSize: 11 }} />
             <YAxis tick={{ fill: "#64748b", fontSize: 11 }} allowDecimals={false} />
             <Tooltip />
-            <Bar dataKey="total" fill="#4f8ef7" radius={[8, 8, 0, 0]} />
+            <Bar dataKey="total" fill="#0b4f3a" radius={[8, 8, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </section>
@@ -427,7 +424,7 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
           <BarChart data={branchRows} layout="vertical" margin={{ top: 8, right: 20, left: 0, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
             <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} />
-            <YAxis type="category" dataKey="filial" width={220} tick={{ fill: "#0f172a", fontSize: 11 }} />
+            <YAxis type="category" dataKey="obra" width={220} tick={{ fill: "#0f172a", fontSize: 11 }} />
             <Tooltip />
             <Bar dataKey="funcionarios" fill="#0b4f3a" radius={[0, 6, 6, 0]} />
           </BarChart>
@@ -435,7 +432,7 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
       </section>
 
       <section style={forecastPanelStyle}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 0.65fr", gap: 20 }}>
           <div>
             <h3 style={{ ...lightTitleStyle, color: "#f8fafc", marginBottom: 6 }}>Previsao de Demanda de Mao de Obra</h3>
             <p style={{ margin: "0 0 16px", fontSize: 12, color: "#94a3b8" }}>Historico mensal, forecast para os proximos 2 meses e linha de media movel.</p>
@@ -446,9 +443,9 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
                   <XAxis dataKey="label" tick={{ fill: "#cbd5e1", fontSize: 11 }} />
                   <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} />
                   <Tooltip />
-                  <Bar dataKey="historico" fill="#4f8ef7" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="forecast" fill="rgba(255,255,255,0.06)" stroke="#cbd5e1" strokeDasharray="5 5" radius={[8, 8, 0, 0]} />
-                  <Line type="monotone" dataKey="media" stroke="#a78bfa" strokeWidth={3} dot={{ r: 3 }} />
+                  <Bar dataKey="historico" fill="#0b4f3a" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="forecast" fill="rgba(22,163,74,0.18)" stroke="#2f7d6b" radius={[8, 8, 0, 0]} />
+                  <Line type="monotone" dataKey="media" stroke="#6bb38f" strokeWidth={3} strokeDasharray="5 5" dot={{ r: 3, fill: "#6bb38f" }} />
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
@@ -457,23 +454,6 @@ export function EfetivoVisaoGeral({ sessionId }: { sessionId: string }) {
           </div>
 
           <div style={{ display: "grid", gap: 16 }}>
-            <div style={forecastInnerCardStyle}>
-              <h4 style={forecastInnerTitleStyle}>Custo por Diaria</h4>
-              {costPerWorkerday.length > 0 ? (
-                <ResponsiveContainer width="100%" height={150}>
-                  <LineChart data={costPerWorkerday}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.22)" />
-                    <XAxis dataKey="mes_nome" tick={{ fill: "#cbd5e1", fontSize: 11 }} />
-                    <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} tickFormatter={(value) => formatBRL(Number(value))} />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="cost_per_workerday" stroke="#34c97e" strokeWidth={3} dot={{ r: 4 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div style={emptyForecastStateStyle}>Sem dados suficientes para custo por diaria.</div>
-              )}
-            </div>
-
             <div style={forecastInnerCardStyle}>
               <h4 style={forecastInnerTitleStyle}>Indicadores</h4>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12, marginTop: 12 }}>
@@ -522,8 +502,8 @@ const metricCardStyle: React.CSSProperties = {
 }
 
 const darkCardStyle: React.CSSProperties = {
-  background: "rgba(30,41,59,0.7)",
-  border: "1px solid rgba(79,142,247,0.12)",
+  background: "#f8fafc",
+  border: "1px solid rgba(11,79,58,0.10)",
   borderRadius: 12,
   padding: "16px 18px",
 }
@@ -573,7 +553,7 @@ const tdStyle: React.CSSProperties = {
 
 const forecastPanelStyle: React.CSSProperties = {
   background: "rgba(15,23,42,0.86)",
-  border: "1px solid rgba(79,142,247,0.13)",
+  border: "1px solid rgba(11,79,58,0.18)",
   borderRadius: 12,
   padding: 20,
   boxShadow: "0 10px 28px rgba(15,23,42,0.18)",
@@ -581,7 +561,7 @@ const forecastPanelStyle: React.CSSProperties = {
 
 const forecastInnerCardStyle: React.CSSProperties = {
   background: "rgba(30,41,59,0.86)",
-  border: "1px solid rgba(79,142,247,0.12)",
+  border: "1px solid rgba(11,79,58,0.16)",
   borderRadius: 12,
   padding: "16px 20px",
 }

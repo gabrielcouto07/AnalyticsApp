@@ -20,7 +20,7 @@ from ..services.efetivo_analyzer import EfetivoAnalyzer
 from ..services.orcamento_analyzer import OrcamentoAnalyzer
 from ..services.custos_analyzer import CustosAnalyzer
 from ..services.advanced_analytics import AnomalyDetector, TrendAnalyzer
-from ..session import get_active_df, get_session_extra
+from ..session import find_session_file, get_active_df, get_session, get_session_extra
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
 compare_router = APIRouter(prefix="/api", tags=["compare"])
@@ -56,6 +56,16 @@ def _resolve_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
             if normalized_candidate in normalized_name:
                 return original_name
     return None
+
+
+def _get_schema_df(session_id: str, schema: str) -> pd.DataFrame | None:
+    session = get_session(session_id)
+    if session is None:
+        return None
+    file_entry = find_session_file(session, schema)
+    if file_entry is not None and not file_entry.df.empty:
+        return file_entry.df.copy()
+    return get_active_df(session_id)
 
 
 def _apply_efetivo_filters(df: pd.DataFrame, fornecedor: Optional[str] = None, mes: Optional[str] = None, funcao: Optional[str] = None) -> pd.DataFrame:
@@ -244,7 +254,7 @@ async def get_template_data(template_id: str, session_id: str) -> Dict[str, Any]
     if not template:
         raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
 
-    df = get_active_df(session_id)
+    df = _get_schema_df(session_id, "efetivo")
     if df is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -274,7 +284,7 @@ async def get_template_data(template_id: str, session_id: str) -> Dict[str, Any]
 
 @router.get("/nf/analysis/{session_id}")
 async def get_nf_analysis(session_id: str) -> Dict[str, Any]:
-    df = get_active_df(session_id)
+    df = _get_schema_df(session_id, "efetivo")
     if df is None:
         raise HTTPException(status_code=404, detail="Session not found")
     try:

@@ -3,9 +3,11 @@
 import {
   AnomaliasDashboard,
   ClusteringDashboard,
+  CrossAnalysisDashboard,
   CustosDashboard,
   EfetivoDashboard,
   ExportarView,
+  MedicaoDashboard,
   OrcamentoDashboard,
   ProfilerDashboard,
   SegmentacaoDashboard,
@@ -24,7 +26,7 @@ export function DashboardPage() {
 
   if (!sessionId) return null
 
-  if (!["efetivo", "custos", "orcamento"].includes(activeView) && !canAccessView(activeView, schemaTypes)) {
+  if (!canAccessView(activeView, schemaTypes)) {
     const requirement = getViewRequirement(activeView)
 
     return (
@@ -78,10 +80,24 @@ export function DashboardPage() {
       </SchemaGuard>
     )
   }
+  if (activeView === "medicao") {
+    return (
+      <SchemaGuard requires="medicao">
+        <MedicaoDashboard sessionId={sessionId} />
+      </SchemaGuard>
+    )
+  }
   if (activeView === "orcamento") {
     return (
       <SchemaGuard requires={["orcamento", "custos"]}>
         <OrcamentoDashboard sessionId={sessionId} />
+      </SchemaGuard>
+    )
+  }
+  if (activeView === "cross") {
+    return (
+      <SchemaGuard requires={["efetivo", "medicao"]}>
+        <CrossAnalysisDashboard sessionId={sessionId} />
       </SchemaGuard>
     )
   }

@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.main import app
+from backend import session as session_module
 
 
 collect_ignore_glob = [
@@ -30,6 +31,7 @@ collect_ignore_glob = [
 
 @pytest.fixture()
 def client() -> TestClient:
+    session_module._sessions.clear()
     return TestClient(app)
 
 
