@@ -10,6 +10,8 @@ from ..services.orcamento_template import detect_orcamento_file
 from ..services.orcamento_parser import parse_orcamento_file
 from ..services.custos_template import detect_custos_file
 from ..services.custos_parser import parse_custos_file
+from ..services.medicao_template import detect_medicao_file
+from ..services.medicao_analyzer import parse_medicao_workbook
 
 
 def _safe_preview(df):
@@ -30,6 +32,7 @@ async def upload_file(file: UploadFile = File(...)):
     try:
         content = await file.read()
         custos_result = None
+        medicao_payload = None
 
         if ext in {".xlsx", ".xls", ".xlsm"}:
             # 0) Check Custos layout FIRST (most specific — looks for NF + CONSOLIDADO sheets)
@@ -42,6 +45,17 @@ async def upload_file(file: UploadFile = File(...)):
                 if df.empty:
                     raise HTTPException(422, "Custos file parsed but returned no records")
                 template_type = "custos"
+                available_sheets = {}
+
+            # 0.5) Check Medição (BM / Proposta MP). Run before Efetivo because some
+            # MP files have day-like numeric columns that trigger the efetivo heuristic.
+            elif detect_medicao_file(content, file.filename):
+                print(f"[UPLOAD DEBUG] Medicao detection successful for '{file.filename}'")
+                medicao_payload = parse_medicao_workbook(content, file.filename)
+                df = medicao_payload["items"]
+                if df is None or df.empty:
+                    raise HTTPException(422, "Medição file parsed but returned no items")
+                template_type = "medicao"
                 available_sheets = {}
 
             # 1) Check Efetivo layout
@@ -93,6 +107,18 @@ async def upload_file(file: UploadFile = File(...)):
     if template_type == "custos" and custos_result is not None:
         extras["consolidado"] = custos_result["consolidado"]
         extras["custos_meta"] = custos_result["meta"]
+    if template_type == "medicao" and medicao_payload is not None:
+        # Stash the full parser output for routers/medicao.py to read.
+        # Mirrors GABRIEL's `file_entry.parsed_data["medicao"]` but in BACK-API's
+        # single-session model.
+        extras["medicao"] = {
+            "metadata": medicao_payload.get("metadata") or {},
+            "summary": medicao_payload.get("summary") or {},
+            "items": medicao_payload.get("items"),
+            "boletins": medicao_payload.get("boletins") or [],
+            "periods": medicao_payload.get("periods") or medicao_payload.get("boletins") or [],
+            "quality_report": medicao_payload.get("quality_report") or {},
+        }
 
     session_id = create_session(df, template_type=template_type, extras=extras)
     session = get_session(session_id)
