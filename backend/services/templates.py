@@ -101,6 +101,13 @@ try:
 except ImportError:
     pass
 
+# Register Medição template
+try:
+    from .medicao_template import MEDICAO_TEMPLATE
+    TEMPLATES["medicao"] = MEDICAO_TEMPLATE
+except ImportError:
+    pass
+
 
 def get_all_templates() -> Dict[str, Dict[str, Any]]:
     return TEMPLATES

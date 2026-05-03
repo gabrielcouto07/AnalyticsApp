@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import upload, data, charts, export, filters, advanced, converter, profiler, templates, materiais
+from .routers import upload, data, charts, export, filters, advanced, converter, profiler, templates, materiais, medicao
 
 app = FastAPI(title="Analytics Dashboard API", version="2.0.0")
 
@@ -28,6 +28,7 @@ app.include_router(converter.router)
 app.include_router(profiler.router)
 app.include_router(templates.router)
 app.include_router(materiais.router)
+app.include_router(medicao.router)
 
 
 @app.get("/")
