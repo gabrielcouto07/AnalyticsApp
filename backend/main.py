@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import upload, templates
+from .routers import upload, templates, medicao
 
 app = FastAPI(title="Analytics Dashboard API", version="2.0.0")
 
@@ -15,6 +15,7 @@ app.add_middleware(
 
 app.include_router(upload.router)
 app.include_router(templates.router)
+app.include_router(medicao.router)
 
 
 @app.get("/")

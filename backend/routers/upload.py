@@ -11,6 +11,7 @@ from ..services.orcamento_template import detect_orcamento_file
 from ..services.orcamento_parser import parse_orcamento_file
 from ..services.custos_template import detect_custos_file
 from ..services.custos_parser import parse_custos_file
+from ..services.medicao_parser import detect_medicao_file, parse_workbook_from_bytes as parse_medicao_bytes
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["upload"])
@@ -42,7 +43,29 @@ async def upload_file(file: UploadFile = File(...)):
         template_type = None
 
         if ext in {".xlsx", ".xls", ".xlsm"}:
-            if detect_custos_file(content, file.filename):
+            if detect_medicao_file(content, file.filename):
+                logger.info(f"[upload] {file.filename} → detected as MEDICAO")
+                result = parse_medicao_bytes(content, file.filename)
+                import pandas as pd
+                rows = []
+                for m in result.get("medicoes", []):
+                    for s in m.get("servicos", []):
+                        rows.append({
+                            "fornecedor": m["header"].get("fornecedor"),
+                            "aba": m.get("aba"),
+                            "bm_numero": m["header"].get("bm_numero"),
+                            "item": s.get("item"),
+                            "nome": s.get("nome"),
+                            "tipo": s.get("tipo"),
+                            "qtde_medicao": s.get("qtde_medicao"),
+                            "total_desta_medicao": s.get("total_desta_medicao"),
+                        })
+                df = pd.DataFrame(rows) if rows else pd.DataFrame(
+                    columns=["fornecedor", "aba", "bm_numero", "item", "nome", "tipo", "qtde_medicao", "total_desta_medicao"]
+                )
+                template_type = "medicao"
+
+            elif detect_custos_file(content, file.filename):
                 logger.info(f"[upload] {file.filename} → detected as CUSTOS")
                 result = parse_custos_file(content, file.filename)
                 df = result["nfs"]
@@ -78,7 +101,9 @@ async def upload_file(file: UploadFile = File(...)):
             template_type = None
 
         extras = {}
-        if template_type == "custos" and result is not None:
+        if template_type == "medicao" and result is not None:
+            extras["medicao_data"] = result
+        elif template_type == "custos" and result is not None:
             extras["consolidado"] = result["consolidado"]
             extras["custos_meta"] = result["meta"]
 
