@@ -1,550 +1,585 @@
 import io
-import json
+import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from config.schema_detector import detect_context
-from templates.ui import apply_chart_style
+warnings.filterwarnings("ignore")
 
+# OBRIGATÓRIO: set_page_config DEVE ser a primeira chamada antes de qualquer st.xxx
 st.set_page_config(
-    page_title="Analytics Hub",
+    page_title="Analytics Dashboard",
+    page_icon="📊",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
-
-def inject_css() -> None:
+# Injeta CSS antes de qualquer elemento Streamlit renderizar
+def _inject_css():
     css_path = Path(__file__).parent / "theme.css"
     if css_path.exists():
-        st.markdown(f"<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+        with open(css_path, encoding="utf-8") as f:
+            css_content = f.read()
+            st.markdown(f"""
+            <style>
+            {css_content}
+            </style>
+            """, unsafe_allow_html=True)
+
+_inject_css()
 
 
-def init_session() -> None:
-    st.session_state.setdefault("df", None)
-    st.session_state.setdefault("ctx", None)
+try:
+    from config.colors import PALETTE, CHART_COLORS
+    from config.analytics import (
+        calculate_trend,
+        detect_outliers_iqr,
+        categorize_dataset,
+        identify_anomalies,
+    )
+    from templates.ui import (
+        load_theme,
+        kpi_card,
+        render_kpi_row,
+        apply_chart_style,
+        render_header,
+        render_separator,
+        detect_time_granularity,
+    )
+    from templates.smart_kpi import (
+        smart_kpi_card,
+        render_smart_kpi_row,
+        mini_metric_chart,
+        metric_comparison_badge,
+        insight_card,
+        render_insights_section,
+        gauge_chart,
+    )
+except ImportError as e:
+    st.error(f"❌ Erro ao carregar módulos: {e}")
+    st.stop()
 
 
-def fmt_number(value: float) -> str:
-    if pd.isna(value):
-        return "-"
-    if value == 0:
-        return "0"
-
-    absolute = abs(value)
-    if absolute >= 1_000_000:
-        return f"{value / 1_000_000:.1f}M"
-    if absolute >= 1_000:
-        return f"{value / 1_000:.1f}K"
-    return f"{value:,.2f}"
+load_theme()
 
 
-def detect_encoding(file_bytes: bytes) -> str:
-    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1", "utf-16"):
-        try:
-            file_bytes.decode(encoding)
-            return encoding
-        except UnicodeDecodeError:
-            continue
-    return "utf-8"
+# Inicializa session state
+for _key in ["df_loaded", "df_filtered"]:
+    if _key not in st.session_state:
+        st.session_state[_key] = None
+if "selected_columns" not in st.session_state:
+    st.session_state.selected_columns = []
 
 
-def detect_delimiter(text: str) -> str:
-    first_line = text.splitlines()[0] if text else ""
-    delimiters = [",", ";", "\t", "|"]
-    return max(delimiters, key=first_line.count)
+# --- CARREGAMENTO E DETECÇÃO DE TIPOS ---
 
-
-def _try_parse_datetime(series: pd.Series) -> Optional[pd.Series]:
-    parsed = pd.to_datetime(series, errors="coerce")
-    if len(series) and parsed.notna().mean() >= 0.7:
-        return parsed
-    return None
-
-
-def _try_parse_numeric(series: pd.Series) -> Optional[pd.Series]:
-    raw = series.astype(str).str.strip()
-    candidates = [
-        raw,
-        raw.str.replace(",", "", regex=False),
-        raw.str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
-    ]
-
-    for candidate in candidates:
-        cleaned = candidate.str.replace(r"[R$%\s]", "", regex=True)
-        parsed = pd.to_numeric(cleaned, errors="coerce")
-        if len(series) and parsed.notna().mean() >= 0.7:
-            return parsed
-
-    return None
-
-
+@st.cache_data(show_spinner="🔍 Detectando tipos de colunas...")
 def detect_and_parse(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-
-    parsed_df = df.copy()
-    for column in parsed_df.columns:
-        if parsed_df[column].dtype != object:
+    """
+    Tenta converter colunas object para datetime ou numérico automaticamente.
+    Limpa caracteres monetários (R$, %, ,) antes de tentar numérico.
+    """
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype != object:
             continue
 
-        parsed_dates = _try_parse_datetime(parsed_df[column])
-        if parsed_dates is not None:
-            parsed_df[column] = parsed_dates
-            continue
+        # Tenta datetime primeiro
+        try:
+            parsed = pd.to_datetime(df[col], infer_datetime_format=True, errors="coerce")
+            if parsed.notna().sum() / len(df) > 0.7:
+                df[col] = parsed
+                continue
+        except Exception:
+            pass
 
-        parsed_numeric = _try_parse_numeric(parsed_df[column])
-        if parsed_numeric is not None:
-            parsed_df[column] = parsed_numeric
+        # Tenta numérico após limpar símbolos comuns
+        cleaned = (
+            df[col].astype(str)
+            .str.replace(r"[R$%\s]", "", regex=True)
+            .str.replace(".", "", regex=False)
+            .str.replace(",", ".", regex=False)
+        )
+        numeric = pd.to_numeric(cleaned, errors="coerce")
+        if numeric.notna().sum() / len(df) > 0.7:
+            df[col] = numeric
 
-    return parsed_df
+    return df
 
 
-def load_delimited_file(file_bytes: bytes) -> pd.DataFrame:
-    encoding = detect_encoding(file_bytes)
-    text = file_bytes.decode(encoding)
-    delimiter = detect_delimiter(text)
-    return pd.read_csv(io.StringIO(text), sep=delimiter)
+@st.cache_data(show_spinner="📂 Carregando arquivo...")
+def load_file(file_bytes: bytes, filename: str) -> pd.DataFrame | None:
+    """
+    Carrega Excel (.xlsx/.xls), CSV, TXT delimitado ou JSON.
+    Detecta separador e encoding automaticamente em CSV/TXT.
+    Normaliza JSON aninhado com json_normalize.
+    """
+    import io, json
 
-
-@st.cache_data(show_spinner="Loading...")
-def load_file(file_bytes: bytes, filename: str) -> Optional[pd.DataFrame]:
     name = filename.lower()
+    buf = io.BytesIO(file_bytes)
+
+    def detect_encoding(file_bytes: bytes) -> str:
+        """Detecta encoding do arquivo tentando múltiplas opções"""
+        encodings = ["utf-8", "latin-1", "iso-8859-1", "cp1252", "utf-16"]
+        for enc in encodings:
+            try:
+                file_bytes.decode(enc)
+                return enc
+            except (UnicodeDecodeError, AttributeError):
+                continue
+        return "utf-8"  # Fallback
 
     try:
         if name.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(io.BytesIO(file_bytes))
-        elif name.endswith((".csv", ".txt")):
-            df = load_delimited_file(file_bytes)
+            df = pd.read_excel(buf)
+
+        elif name.endswith(".csv"):
+            encoding = detect_encoding(file_bytes)
+            sample = buf.read(2048).decode(encoding, errors="ignore")
+            buf.seek(0)
+            sep = ";" if sample.count(";") > sample.count(",") else ","
+            df = pd.read_csv(buf, sep=sep, encoding=encoding, on_bad_lines="skip")
+
+        elif name.endswith(".txt"):
+            encoding = detect_encoding(file_bytes)
+            sample = buf.read(2048).decode(encoding, errors="ignore")
+            buf.seek(0)
+            sep = "\t" if "\t" in sample else ("|" if "|" in sample else ",")
+            df = pd.read_csv(buf, sep=sep, encoding=encoding, on_bad_lines="skip")
+
         elif name.endswith(".json"):
-            text = file_bytes.decode("utf-8")
-            data = json.loads(text)
-            df = pd.DataFrame(data) if isinstance(data, list) else pd.json_normalize(data)
+            raw = json.load(buf)
+            # Suporte a lista de objetos, dict com lista, ou DataFrame direto
+            if isinstance(raw, list):
+                df = pd.json_normalize(raw)
+            elif isinstance(raw, dict):
+                # Tenta encontrar a primeira chave que seja lista
+                for v in raw.values():
+                    if isinstance(v, list):
+                        df = pd.json_normalize(v)
+                        break
+                else:
+                    df = pd.DataFrame([raw])
+            else:
+                st.error("❌ Estrutura JSON não reconhecida.")
+                return None
+
         else:
-            st.error(f"Unsupported format: {name}")
+            st.error("❌ Formato não suportado. Use .xlsx, .xls, .csv, .txt ou .json")
             return None
-    except Exception as exc:
-        st.error(f"Error loading file: {exc}")
+
+        return detect_and_parse(df)
+
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar arquivo: {e}")
         return None
 
-    return detect_and_parse(df)
 
-
-def to_excel(df: pd.DataFrame) -> bytes:
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Data")
-    return buffer.getvalue()
-
-
-def build_tabs(context: dict) -> list[str]:
-    tabs: list[str] = []
-    has_metrics = bool(context["key_metrics"])
-    has_dimensions = bool(context["key_dimensions"])
-    has_dates = bool(context["date_cols"])
-
-    if has_metrics and context["context"] in {"vendas", "comissoes", "financeiro"}:
-        tabs.append("Financial")
-    if has_metrics and has_dimensions and context["context"] in {"vendas", "comissoes"}:
-        tabs.append("By Dimension")
-    if has_metrics and has_dates:
-        tabs.append("Timeline")
-    if has_metrics and context["context"] == "obra":
-        tabs.append("Schedule")
-    if context["context"] == "rh":
-        tabs.append("People")
-    if has_metrics and context["context"] == "estoque":
-        tabs.append("Inventory")
-
-    tabs.extend(["Data", "Statistics", "Explorer", "Export"])
-    return list(dict.fromkeys(tabs))
-
-
-def first_non_null_example(series: pd.Series) -> str:
-    non_null = series.dropna()
-    if non_null.empty:
-        return "-"
-    return str(non_null.iloc[0])[:50]
-
-
-inject_css()
-init_session()
-
-st.title("Analytics Hub")
-st.caption("Upload a spreadsheet and the app adapts the analysis automatically.")
-
-uploaded_file = st.file_uploader(
-    "Choose a file",
-    type=["xlsx", "xls", "csv", "txt", "json"],
-    label_visibility="collapsed",
-)
-
-if not uploaded_file:
-    st.markdown(
-        """
-        ### How it works
-        1. Upload a spreadsheet file.
-        2. The app detects the dataset context automatically.
-        3. Relevant tabs are created for financial, timeline, people, inventory or generic analysis.
-        4. You can inspect the raw data, statistics, charts and exports in the same flow.
-        """
-    )
-    st.stop()
-
-df = load_file(uploaded_file.read(), uploaded_file.name)
-if df is None:
-    st.stop()
-
-ctx = detect_context(df)
-st.session_state.df = df
-st.session_state.ctx = ctx
-
-st.info(
-    "Detected context: "
-    f"**{ctx['context'].upper()}** ({ctx['confidence']:.0%}) | "
-    f"{len(df):,} rows | {len(df.columns)} columns"
-)
-
-if ctx["key_metrics"]:
-    st.subheader("Key metrics")
-    metric_columns = st.columns(min(4, len(ctx["key_metrics"][:4])))
-
-    for index, column_name in enumerate(ctx["key_metrics"][:4]):
-        total = df[column_name].sum()
-        midpoint = len(df) // 2
-        first_half = df[column_name].iloc[:midpoint].sum()
-        second_half = df[column_name].iloc[midpoint:].sum()
-        delta_pct = ((second_half - first_half) / abs(first_half) * 100) if first_half else 0
-
-        metric_columns[index].metric(
-            label=column_name,
-            value=fmt_number(total),
-            delta=f"{delta_pct:+.1f}%",
-        )
-
-tab_names = build_tabs(ctx)
-tabs = st.tabs(tab_names)
-tab_map = {name: tab for name, tab in zip(tab_names, tabs)}
-
-if "Financial" in tab_map:
-    with tab_map["Financial"]:
-        st.subheader("Financial analysis")
-        metric = ctx["key_metrics"][0]
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total", fmt_number(df[metric].sum()))
-        col2.metric("Average", fmt_number(df[metric].mean()))
-        col3.metric("Maximum", fmt_number(df[metric].max()))
-        col4.metric("Median", fmt_number(df[metric].median()))
-
-        if ctx["date_cols"]:
-            date_col = ctx["date_cols"][0]
-            timeline = df.set_index(date_col)[metric].resample("ME").sum().reset_index()
-            figure = px.line(timeline, x=date_col, y=metric, markers=True, title=f"{metric} by month")
-            st.plotly_chart(apply_chart_style(figure), use_container_width=True)
-
-        if ctx["key_dimensions"]:
-            dimension = ctx["key_dimensions"][0]
-            summary = df.groupby(dimension)[ctx["key_metrics"][:3]].sum().reset_index()
-            summary = summary.sort_values(ctx["key_metrics"][0], ascending=False)
-            st.dataframe(summary, use_container_width=True)
-
-if "By Dimension" in tab_map:
-    with tab_map["By Dimension"]:
-        st.subheader("Analysis by dimension")
-
-        for dimension in ctx["key_dimensions"][:3]:
-            st.markdown(f"#### {dimension}")
-
-            grouped = (
-                df.groupby(dimension)[ctx["key_metrics"][0]]
-                .agg(["sum", "mean", "count"])
-                .reset_index()
-                .sort_values("sum", ascending=False)
-                .head(20)
-            )
-
-            col1, col2 = st.columns(2)
-            with col1:
-                bar_chart = px.bar(
-                    grouped,
-                    y=dimension,
-                    x="sum",
-                    orientation="h",
-                    color="sum",
-                    color_continuous_scale="Blues",
-                    title=f"Top 20 by {dimension}",
-                )
-                st.plotly_chart(apply_chart_style(bar_chart), use_container_width=True)
-
-            with col2:
-                pie_chart = px.pie(
-                    grouped.head(10),
-                    names=dimension,
-                    values="sum",
-                    title=f"Share by {dimension}",
-                )
-                st.plotly_chart(apply_chart_style(pie_chart), use_container_width=True)
-
-            st.dataframe(grouped, use_container_width=True)
-
-if "Timeline" in tab_map:
-    with tab_map["Timeline"]:
-        st.subheader("Timeline analysis")
-        date_col = ctx["date_cols"][0]
-
-        col1, col2 = st.columns(2)
-        with col1:
-            metric_col = st.selectbox("Metric", ctx["key_metrics"], key="timeline_metric")
-        with col2:
-            granularity = st.selectbox(
-                "Granularity",
-                ["Day", "Week", "Month", "Quarter", "Year"],
-                index=2,
-                key="timeline_granularity",
-            )
-
-        freq_map = {"Day": "D", "Week": "W", "Month": "ME", "Quarter": "QE", "Year": "YE"}
-
-        try:
-            timeline = df.set_index(date_col)[metric_col].resample(freq_map[granularity]).sum().reset_index()
-            line_chart = px.line(
-                timeline,
-                x=date_col,
-                y=metric_col,
-                markers=True,
-                title=f"{metric_col} by {granularity.lower()}",
-            )
-            st.plotly_chart(apply_chart_style(line_chart), use_container_width=True)
-
-            if len(timeline) >= 2:
-                current = timeline[metric_col].iloc[-1]
-                previous = timeline[metric_col].iloc[-2]
-                delta = ((current - previous) / abs(previous) * 100) if previous else 0
-
-                info1, info2, info3 = st.columns(3)
-                info1.metric("Current", fmt_number(current), f"{delta:+.1f}%")
-                info2.metric("Previous", fmt_number(previous))
-                info3.metric("Total", fmt_number(timeline[metric_col].sum()))
-
-            timeline["cumulative"] = timeline[metric_col].cumsum()
-            cumulative_chart = px.area(
-                timeline,
-                x=date_col,
-                y="cumulative",
-                title=f"Cumulative {metric_col}",
-            )
-            st.plotly_chart(apply_chart_style(cumulative_chart), use_container_width=True)
-        except Exception as exc:
-            st.error(f"Could not build the timeline: {exc}")
-
-if "Schedule" in tab_map:
-    with tab_map["Schedule"]:
-        st.subheader("Schedule")
-        phase_columns = [column for column in df.columns if any(token in column.lower() for token in ("etapa", "fase"))]
-
-        if phase_columns:
-            phase = phase_columns[0]
-            metric = ctx["key_metrics"][0]
-            grouped = df.groupby(phase)[metric].agg(["sum", "mean", "count"]).reset_index()
-
-            chart = px.bar(
-                grouped,
-                x=phase,
-                y="sum",
-                title=f"Progress by {phase}",
-                color="sum",
-                color_continuous_scale="Viridis",
-            )
-            st.plotly_chart(apply_chart_style(chart), use_container_width=True)
-            st.dataframe(grouped, use_container_width=True)
-        else:
-            st.info("No schedule columns were detected.")
-
-if "People" in tab_map:
-    with tab_map["People"]:
-        st.subheader("People analysis")
-        role_columns = [column for column in df.columns if "cargo" in column.lower()]
-
-        if role_columns:
-            role = role_columns[0]
-            grouped = df[role].value_counts().reset_index()
-            grouped.columns = [role, "Count"]
-
-            chart = px.bar(grouped, x=role, y="Count", title=f"Distribution by {role}")
-            st.plotly_chart(apply_chart_style(chart), use_container_width=True)
-            st.dataframe(grouped, use_container_width=True)
-        else:
-            st.info("No role column was detected.")
-
-if "Inventory" in tab_map:
-    with tab_map["Inventory"]:
-        st.subheader("Inventory")
-        balance_columns = [column for column in df.columns if "saldo" in column.lower()]
-        product_columns = [column for column in df.columns if "produto" in column.lower()]
-
-        if balance_columns and product_columns:
-            balance = balance_columns[0]
-            product = product_columns[0]
-            grouped = (
-                df.groupby(product)[balance]
-                .sum()
-                .reset_index()
-                .sort_values(balance, ascending=False)
-                .head(20)
-            )
-
-            chart = px.bar(
-                grouped,
-                x=product,
-                y=balance,
-                title="Top 20 products",
-                color=balance,
-                color_continuous_scale="Greens",
-            )
-            st.plotly_chart(apply_chart_style(chart), use_container_width=True)
-            st.dataframe(grouped, use_container_width=True)
-        else:
-            st.info("Inventory columns were not found.")
-
-with tab_map["Data"]:
-    st.subheader("Raw data")
-
-    if len(df) > 2_000:
-        st.caption(f"Showing 2,000 of {len(df):,} rows")
-        st.dataframe(df.head(2_000), use_container_width=True, height=450)
-    else:
-        st.dataframe(df, use_container_width=True, height=450)
-
-    with st.expander("Data quality"):
-        quality_rows = []
-        for column in df.columns:
-            completeness = (df[column].notna().sum() / len(df) * 100) if len(df) else 0
-            quality_rows.append(
-                {
-                    "Column": column,
-                    "Type": str(df[column].dtype),
-                    "Completeness": f"{completeness:.1f}%",
-                    "Unique": df[column].nunique(),
-                    "Example": first_non_null_example(df[column]),
-                }
-            )
-
-        st.dataframe(pd.DataFrame(quality_rows), use_container_width=True)
-
-with tab_map["Statistics"]:
-    st.subheader("Statistics")
-
-    if not ctx["key_metrics"]:
-        st.info("No numeric columns were detected.")
-    else:
-        st.dataframe(df[ctx["key_metrics"]].describe().T, use_container_width=True)
-
-        if len(ctx["key_metrics"]) >= 2:
-            st.markdown("#### Correlation")
-            correlation = df[ctx["key_metrics"]].corr()
-
-            heatmap = go.Figure(
-                data=go.Heatmap(
-                    z=correlation.values,
-                    x=correlation.columns,
-                    y=correlation.columns,
-                    colorscale="RdBu_r",
-                    zmid=0,
-                )
-            )
-            st.plotly_chart(apply_chart_style(heatmap), use_container_width=True)
-
-            pairs: list[tuple[str, str, float]] = []
-            for left_index, left_column in enumerate(correlation.columns):
-                for right_index in range(left_index + 1, len(correlation.columns)):
-                    pairs.append(
-                        (
-                            left_column,
-                            correlation.columns[right_index],
-                            correlation.iloc[left_index, right_index],
-                        )
-                    )
-
-            pairs.sort(key=lambda item: abs(item[2]), reverse=True)
-            st.markdown("**Top correlations**")
-            for left_column, right_column, value in pairs[:5]:
-                st.caption(f"{left_column} <-> {right_column}: **{value:.2f}**")
-
-with tab_map["Explorer"]:
-    st.subheader("Free explorer")
-
-    col1, col2, col3, col4 = st.columns(4)
-    chart_type = col1.selectbox("Type", ["Bar", "Line", "Pie", "Histogram", "Scatter", "Area"], key="explorer_type")
-    axis_x = col2.selectbox("X axis", df.columns.tolist(), key="explorer_x")
-    axis_y = col3.selectbox(
-        "Y axis",
-        ctx["numeric_cols"] if ctx["numeric_cols"] else df.columns.tolist(),
-        key="explorer_y",
-    )
-    aggregation = col4.selectbox("Aggregation", ["Sum", "Average", "Count", "Max", "Min"], key="explorer_agg")
-
-    aggregation_map = {
-        "Sum": "sum",
-        "Average": "mean",
-        "Count": "count",
-        "Max": "max",
-        "Min": "min",
+def get_col_types(df: pd.DataFrame) -> dict:
+    """Retorna dicionário com listas de colunas por tipo detectado."""
+    return {
+        "date": df.select_dtypes(include=["datetime64"]).columns.tolist(),
+        "numeric": df.select_dtypes(include=[np.number]).columns.tolist(),
+        "categorical": df.select_dtypes(include=["object", "category"]).columns.tolist(),
     }
 
-    try:
-        if chart_type == "Histogram":
-            chart = px.histogram(df, x=axis_y, nbins=40, title=f"Distribution of {axis_y}")
-        elif chart_type == "Scatter":
-            chart = px.scatter(df, x=axis_x, y=axis_y, title=f"{axis_x} vs {axis_y}")
+
+# --- EXPORTAÇÃO ---
+
+def to_excel(df: pd.DataFrame) -> bytes:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Dados")
+    return buf.getvalue()
+
+
+def to_csv(df: pd.DataFrame) -> str:
+    return df.to_csv(index=False, encoding="utf-8-sig")
+
+
+# --- SIDEBAR ---
+
+st.sidebar.markdown("### 📁 Carregar Dados")
+
+uploaded = st.sidebar.file_uploader(
+    "Escolha um arquivo",
+    type=["xlsx", "xls", "csv", "txt", "json"],
+    help="Suporta Excel, CSV, TXT delimitado e JSON",
+)
+
+if uploaded:
+    df_raw = load_file(uploaded.read(), uploaded.name)
+
+    if df_raw is not None:
+        st.session_state.df_loaded = df_raw
+        col_types_raw = get_col_types(df_raw)
+
+        st.sidebar.success(f"✅ {uploaded.name}")
+        st.sidebar.caption(f"{len(df_raw):,} linhas · {len(df_raw.columns)} colunas")
+
+        # Resumo dos tipos detectados na sidebar
+        with st.sidebar.expander("🔍 Tipos detectados", expanded=False):
+            for label, icon, key in [("Datas", "📅", "date"), ("Numéricas", "🔢", "numeric"), ("Categóricas", "🏷️", "categorical")]:
+                if col_types_raw[key]:
+                    st.caption(f"{icon} {label}: {', '.join(col_types_raw[key])}")
+
+        # Seleção de colunas
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🗂️ Colunas para análise")
+        select_all = st.sidebar.checkbox("Todas as colunas", value=True)
+
+        if select_all:
+            selected = df_raw.columns.tolist()
         else:
-            grouped = (
-                df.groupby(axis_x)[axis_y]
-                .agg(aggregation_map[aggregation])
-                .reset_index()
-                .sort_values(axis_y, ascending=False)
-                .head(20)
+            selected = st.sidebar.multiselect(
+                "Selecione colunas",
+                df_raw.columns.tolist(),
+                default=df_raw.columns[:6].tolist(),
             )
 
-            if chart_type == "Bar":
-                chart = px.bar(grouped, x=axis_x, y=axis_y, title=f"{axis_x} vs {axis_y}")
-            elif chart_type == "Line":
-                chart = px.line(grouped, x=axis_x, y=axis_y, markers=True, title=f"{axis_x} vs {axis_y}")
-            elif chart_type == "Area":
-                chart = px.area(grouped, x=axis_x, y=axis_y, title=f"{axis_x} vs {axis_y}")
+        df_view = df_raw[selected].copy() if selected else df_raw.copy()
+        col_types = get_col_types(df_view)
+
+        # Filtros dinâmicos — data
+        if col_types["date"] or col_types["categorical"] or col_types["numeric"]:
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("### 🎛️ Filtros")
+
+        if col_types["date"]:
+            date_col = st.sidebar.selectbox("Coluna de data", col_types["date"], key="sb_date")
+            min_d = df_view[date_col].min().date()
+            max_d = df_view[date_col].max().date()
+            date_range = st.sidebar.date_input("Intervalo de datas", [min_d, max_d], min_value=min_d, max_value=max_d)
+            if len(date_range) == 2:
+                df_view = df_view[
+                    (df_view[date_col].dt.date >= date_range[0]) &
+                    (df_view[date_col].dt.date <= date_range[1])
+                ]
+        else:
+            date_col = None
+
+        # Filtros numéricos por range (até 2 colunas)
+        for num_col in col_types["numeric"][:2]:
+            _min = float(df_view[num_col].min())
+            _max = float(df_view[num_col].max())
+            if _min < _max:
+                rng = st.sidebar.slider(
+                    f"Range: {num_col}",
+                    min_value=_min, max_value=_max,
+                    value=(_min, _max),
+                    key=f"rng_{num_col}",
+                )
+                df_view = df_view[df_view[num_col].between(*rng)]
+
+        # Filtros categóricos (até 3 colunas com ≤ 30 valores únicos)
+        for cat_col in col_types["categorical"][:3]:
+            uniq = df_view[cat_col].dropna().unique().tolist()
+            if 1 < len(uniq) <= 30:
+                chosen = st.sidebar.multiselect(f"{cat_col}", uniq, default=uniq, key=f"cat_{cat_col}")
+                if chosen:
+                    df_view = df_view[df_view[cat_col].isin(chosen)]
+
+        st.session_state.df_filtered = df_view
+        col_types = get_col_types(df_view)  # recalcula após filtros
+
+        # --- HEADER ---
+        render_header(
+            "📊 Analytics Dashboard",
+            f"{uploaded.name} · {len(df_view):,} registros · {len(df_view.columns)} colunas",
+        )
+        
+        # Detecção de schema do dataset
+        dataset_info = categorize_dataset(df_raw)
+        st.info(f"ℹ️ Dataset identificado: {dataset_info['description']}", icon="🔍")
+
+        # KPIs automáticos com base nas colunas numéricas (SMART v1.5)
+        if col_types["numeric"]:
+            with st.spinner("🔍 Analisando trends e anomalias..."):
+                kpis = []
+                insights = []
+                
+                for idx, col in enumerate(col_types["numeric"][:4]):
+                    total = df_view[col].sum()
+                    media = df_view[col].mean()
+                    
+                    # Calcula trend entre início e fim do período
+                    trend_info = calculate_trend(df_view[col].reset_index(drop=True), periods=max(2, len(df_view) // 4))
+                    
+                    # Ícones alternados por tipo de métrica
+                    icons = ["💰", "📊", "🎯", "⚡"]
+                    colors = ["primary", "secondary", "accent", "success"]
+                    
+                    kpis.append({
+                        "title": col,
+                        "value": f"{total:,.2f}" if total < 1_000_000 else f"{total/1_000_000:.1f}M",
+                        "trend_pct": trend_info.get("change_pct", 0),
+                        "subtitle": f"Média: {media:,.0f}",
+                        "icon": icons[idx % len(icons)],
+                        "color": colors[idx % len(colors)],
+                    })
+                    
+                    # Detecta outliers
+                    outlier_indices, outlier_pct = detect_outliers_iqr(df_view[col])
+                    if outlier_pct > 2:
+                        insights.append({
+                            "title": f"⚠️ Anomalias em {col}",
+                            "description": f"{len(outlier_indices)} outliers ({outlier_pct:.1f}%) detectados",
+                            "icon": "🔔",
+                            "color": "warning",
+                        })
+                
+                render_smart_kpi_row(kpis)
+                
+                # Mostra insights se houver
+                if insights:
+                    render_insights_section(insights)
+
+        render_separator()
+
+        # --- ABAS ---
+        tab_overview, tab_temporal, tab_explore, tab_stats, tab_export = st.tabs([
+            "📋 Visão Geral", "📅 Temporal", "🔎 Explorador", "📈 Estatísticas", "💾 Exportar",
+        ])
+
+        # TAB 1 — visão geral: primeiras linhas + qualidade dos dados
+        with tab_overview:
+            st.markdown("### Primeiras linhas")
+            st.dataframe(df_view.head(15), use_container_width=True)
+
+            render_separator()
+            st.markdown("### Qualidade dos dados")
+            quality = pd.DataFrame({
+                "Coluna": df_view.columns,
+                "Tipo": df_view.dtypes.astype(str).values,
+                "Nulos": df_view.isnull().sum().values,
+                "% Nulos": (df_view.isnull().mean() * 100).round(1).values,
+                "Únicos": df_view.nunique().values,
+                "Exemplo": [str(df_view[c].dropna().iloc[0]) if df_view[c].dropna().shape[0] > 0 else "—" for c in df_view.columns],
+            })
+            st.dataframe(quality, use_container_width=True, hide_index=True)
+            
+            # Análise de anomalias
+            if col_types["numeric"]:
+                render_separator()
+                st.markdown("### 🔍 Verificação de Anomalias")
+                anomalies = identify_anomalies(df_view, col_types["numeric"], threshold_z=2.5)
+                
+                anomaly_summary = []
+                for col, indices in anomalies.items():
+                    if indices:
+                        anomaly_summary.append(f"• **{col}**: {len(indices)} valores anômalos ({len(indices)/len(df_view)*100:.1f}%)")
+                
+                if anomaly_summary:
+                    st.warning("⚠️ Anomalias detectadas:\n" + "\n".join(anomaly_summary))
+                else:
+                    st.success("✅ Nenhuma anomalia detectada")
+
+        # TAB 2 — série temporal quando há coluna de data
+        with tab_temporal:
+            if not col_types["date"]:
+                st.info("ℹ️ Nenhuma coluna de data detectada. Verifique a seleção de colunas.")
+            elif not col_types["numeric"]:
+                st.info("ℹ️ Nenhuma coluna numérica detectada para plotar.")
             else:
-                chart = px.pie(grouped, names=axis_x, values=axis_y, title=f"Distribution of {axis_x}")
+                t_date = st.selectbox("Coluna de data", col_types["date"], key="t_date")
+                t_num = st.selectbox("Métrica", col_types["numeric"], key="t_num")
 
-        st.plotly_chart(apply_chart_style(chart), use_container_width=True)
-    except Exception as exc:
-        st.error(f"Could not build the chart: {exc}")
+                gran_sugerida = detect_time_granularity(df_view, t_date)
+                agg_map = {"Dia": "D", "Semana": "W", "Mês": "ME", "Trimestre": "QE", "Ano": "YE"}
+                gran = st.radio("Granularidade", list(agg_map.keys()),
+                                index=list(agg_map.keys()).index(gran_sugerida) if gran_sugerida in agg_map else 2,
+                                horizontal=True)
 
-with tab_map["Export"]:
-    st.subheader("Download")
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                ts = (
+                    df_view.set_index(t_date)[t_num]
+                    .resample(agg_map[gran])
+                    .sum()
+                    .reset_index()
+                )
+                
+                # Mini cards com estatísticas por período
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total", f"{ts[t_num].sum():,.0f}", 
+                              delta=f"{(ts[t_num].iloc[-1] - ts[t_num].iloc[-2]):.0f}" if len(ts) > 1 else None)
+                with col2:
+                    st.metric("Média", f"{ts[t_num].mean():,.0f}")
+                with col3:
+                    st.metric("Máximo", f"{ts[t_num].max():,.0f}")
+                with col4:
+                    st.metric("Mínimo", f"{ts[t_num].min():,.0f}")
 
-    col1, col2, col3 = st.columns(3)
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig = px.line(ts, x=t_date, y=t_num, markers=True,
+                                  title=f"{t_num} — Linha ({gran})",
+                                  color_discrete_sequence=[PALETTE["primary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+                with c2:
+                    fig = px.bar(ts, x=t_date, y=t_num,
+                                 title=f"{t_num} — Barras ({gran})",
+                                 color_discrete_sequence=[PALETTE["secondary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
 
-    csv_data = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    col1.download_button("CSV", csv_data, f"data_{timestamp}.csv", "text/csv", use_container_width=True)
+                # Linha de tendência acumulada
+                ts["acumulado"] = ts[t_num].cumsum()
+                fig = px.area(ts, x=t_date, y="acumulado",
+                              title=f"{t_num} — Acumulado ({gran})",
+                              color_discrete_sequence=[PALETTE["accent"]])
+                st.plotly_chart(apply_chart_style(fig), use_container_width=True)
 
-    excel_data = to_excel(df)
-    col2.download_button(
-        "Excel",
-        excel_data,
-        f"data_{timestamp}.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+        # TAB 3 — explorador interativo de variáveis
+        with tab_explore:
+            if col_types["numeric"]:
+                st.markdown("### Distribuição numérica")
+                col_n = st.selectbox("Coluna", col_types["numeric"], key="exp_num")
+                
+                # Mini stats
+                col_a, col_b, col_c, col_d = st.columns(4)
+                with col_a:
+                    st.metric("Q1", f"{df_view[col_n].quantile(0.25):,.0f}")
+                with col_b:
+                    st.metric("Mediana", f"{df_view[col_n].median():,.0f}")
+                with col_c:
+                    st.metric("Q3", f"{df_view[col_n].quantile(0.75):,.0f}")
+                with col_d:
+                    st.metric("Desvio Padrão", f"{df_view[col_n].std():,.0f}")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig = px.histogram(df_view, x=col_n, nbins=40, title=f"Histograma: {col_n}",
+                                       color_discrete_sequence=[PALETTE["primary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+                with c2:
+                    fig = px.box(df_view, y=col_n, title=f"Box Plot: {col_n}",
+                                 color_discrete_sequence=[PALETTE["secondary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
 
-    json_data = df.to_json(orient="records", force_ascii=False).encode("utf-8")
-    col3.download_button("JSON", json_data, f"data_{timestamp}.json", "application/json", use_container_width=True)
+            if col_types["categorical"]:
+                render_separator()
+                st.markdown("### Distribuição categórica")
+                col_c = st.selectbox("Coluna", col_types["categorical"], key="exp_cat")
+                top_n = st.slider("Top N", 5, 30, 10)
+                vc = df_view[col_c].value_counts().head(top_n).reset_index()
+                vc.columns = [col_c, "contagem"]
 
-    st.markdown("#### Preview")
-    show_all = st.checkbox("Show all rows", value=False)
-    st.dataframe(df if show_all else df.head(20), use_container_width=True)
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig = px.bar(vc, x="contagem", y=col_c, orientation="h",
+                                 title=f"Top {top_n}: {col_c}",
+                                 color="contagem",
+                                 color_continuous_scale="Viridis")
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+                with c2:
+                    fig = px.pie(vc, names=col_c, values="contagem",
+                                 title=f"Participação: {col_c}",
+                                 color_discrete_sequence=CHART_COLORS)
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+            if col_types["numeric"] and col_types["categorical"]:
+                render_separator()
+                st.markdown("### Análise cruzada")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    cross_cat = st.selectbox("Categórica", col_types["categorical"], key="xcat")
+                with c2:
+                    cross_num = st.selectbox("Numérica", col_types["numeric"], key="xnum")
+                with c3:
+                    agg_fn = st.selectbox("Agregação", ["Soma", "Média", "Contagem", "Máximo", "Mínimo"])
+
+                fn_map = {"Soma": "sum", "Média": "mean", "Contagem": "count", "Máximo": "max", "Mínimo": "min"}
+                grp = (
+                    df_view.groupby(cross_cat)[cross_num]
+                    .agg(fn_map[agg_fn])
+                    .reset_index()
+                    .rename(columns={cross_num: agg_fn})
+                    .sort_values(agg_fn, ascending=False)
+                    .head(20)
+                )
+
+                fig = px.bar(grp, x=cross_cat, y=agg_fn,
+                             title=f"{agg_fn} de {cross_num} por {cross_cat}",
+                             color=agg_fn, color_continuous_scale="Purples")
+                st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+        # TAB 4 — estatísticas descritivas e correlações
+        with tab_stats:
+            if not col_types["numeric"]:
+                st.info("ℹ️ Nenhuma coluna numérica encontrada.")
+            else:
+                st.markdown("### Estatísticas descritivas")
+                stats_df = df_view[col_types["numeric"]].describe().T.round(4)
+                st.dataframe(stats_df, use_container_width=True)
+                
+                # Resumo visual das distribuições
+                st.markdown("### Distribuição das colunas numéricas")
+                for col in col_types["numeric"][:3]:  # Primeiras 3
+                    fig = px.histogram(df_view, x=col, nbins=30,
+                                      title=f"Distribuição: {col}",
+                                      color_discrete_sequence=[PALETTE["primary"]])
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True, height=250)
+
+                if len(col_types["numeric"]) >= 2:
+                    render_separator()
+                    st.markdown("### Matriz de correlação")
+                    corr = df_view[col_types["numeric"]].corr()
+                    fig = px.imshow(corr, color_continuous_scale="RdBu_r",
+                                    zmin=-1, zmax=1, text_auto=".2f",
+                                    title="Correlação entre variáveis numéricas")
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+                    render_separator()
+                    st.markdown("### Dispersão entre variáveis")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        sc_x = st.selectbox("Eixo X", col_types["numeric"], key="sc_x")
+                    with c2:
+                        sc_y = st.selectbox("Eixo Y", col_types["numeric"],
+                                            index=min(1, len(col_types["numeric"]) - 1), key="sc_y")
+
+                    color_by = None
+                    if col_types["categorical"]:
+                        color_opt = st.selectbox("Cor por (opcional)", ["—"] + col_types["categorical"])
+                        color_by = None if color_opt == "—" else color_opt
+
+                    try:
+                        fig = px.scatter(df_view, x=sc_x, y=sc_y, color=color_by,
+                                         trendline="ols", opacity=0.7,
+                                         title=f"Dispersão: {sc_x} vs {sc_y}",
+                                         color_discrete_sequence=CHART_COLORS)
+                    except Exception:
+                        # Fallback sem trendline se statsmodels não estiver disponível
+                        fig = px.scatter(df_view, x=sc_x, y=sc_y, color=color_by,
+                                         opacity=0.7,
+                                         title=f"Dispersão: {sc_x} vs {sc_y}",
+                                         color_discrete_sequence=CHART_COLORS)
+                    
+                    st.plotly_chart(apply_chart_style(fig), use_container_width=True)
+
+        # TAB 5 — exportação dos dados filtrados
+        with tab_export:
+            st.markdown("### Exportar dados filtrados")
+            st.caption(f"{len(df_view):,} linhas · {len(df_view.columns)} colunas")
+
+            ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button("📥 Excel (.xlsx)", data=to_excel(df_view),
+                                   file_name=f"analytics_{ts_str}.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   use_container_width=True)
+            with c2:
+                st.download_button("📥 CSV", data=to_csv(df_view),
+                                   file_name=f"analytics_{ts_str}.csv",
+                                   mime="text/csv",
+                                   use_container_width=True)
+
+else:
+    from templates.ui import render_welcome
+    render_welcome()

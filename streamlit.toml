@@ -1,0 +1,18 @@
+[theme]
+primaryColor = "#059669"
+backgroundColor = "#0f1117"
+secondaryBackgroundColor = "#1a1d27"
+textColor = "#e8eaf0"
+font = "sans serif"
+
+[client]
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[logger]
+level = "error"
+
+[server]
+headless = true
+port = 8501
+enableXsrfProtection = true
