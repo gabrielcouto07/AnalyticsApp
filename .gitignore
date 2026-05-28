@@ -1,8 +1,6 @@
-# Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 *.egg
 *.egg-info/
 dist/
@@ -11,45 +9,27 @@ build/
 .coverage
 htmlcov/
 
-# Virtual Environment
-.venv
+.venv/
 venv/
 ENV/
 env/
 
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Streamlit
-.streamlit/
-cache/
+.streamlit/secrets.toml
 
-# Environment
 .env
 .env.local
-secrets.toml
 
-# OS
 .DS_Store
 Thumbs.db
-
-# Logs
 *.log
-npm-debug.log
-yarn-error.log
 
-# Node/Frontend
 node_modules/
-/frontend/dist
-/frontend/.vite
-
-# Temporary
 temp_clone/
-*.bak
 uploads/
 session_data/
-
