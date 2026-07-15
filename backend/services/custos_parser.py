@@ -140,6 +140,7 @@ _NF_HEADER_MAP = [
     ("MAPA",        "MapaPrecos"),
     ("NATUREZA",    "Natureza"),
     ("COND",        "CondPagto"),
+    ("BOLETO",      "CondPagto"),    # header appears as "BOLETO/DEPÓSITO" in real files
     ("VENCTO",      "DataVencto"),
     ("VENCIMENTO",  "DataVencto"),
     ("VALOR",       "Valor"),
@@ -153,6 +154,7 @@ _CONS_HEADER_MAP = [
     ("MAPA",        "Mapa"),
     ("NATUREZA",    "Natureza"),
     ("COND",        "CondPagto"),
+    ("BOLETO",      "CondPagto"),    # header appears as "BOLETO/DEPÓSITO" in real files
     ("VENCTO",      "DataVencto"),
     ("VENCIMENTO",  "DataVencto"),
     ("VALOR",       "Valor"),
