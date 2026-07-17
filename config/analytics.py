@@ -4,17 +4,18 @@ import pandas as pd
 from typing import Dict, Tuple, List
 
 
-def calculate_trend(series: pd.Series, periods: int = 2) -> Dict[str, any]:
+def calculate_trend(series: pd.Series, periods: int = 1) -> Dict[str, any]:
     """
-    Calcula tendência entre períodos consecutivos.
-    Retorna: {value_curr, value_prev, change_pct, direction, arrow}
+    Calcula tendência do último valor vs `periods` posições atrás.
+    periods=1 compara com o valor imediatamente anterior.
+    Retorna: {change_pct, direction, arrow, current, previous}
     """
     try:
-        if len(series) < periods:
+        if len(series) <= periods:
             return {"change_pct": 0, "direction": "→", "arrow": "→"}
-        
+
         current = series.iloc[-1]
-        previous = series.iloc[-periods]
+        previous = series.iloc[-1 - periods]
         
         if previous == 0:
             change_pct = 0
@@ -112,31 +113,23 @@ def categorize_dataset(df: pd.DataFrame) -> Dict[str, str]:
 
 def identify_anomalies(df: pd.DataFrame, numeric_cols: List[str], threshold_z: float = 2.5) -> Dict[str, List[int]]:
     """
-    Identifica anomalias usando Z-score para cada coluna numérica.
-    Retorna dicionário: {coluna: [lista de índices com anomalias]}
+    Identifica anomalias usando Z-score (populacional, ddof=0) por coluna numérica.
+    Retorna dicionário: {coluna: [índices com anomalias]} (colunas sem anomalias ficam com lista vazia).
     """
-    from scipy import stats
-    
-    anomalies = {}
-    try:
-        for col in numeric_cols:
-            if col in df.columns:
-                z_scores = np.abs(stats.zscore(df[col].dropna(), nan_policy='omit'))
-                anomaly_indices = df[df[col].notna()][z_scores > threshold_z].index.tolist()
-                if anomaly_indices:
-                    anomalies[col] = anomaly_indices
-    except Exception:
-        # Fallback para método simples se scipy não estiver disponível
-        for col in numeric_cols:
-            if col in df.columns:
-                mean = df[col].mean()
-                std = df[col].std()
-                if std > 0:
-                    z_scores = np.abs((df[col] - mean) / std)
-                    anomaly_indices = df[z_scores > threshold_z].index.tolist()
-                    if anomaly_indices:
-                        anomalies[col] = anomaly_indices
-    
+    anomalies: Dict[str, List[int]] = {}
+    for col in numeric_cols:
+        anomalies[col] = []
+        if col not in df.columns:
+            continue
+        try:
+            values = df[col].dropna()
+            mean = values.mean()
+            std = values.std(ddof=0)
+            if std > 0:
+                z_scores = np.abs((values - mean) / std)
+                anomalies[col] = z_scores[z_scores > threshold_z].index.tolist()
+        except Exception:
+            pass
     return anomalies
 
 
@@ -186,20 +179,3 @@ def calculate_percentile_rank(value: float, series: pd.Series) -> float:
         return (series < value).sum() / len(series) * 100
     except Exception:
         return 50.0
-
-
-def identify_anomalies(df: pd.DataFrame, numeric_cols: List[str], threshold_z: float = 2.5) -> Dict[str, List]:
-    """
-    Identifica anomalias usando Z-score em colunas numéricas.
-    Retorna dicionário com índices anômalos por coluna.
-    """
-    anomalies = {}
-    for col in numeric_cols:
-        try:
-            z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
-            anomaly_indices = z_scores[z_scores > threshold_z].index.tolist()
-            anomalies[col] = anomaly_indices
-        except Exception:
-            anomalies[col] = []
-    
-    return anomalies

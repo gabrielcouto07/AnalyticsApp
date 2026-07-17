@@ -57,12 +57,14 @@ class TestAnalytics:
     
     def test_identify_anomalies_zscore(self):
         """Z-score anomaly detection"""
+        # Nota: com poucas amostras o z-score máximo é limitado (~sqrt(n-1)),
+        # então precisamos de pontos suficientes para ultrapassar o threshold 2.5
         df = pd.DataFrame({
-            "valores": [1, 2, 3, 4, 5, 100]  # 100 é anomalia
+            "valores": [1, 2, 3, 4, 5] * 4 + [100]  # 100 é anomalia
         })
         anomalies = identify_anomalies(df, ["valores"], threshold_z=2.5)
         assert "valores" in anomalies
-        assert len(anomalies["valores"]) > 0
+        assert 20 in anomalies["valores"]  # índice do valor 100
 
 
 if __name__ == "__main__":
