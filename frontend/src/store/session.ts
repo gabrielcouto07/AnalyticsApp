@@ -6,14 +6,15 @@ interface ColTypes {
   categorical: string[]
 }
 
-interface KpiItem {
+export interface KpiItem {
   title: string
   total: number
   mean: number
   trend?: number | null
+  format?: "currency" | "number"
 }
 
-interface QualityItem {
+export interface QualityItem {
   column: string
   type: string
   nulls: number
@@ -22,47 +23,57 @@ interface QualityItem {
   sample: string
 }
 
+export interface SheetInfo {
+  name: string
+  role: "data" | "ignore" | "lookup"
+  model: "fiscal" | "venda" | null
+  rows: number
+  columns: number
+  selected: boolean
+}
+
 interface SessionState {
   sessionId: string | null
   filename: string | null
   rows: number
   columns: number
   colTypes: ColTypes | null
+  // Modelo detectado no upload ("medical_fiscal" ganha dashboard executivo)
+  model: string | null
+  sheets: SheetInfo[]
+  meaningfulColumns: string[]
+  datasets: string[]
   // Cache — preenchido uma vez após upload, lido por todas as abas
   kpis: KpiItem[]
   quality: QualityItem[]
   stats: Record<string, any>
-  datasetType: string | null
+  datasetType: { type: string; description: string } | string | null
   isLoading: boolean
   error: string | null
   setSession: (data: Partial<SessionState>) => void
   clear: () => void
 }
 
-export const useSession = create<SessionState>(set => ({
+const EMPTY = {
   sessionId: null,
   filename: null,
   rows: 0,
   columns: 0,
   colTypes: null,
-  kpis: [],
-  quality: [],
+  model: null,
+  sheets: [] as SheetInfo[],
+  meaningfulColumns: [] as string[],
+  datasets: [] as string[],
+  kpis: [] as KpiItem[],
+  quality: [] as QualityItem[],
   stats: {},
   datasetType: null,
   isLoading: false,
   error: null,
+}
+
+export const useSession = create<SessionState>(set => ({
+  ...EMPTY,
   setSession: data => set(data),
-  clear: () => set({
-    sessionId: null,
-    filename: null,
-    rows: 0,
-    columns: 0,
-    colTypes: null,
-    kpis: [],
-    quality: [],
-    stats: {},
-    datasetType: null,
-    isLoading: false,
-    error: null,
-  }),
+  clear: () => set(EMPTY),
 }))

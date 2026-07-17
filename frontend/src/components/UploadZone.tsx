@@ -19,6 +19,10 @@ export function UploadZone() {
         rows: upload.rows,
         columns: upload.columns,
         colTypes: upload.col_types,
+        model: upload.model ?? "generic",
+        sheets: upload.sheets ?? [],
+        meaningfulColumns: upload.meaningful_columns ?? [],
+        datasets: upload.datasets ?? [],
         isLoading: true,
       })
 

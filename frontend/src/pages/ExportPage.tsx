@@ -1,142 +1,109 @@
 import { useState } from "react"
 import { useSession } from "../store/session"
+import { exportUrl } from "../api/analytics"
+import { fmt } from "../lib/format"
 
-// Export data in multiple formats
+// Exportação: baixa o dataset (ou uma aba específica) em Excel/CSV
 export function ExportPage() {
-  const { filename, rows, columns } = useSession()
-  const [loading, setLoading] = useState<"excel" | "csv" | null>(null)
+  const { sessionId, filename, rows, columns, datasets } = useSession()
+  const [dataset, setDataset] = useState<string>("")
+  const [downloading, setDownloading] = useState<"excel" | "csv" | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const handleExport = async (format: "excel" | "csv") => {
-    setLoading(format)
+    if (!sessionId) return
+    setDownloading(format)
+    setError(null)
     try {
-      const response = await fetch(
-        `http://localhost:8000/api/export/${format}`,
-        { method: "GET" }
-      )
-      if (!response.ok) throw new Error("Export failed")
-
+      const response = await fetch(exportUrl(sessionId, format, { dataset: dataset || undefined }))
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement("a")
+      const base = (filename?.replace(/\.[^/.]+$/, "") || "export") + (dataset ? `_${dataset}` : "")
       link.href = url
-      link.download = `${filename?.replace(/\.[^/.]+$/, "") || "export"}.${format}`
+      link.download = `${base}.${format === "excel" ? "xlsx" : "csv"}`
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
       window.URL.revokeObjectURL(url)
-    } catch (error) {
-      console.error("Export error:", error)
-      alert("Export failed. Please try again.")
+    } catch {
+      setError("Falha na exportação. Verifique se o backend está ativo e tente novamente.")
     } finally {
-      setLoading(null)
+      setDownloading(null)
     }
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      {/* Header */}
+    <div className="flex flex-col gap-5 max-w-3xl">
       <div>
-        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "700", color: "#f1f5f9" }}>Export Data</h2>
-        <p style={{ margin: "8px 0 0 0", fontSize: "14px", color: "#cbd5e1" }}>Download your analyzed data in multiple formats</p>
+        <h2 className="m-0 text-xl font-bold text-text">Exportar Dados</h2>
+        <p className="mt-1 mb-0 text-sm text-muted">Baixe os dados tratados e tipados em Excel ou CSV</p>
       </div>
 
-      {/* File Info Card */}
-      <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
-          <span style={{ fontSize: "24px" }}>📄</span>
-          <div>
-            <p style={{ margin: 0, fontSize: "13px", fontWeight: "600", color: "#f1f5f9" }}>{filename || "dataset.xlsx"}</p>
-            <p style={{ margin: "4px 0 0 0", fontSize: "11px", color: "#94a3b8" }}>
-              {rows?.toLocaleString()} rows × {columns} columns
+      {/* Arquivo + escolha de dataset */}
+      <div className="bg-card/60 border border-border rounded-xl p-6 flex flex-col gap-4">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl" aria-hidden>📄</span>
+          <div className="min-w-0">
+            <p className="m-0 text-sm font-semibold text-text truncate">{filename || "dataset"}</p>
+            <p className="m-0 mt-0.5 text-[11px] text-muted">
+              {fmt.int(rows)} linhas × {columns} colunas (análise principal)
             </p>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "8px", paddingTop: "12px", borderTop: "1px solid #1e293b" }}>
-          {[
-            { name: "Excel", format: "excel", icon: "📊", color: "#10b981" },
-            { name: "CSV", format: "csv" as const, icon: "📋", color: "#4f8ef7" },
-          ].map(({ name, format, icon, color }) => (
+        {datasets.length > 1 && (
+          <div>
+            <label htmlFor="export-dataset" className="block text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">
+              O que exportar
+            </label>
+            <select
+              id="export-dataset"
+              className="w-full max-w-sm bg-card text-text border border-border rounded-lg px-3 py-2 text-sm cursor-pointer hover:border-primary/50"
+              value={dataset}
+              onChange={e => setDataset(e.target.value)}
+            >
+              <option value="">Análise principal (dados tratados)</option>
+              {datasets.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border/60">
+          {([
+            { name: "Excel (.xlsx)", format: "excel" as const, color: "#34c97e" },
+            { name: "CSV", format: "csv" as const, color: "#4f8ef7" },
+          ]).map(({ name, format, color }) => (
             <button
               key={format}
               onClick={() => handleExport(format)}
-              disabled={loading !== null}
-              style={{
-                padding: "12px 16px",
-                backgroundColor: loading === format ? color : "rgba(30, 41, 59, 0.5)",
-                border: `2px solid ${color}`,
-                borderRadius: "8px",
-                color: "#f1f5f9",
-                fontWeight: "600",
-                fontSize: "13px",
-                cursor: loading === null ? "pointer" : "not-allowed",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                transition: "all 0.2s",
-                opacity: loading !== null && loading !== format ? 0.5 : 1,
-              }}
+              disabled={downloading !== null}
+              aria-busy={downloading === format}
+              className="px-4 py-3 rounded-lg font-semibold text-sm text-text bg-card border-2 transition-all cursor-pointer
+                         disabled:cursor-not-allowed disabled:opacity-50 hover:bg-surface"
+              style={{ borderColor: color }}
             >
-              {loading === format ? (
-                <>
-                  <span style={{ display: "inline-block", animation: "spin 1s linear infinite", fontSize: "14px" }}>⏳</span>
-                  Exporting...
-                </>
-              ) : (
-                <>
-                  {icon}
-                  {name}
-                </>
-              )}
+              {downloading === format ? "Exportando…" : `⬇ ${name}`}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Export Options */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px" }}>
-        {[
-          {
-            title: "Excel Format",
-            description: "Include formatting, charts, and multiple sheets",
-            icon: "📊",
-            features: ["Column headers", "Data types", "Formulas ready"],
-          },
-          {
-            title: "CSV Format",
-            description: "Universal format compatible with all tools",
-            icon: "📋",
-            features: ["Standard encoding", "No formatting", "Lightweight"],
-          },
-        ].map(({ title, description, icon, features }) => (
-          <div key={title} style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "20px", display: "flex", flexDirection: "column", gap: "12px" }}>
-            <div style={{ fontSize: "28px" }}>{icon}</div>
-            <div>
-              <p style={{ margin: 0, fontSize: "13px", fontWeight: "600", color: "#f1f5f9" }}>{title}</p>
-              <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>{description}</p>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px", paddingTop: "12px", borderTop: "1px solid #1e293b" }}>
-              {features.map((feature) => (
-                <p key={feature} style={{ margin: 0, fontSize: "11px", color: "#cbd5e1", display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span style={{ color: "#10b981" }}>✓</span>
-                  {feature}
-                </p>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Info */}
-      <div style={{ backgroundColor: "rgba(79, 142, 247, 0.1)", border: "1px solid rgba(79, 142, 247, 0.3)", borderRadius: "12px", padding: "16px", display: "flex", gap: "12px" }}>
-        <span style={{ fontSize: "16px", marginTop: "2px" }}>ℹ️</span>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <p style={{ margin: 0, fontSize: "12px", fontWeight: "600", color: "#f1f5f9" }}>Export Information</p>
-          <p style={{ margin: 0, fontSize: "11px", color: "#cbd5e1" }}>
-            Your data will be downloaded with all calculated metrics, quality scores, and cleaned values ready for further analysis.
+        {error && (
+          <p className="m-0 text-xs text-danger bg-danger/10 border border-danger/30 rounded-lg px-3 py-2" role="alert">
+            {error}
           </p>
-        </div>
+        )}
+      </div>
+
+      {/* Nota */}
+      <div className="bg-primary/10 border border-primary/30 rounded-xl p-4 flex gap-3">
+        <span aria-hidden>ℹ️</span>
+        <p className="m-0 text-xs text-muted leading-relaxed">
+          A exportação usa os dados <strong className="text-text">tipados e tratados</strong> pelo parser
+          (CNPJ/CPF como texto, datas reais, valores numéricos) — não os textos de exibição.
+          Para exportar uma visão filtrada/ordenada da tabela, use os botões de exportação no Explorador.
+        </p>
       </div>
     </div>
   )

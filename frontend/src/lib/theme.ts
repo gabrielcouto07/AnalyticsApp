@@ -20,6 +20,31 @@ export const tokens = {
   },
 
   /**
+   * Cores de visualização de dados — validadas para daltonismo e contraste
+   * sobre a superfície escura #1e293b (script de validação CVD/OKLab).
+   * Ordem FIXA: nunca reciclar/reordenar; a ordem é o mecanismo de segurança.
+   */
+  viz: {
+    categorical: [
+      "#3987e5", // 1 azul
+      "#008300", // 2 verde (contraste 2.96:1 — usar apenas com rótulos visíveis)
+      "#d55181", // 3 magenta
+      "#c98500", // 4 amarelo-escuro
+      "#199e70", // 5 água
+      "#d95926", // 6 laranja
+      "#9085e9", // 7 violeta
+      "#e66767", // 8 vermelho
+    ],
+    /** Par validado para Saída × Entrada (ΔE protan 27.4, ambos ≥3:1) */
+    pair: { saida: "#3987e5", entrada: "#c98500" },
+    /** Série de referência (ex.: ano anterior): neutra + tracejada, identidade vem do rótulo */
+    reference: "#94a3b8",
+    /** Um único matiz para barras de magnitude (categoria já está no eixo) */
+    singleHue: "#3987e5",
+    grid: "#334155",
+  },
+
+  /**
    * Layout base para todos os gráficos Plotly
    * Aplicado globalmente para garantir consistência visual
    */
@@ -27,6 +52,8 @@ export const tokens = {
     layout: {
       paper_bgcolor: "#1e293b",
       plot_bgcolor: "#1e293b",
+      // separadores pt-BR: decimal vírgula, milhar ponto
+      separators: ",.",
       font: { family: "Inter, sans-serif", color: "#f1f5f9", size: 12 },
       xaxis: {
         gridcolor: "#334155",

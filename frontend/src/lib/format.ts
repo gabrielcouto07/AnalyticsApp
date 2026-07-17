@@ -3,41 +3,72 @@
  * Utilizados em toda parte do app para apresentação consistente
  */
 
+/** Valor ausente é mostrado como travessão — nunca "NaN"/"undefined" */
+const DASH = "—"
+
+const isBad = (n: unknown): n is null | undefined =>
+  n === null || n === undefined || (typeof n === "number" && !Number.isFinite(n))
+
 export const fmt = {
   /**
    * Número padrão com até 2 casas decimais
    * 1234.567 → "1.234,57"
    */
-  number: (n: number) =>
-    new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(n),
+  number: (n: number | null | undefined) =>
+    isBad(n) ? DASH : new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(n),
+
+  /** Inteiro com separador de milhar: 13244 → "13.244" */
+  int: (n: number | null | undefined) =>
+    isBad(n) ? DASH : new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(n),
 
   /**
    * Notação compacta com 1 casa decimal
-   * 1234567 → "1,2M"
+   * 1234567 → "1,2 mi"
    */
-  compact: (n: number) =>
-    new Intl.NumberFormat("pt-BR", {
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(n),
+  compact: (n: number | null | undefined) =>
+    isBad(n)
+      ? DASH
+      : new Intl.NumberFormat("pt-BR", {
+          notation: "compact",
+          maximumFractionDigits: 1,
+        }).format(n),
 
   /**
    * Moeda brasileira
    * 1234.56 → "R$ 1.234,56"
    */
-  currency: (n: number) =>
-    new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    }).format(n),
+  currency: (n: number | null | undefined) =>
+    isBad(n)
+      ? DASH
+      : new Intl.NumberFormat("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+        }).format(n),
+
+  /**
+   * Moeda compacta para KPIs: 5920790.74 → "R$ 5,9 mi"
+   */
+  currencyCompact: (n: number | null | undefined) =>
+    isBad(n)
+      ? DASH
+      : new Intl.NumberFormat("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+          notation: "compact",
+          maximumFractionDigits: 1,
+        }).format(n),
+
+  /** Mês 1..12 → "jan".."dez" */
+  monthShort: (m: number) =>
+    ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][m - 1] ?? String(m),
 
   /**
    * Percentual com sinal
    * 12.5 → "+12.5%"
    * -8.3 → "-8.3%"
    */
-  percent: (n: number, showSign = true) =>
-    `${showSign && n > 0 ? "+" : ""}${n.toFixed(1)}%`,
+  percent: (n: number | null | undefined, showSign = true) =>
+    isBad(n) ? DASH : `${showSign && n > 0 ? "+" : ""}${n.toFixed(1).replace(".", ",")}%`,
 
   /**
    * Data em formato brasileiro

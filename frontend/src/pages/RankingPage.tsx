@@ -1,164 +1,140 @@
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useSession } from "../store/session"
+import { getCrossChart } from "../api/analytics"
+import { HBarChart, type NameValue } from "../components/charts/HBarChart"
+import { ChartCard } from "../components/common"
+import { fmt } from "../lib/format"
 
-// Ranking and top values analysis
+const AGGS = [
+  { id: "sum", label: "Soma" },
+  { id: "mean", label: "Média" },
+  { id: "count", label: "Contagem" },
+  { id: "max", label: "Máximo" },
+] as const
+
+const isPeriodCol = (c: string) => /^(ano|m[êe]s|year|month|dia|day)$/i.test(c)
+const isCurrencyCol = (c: string) => /valor|total|receita|fatur|preço|preco|r\$/i.test(c)
+
+const selectCls =
+  "w-full bg-card text-text border border-border rounded-lg px-3 py-2 text-sm cursor-pointer " +
+  "hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
+
+// Ranking: top N de uma métrica por categoria
 export function RankingPage() {
-  const { colTypes } = useSession()
-  const [selectedColumn, setSelectedColumn] = useState<string>(colTypes?.categorical?.[0] ?? "")
-  const [limit, setLimit] = useState(10)
-
+  const { sessionId, colTypes } = useSession()
   const categoricalColumns = colTypes?.categorical ?? []
+  // monetárias primeiro — são a métrica padrão mais útil
+  const numericColumns = (colTypes?.numeric ?? [])
+    .filter(c => !isPeriodCol(c))
+    .sort((a, b) => Number(isCurrencyCol(b)) - Number(isCurrencyCol(a)))
+
+  const [catCol, setCatCol] = useState<string>(categoricalColumns[0] ?? "")
+  const [numCol, setNumCol] = useState<string>(numericColumns[0] ?? "")
+  const [aggFn, setAggFn] = useState<string>("sum")
+  const [topN, setTopN] = useState(10)
+  const [data, setData] = useState<NameValue[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!sessionId || !catCol || !numCol) return
+    setLoading(true)
+    setError(null)
+    getCrossChart(sessionId, { cat_col: catCol, num_col: numCol, agg_fn: aggFn, top_n: topN })
+      .then(r => setData((r.data ?? []).map((d: any) => ({ name: String(d[catCol]), value: Number(d[aggFn] ?? 0) }))))
+      .catch(e => setError(e?.response?.data?.detail || "Erro ao carregar o ranking."))
+      .finally(() => setLoading(false))
+  }, [sessionId, catCol, numCol, aggFn, topN])
+
+  const currency = isCurrencyCol(numCol) && aggFn !== "count"
+  const total = useMemo(() => data.reduce((a, b) => a + b.value, 0), [data])
+
+  if (categoricalColumns.length === 0) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h2 className="m-0 text-xl font-bold text-text">Rankings</h2>
+        <div className="bg-card/60 border border-border rounded-xl p-8 text-center text-muted text-sm">
+          Nenhuma coluna categórica disponível.
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      {/* Header */}
+    <div className="flex flex-col gap-5">
       <div>
-        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "700", color: "#f1f5f9" }}>Rankings</h2>
-        <p style={{ margin: "8px 0 0 0", fontSize: "14px", color: "#cbd5e1" }}>Top values and frequency analysis</p>
+        <h2 className="m-0 text-xl font-bold text-text">Rankings</h2>
+        <p className="mt-1 mb-0 text-sm text-muted">Top categorias por métrica agregada</p>
       </div>
 
-      {/* Controls */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
-        {/* Column Selector */}
+      {/* Controles */}
+      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
         <div>
-          <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>
-            Category Column
-          </label>
-          <select
-            value={selectedColumn}
-            onChange={(e) => setSelectedColumn(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              backgroundColor: "#1e293b",
-              color: "#f1f5f9",
-              border: "1px solid #334155",
-              borderRadius: "8px",
-              fontSize: "13px",
-              fontFamily: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            <option value="">Select a categorical column...</option>
-            {categoricalColumns.map((col) => (
-              <option key={col} value={col}>
-                {col}
-              </option>
-            ))}
+          <label htmlFor="rank-cat" className="block text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">Categoria</label>
+          <select id="rank-cat" className={selectCls} value={catCol} onChange={e => setCatCol(e.target.value)}>
+            {categoricalColumns.map(col => <option key={col} value={col}>{col}</option>)}
           </select>
         </div>
-
-        {/* Limit Selector */}
         <div>
-          <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>
-            Show Top
-          </label>
-          <select
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              backgroundColor: "#1e293b",
-              color: "#f1f5f9",
-              border: "1px solid #334155",
-              borderRadius: "8px",
-              fontSize: "13px",
-              fontFamily: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            {[5, 10, 20, 50].map((n) => (
-              <option key={n} value={n}>
-                Top {n}
-              </option>
-            ))}
+          <label htmlFor="rank-num" className="block text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">Métrica</label>
+          <select id="rank-num" className={selectCls} value={numCol} onChange={e => setNumCol(e.target.value)}>
+            {numericColumns.map(col => <option key={col} value={col}>{col}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="rank-agg" className="block text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">Agregação</label>
+          <select id="rank-agg" className={selectCls} value={aggFn} onChange={e => setAggFn(e.target.value)}>
+            {AGGS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="rank-top" className="block text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">Mostrar</label>
+          <select id="rank-top" className={selectCls} value={topN} onChange={e => setTopN(Number(e.target.value))}>
+            {[5, 10, 20, 50].map(n => <option key={n} value={n}>Top {n}</option>)}
           </select>
         </div>
       </div>
 
-      {/* Stats Card */}
-      <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <p style={{ margin: 0, fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase" }}>Statistics</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
-          {[
-            { label: "Distinct Values", value: "—" },
-            { label: "Most Frequent", value: "—" },
-            { label: "Frequency", value: "—%" },
-          ].map(({ label, value }) => (
-            <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "11px", color: "#94a3b8" }}>{label}</span>
-              <span style={{ fontSize: "12px", fontWeight: "600", color: "#f1f5f9" }}>{value}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Gráfico + tabela */}
+      <ChartCard
+        title={`${AGGS.find(a => a.id === aggFn)?.label} de ${numCol} por ${catCol}`}
+        subtitle={`top ${topN}`}
+        loading={loading}
+      >
+        {error
+          ? <div className="text-danger text-sm text-center py-8">{error}</div>
+          : <HBarChart data={data} format={currency ? "currency" : "number"} height={Math.max(280, data.length * 34 + 60)} />}
+      </ChartCard>
 
-      {/* Rankings Table */}
-      <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-            <thead>
-              <tr style={{ borderBottom: "2px solid #334155", backgroundColor: "rgba(15, 23, 42, 0.5)" }}>
-                {["Rank", "Value", "Count", "Percentage", "Bar"].map((header) => (
-                  <th key={header} style={{ padding: "12px 16px", textAlign: "left", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", fontSize: "11px", letterSpacing: "0.5px" }}>
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {[...Array(limit)].map((_, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #1e293b", backgroundColor: i % 2 === 0 ? "transparent" : "rgba(15, 23, 42, 0.3)" }}>
-                  <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: "700" }}>#{i + 1}</td>
-                  <td style={{ padding: "12px 16px", color: "#f1f5f9", fontWeight: "500" }}>—</td>
-                  <td style={{ padding: "12px 16px", color: "#4f8ef7", fontWeight: "600" }}>—</td>
-                  <td style={{ padding: "12px 16px", color: "#10b981" }}>—</td>
-                  <td style={{ padding: "12px 16px" }}>
-                    <div style={{ height: "4px", width: "60px", backgroundColor: "#334155", borderRadius: "2px" }} />
-                  </td>
+      {data.length > 0 && (
+        <div className="bg-card/60 border border-border rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[13px]">
+              <thead>
+                <tr className="bg-surface border-b-2 border-border">
+                  {["#", catCol, `${numCol} (${aggFn})`, "% do top"].map(h => (
+                    <th key={h} className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wide text-muted">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {categoricalColumns.length === 0 && (
-          <div style={{ padding: "40px 24px", textAlign: "center", color: "#94a3b8" }}>
-            <p style={{ margin: 0, fontSize: "14px" }}>No categorical columns available</p>
+              </thead>
+              <tbody>
+                {data.map((d, i) => (
+                  <tr key={d.name} className={`border-b border-border/40 ${i % 2 === 1 ? "bg-surface/40" : ""}`}>
+                    <td className="px-4 py-2 text-muted font-bold">{i + 1}</td>
+                    <td className="px-4 py-2 text-text max-w-[320px] truncate" title={d.name}>{d.name}</td>
+                    <td className="px-4 py-2 text-text font-semibold tabular-nums">
+                      {currency ? fmt.currency(d.value) : fmt.number(d.value)}
+                    </td>
+                    <td className="px-4 py-2 text-muted tabular-nums">
+                      {total > 0 ? `${((d.value / total) * 100).toFixed(1).replace(".", ",")}%` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
-
-      {/* Available Columns */}
-      <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <p style={{ margin: 0, fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase" }}>Available Categorical Columns</p>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          {categoricalColumns.length === 0 ? (
-            <p style={{ margin: 0, fontSize: "11px", color: "#64748b", fontStyle: "italic" }}>No categorical columns detected</p>
-          ) : (
-            categoricalColumns.map((col) => (
-              <button
-                key={col}
-                onClick={() => setSelectedColumn(col)}
-                style={{
-                  padding: "6px 12px",
-                  backgroundColor: selectedColumn === col ? "#4f8ef7" : "#1e293b",
-                  color: selectedColumn === col ? "#f1f5f9" : "#94a3b8",
-                  border: `1px solid ${selectedColumn === col ? "#4f8ef7" : "#334155"}`,
-                  borderRadius: "6px",
-                  fontSize: "11px",
-                  fontWeight: "500",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                {col}
-              </button>
-            ))
-          )}
         </div>
-      </div>
+      )}
     </div>
   )
 }

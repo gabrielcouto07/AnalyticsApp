@@ -1,116 +1,78 @@
-import { useState, useEffect } from 'react'
-import Plot from 'react-plotly.js'
-import { getTemporalChart } from '../api/analytics'
+import Plot from "react-plotly.js"
+import { tokens } from "../lib/theme"
+import { fmt } from "../lib/format"
 
-interface TemporalChartProps {
-  sessionId: string
-  dateCol: string
-  metricCol: string
-  granularity?: string
+export interface TemporalPoint {
+  date: string
+  value: number
+  cumulative: number
 }
 
-interface DataPoint {
-  [key: string]: any
+interface Props {
+  data: TemporalPoint[]
+  metricLabel: string
+  /** false = totais por período (barras) · true = acumulado (linha) */
+  cumulative?: boolean
+  currency?: boolean
+  height?: number
 }
 
-const darkLayout = {
-  paper_bgcolor: '#0f172a',
-  plot_bgcolor: '#1e293b',
-  font: { family: 'Inter, sans-serif', color: '#f1f5f9', size: 12 },
-  xaxis: {
-    gridcolor: '#334155',
-    linecolor: '#334155',
-    tickfont: { color: '#94a3b8' },
-  },
-  yaxis: {
-    gridcolor: '#334155',
-    linecolor: '#334155',
-    tickfont: { color: '#94a3b8' },
-  },
-  yaxis2: {
-    gridcolor: '#334155',
-    linecolor: '#334155',
-    tickfont: { color: '#94a3b8' },
-  },
-  legend: { bgcolor: 'rgba(0,0,0,0.5)', font: { color: '#94a3b8' }, x: 0, y: 1 },
-  margin: { l: 60, r: 60, t: 40, b: 60 },
-  hovermode: 'x unified' as const,
-}
+/**
+ * Série temporal com UM eixo. Totais por período OU acumulado — alternados
+ * pelo usuário, nunca sobrepostos em dois eixos (anti-pattern nº 1 de dataviz).
+ */
+export function TemporalChart({ data, metricLabel, cumulative = false, currency = true, height = 400 }: Props) {
+  if (!data.length) {
+    return <div className="text-center py-8 text-muted text-sm">Sem dados</div>
+  }
 
-export function TemporalChart({
-  sessionId,
-  dateCol,
-  metricCol,
-  granularity = 'ME',
-}: TemporalChartProps) {
-  const [data, setData] = useState<DataPoint[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const x = data.map(d => d.date)
+  const y = data.map(d => (cumulative ? d.cumulative : d.value))
+  const labels = y.map(v => (currency ? fmt.currency(v) : fmt.number(v)))
 
-  useEffect(() => {
-    setLoading(true)
-    setError(null)
-    getTemporalChart(sessionId, {
-      date_col: dateCol,
-      metric_col: metricCol,
-      granularity,
-    })
-      .then(result => {
-        setData(result.data || [])
-      })
-      .catch(e => {
-        setError('Erro ao carregar gráfico temporal')
-        console.error(e)
-      })
-      .finally(() => setLoading(false))
-  }, [sessionId, dateCol, metricCol, granularity])
-
-  if (loading) return <div className="text-center py-8 text-muted">Carregando gráfico...</div>
-  if (error) return <div className="text-danger text-center py-8">{error}</div>
-  if (!data.length) return <div className="text-center py-8 text-muted">Sem dados</div>
-
-  const dates = data.map(d => d[dateCol])
-  const values = data.map(d => d[metricCol])
-  const cumulative = data.map(d => d.cumulative || 0)
+  const serie = cumulative
+    ? {
+        x, y,
+        customdata: labels,
+        type: "scatter" as const,
+        mode: "lines+markers" as const,
+        name: `${metricLabel} (acumulado)`,
+        line: { color: tokens.viz.singleHue, width: 2 },
+        marker: { size: 6, color: tokens.viz.singleHue },
+        fill: "tozeroy" as const,
+        fillcolor: "rgba(57, 135, 229, 0.12)",
+        hovertemplate: "%{x}<br><b>%{customdata}</b><extra></extra>",
+      }
+    : {
+        x, y,
+        customdata: labels,
+        type: "bar" as const,
+        name: metricLabel,
+        marker: { color: tokens.viz.singleHue },
+        hovertemplate: "%{x}<br><b>%{customdata}</b><extra></extra>",
+      }
 
   return (
     // @ts-ignore - Plotly type definitions issue
     <Plot
-      data={[
-        {
-          x: dates,
-          y: values,
-          type: 'bar',
-          name: `${metricCol} (Total)`,
-          marker: { color: '#4f8ef7', line: { color: '#334155', width: 1 } },
-          opacity: 0.8,
-        },
-        {
-          x: dates,
-          y: cumulative,
-          type: 'scatter',
-          mode: 'lines+markers',
-          name: `${metricCol} (Cumulativo)`,
-          line: { color: '#a78bfa', width: 3 },
-          marker: { size: 4 },
-          yaxis: 'y2',
-        },
-      ]}
+      data={[serie]}
       layout={{
-        ...darkLayout,
-        title: { text: `Série Temporal: ${metricCol}`, font: { size: 18, color: '#f1f5f9' } },
-        xaxis: { ...darkLayout.xaxis, title: dateCol },
-        yaxis: { ...darkLayout.yaxis, title: `${metricCol} (Total)`, titlefont: { color: '#4f8ef7' } },
-        yaxis2: {
-          ...darkLayout.yaxis2,
-          title: `${metricCol} (Cumulativo)`,
-          overlaying: 'y' as const,
-          side: 'right' as const,
-          titlefont: { color: '#a78bfa' },
+        ...tokens.plotly.layout,
+        height,
+        margin: { l: 64, r: 16, t: 8, b: 48 },
+        showlegend: false,
+        hovermode: "x unified",
+        xaxis: { ...tokens.plotly.layout.xaxis, fixedrange: true },
+        yaxis: {
+          ...tokens.plotly.layout.yaxis,
+          tickformat: "~s",
+          rangemode: "tozero",
+          fixedrange: true,
         },
       }}
       config={{ responsive: true, displayModeBar: false }}
-      style={{ width: '100%', height: '500px' }}
+      style={{ width: "100%" }}
+      useResizeHandler
     />
   )
 }

@@ -3,7 +3,7 @@
 import { useSession } from "../../store/session"
 
 export function TopBar() {
-  const { filename, rows } = useSession()
+  const { filename, rows, model } = useSession()
 
   return (
     <header style={{
@@ -75,11 +75,26 @@ export function TopBar() {
                   color: "#94a3b8",
                   fontWeight: "500"
                 }}>
-                  {rows.toLocaleString("pt-BR")} rows
+                  {rows.toLocaleString("pt-BR")} linhas
                 </span>
               </>
             )}
           </div>
+        )}
+
+        {model === "medical_fiscal" && (
+          <span style={{
+            fontSize: "11px",
+            fontWeight: 700,
+            color: "#34c97e",
+            backgroundColor: "rgba(52, 201, 126, 0.1)",
+            border: "1px solid rgba(52, 201, 126, 0.3)",
+            borderRadius: "999px",
+            padding: "4px 10px",
+            whiteSpace: "nowrap"
+          }}>
+            Modelo Fiscal detectado
+          </span>
         )}
       </div>
 

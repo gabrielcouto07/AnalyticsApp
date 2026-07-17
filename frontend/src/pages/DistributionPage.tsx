@@ -1,114 +1,121 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import Plot from "react-plotly.js"
 import { useSession } from "../store/session"
+import { getDistribution } from "../api/analytics"
+import { ChartCard } from "../components/common"
+import { tokens } from "../lib/theme"
+import { fmt } from "../lib/format"
 
-// Data distribution analysis with histograms
+interface Bin { x0: number; x1: number; count: number }
+interface Stats {
+  count: number; mean: number; median: number; std: number
+  min: number; max: number; q1: number; q3: number
+}
+
+const isPeriodCol = (c: string) => /^(ano|m[êe]s|year|month|dia|day)$/i.test(c)
+
+const selectCls =
+  "w-full max-w-xs bg-card text-text border border-border rounded-lg px-3 py-2 text-sm cursor-pointer " +
+  "hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
+
+// Distribuição: histograma + estatísticas descritivas de uma coluna numérica
 export function DistributionPage() {
-  const { colTypes } = useSession()
-  const [selectedColumn, setSelectedColumn] = useState<string>(colTypes?.numeric?.[0] ?? "")
+  const { sessionId, colTypes } = useSession()
+  const numericColumns = (colTypes?.numeric ?? []).filter(c => !isPeriodCol(c))
 
-  const numericColumns = colTypes?.numeric ?? []
+  const [column, setColumn] = useState<string>(numericColumns[0] ?? "")
+  const [bins, setBins] = useState<Bin[]>([])
+  const [stats, setStats] = useState<Stats | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!sessionId || !column) return
+    setLoading(true)
+    setError(null)
+    getDistribution(sessionId, column, 30)
+      .then(r => { setBins(r.bins ?? []); setStats(r.stats ?? null) })
+      .catch(e => setError(e?.response?.data?.detail || "Erro ao carregar a distribuição."))
+      .finally(() => setLoading(false))
+  }, [sessionId, column])
+
+  if (numericColumns.length === 0) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h2 className="m-0 text-xl font-bold text-text">Distribuição</h2>
+        <div className="bg-card/60 border border-border rounded-xl p-8 text-center text-muted text-sm">
+          Nenhuma coluna numérica disponível.
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      {/* Header */}
+    <div className="flex flex-col gap-5">
       <div>
-        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "700", color: "#f1f5f9" }}>Distribution Analysis</h2>
-        <p style={{ margin: "8px 0 0 0", fontSize: "14px", color: "#cbd5e1" }}>Histograms, box plots, and statistical summaries</p>
+        <h2 className="m-0 text-xl font-bold text-text">Distribuição</h2>
+        <p className="mt-1 mb-0 text-sm text-muted">Histograma e estatísticas descritivas</p>
       </div>
 
-      {/* Column Selector */}
       <div>
-        <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>
-          Select Column
-        </label>
-        <select
-          value={selectedColumn}
-          onChange={(e) => setSelectedColumn(e.target.value)}
-          style={{
-            width: "100%",
-            maxWidth: "300px",
-            padding: "8px 12px",
-            backgroundColor: "#1e293b",
-            color: "#f1f5f9",
-            border: "1px solid #334155",
-            borderRadius: "8px",
-            fontSize: "13px",
-            fontFamily: "inherit",
-            cursor: "pointer",
-          }}
-        >
-          <option value="">Select a numeric column...</option>
-          {numericColumns.map((col) => (
-            <option key={col} value={col}>
-              {col}
-            </option>
-          ))}
+        <label htmlFor="dist-col" className="block text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">Coluna</label>
+        <select id="dist-col" className={selectCls} value={column} onChange={e => setColumn(e.target.value)}>
+          {numericColumns.map(col => <option key={col} value={col}>{col}</option>)}
         </select>
       </div>
 
-      {/* Stats Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" }}>
-        {[
-          { label: "Mean", value: "—" },
-          { label: "Median", value: "—" },
-          { label: "Std Dev", value: "—" },
-          { label: "Min", value: "—" },
-          { label: "Max", value: "—" },
-          { label: "Q1", value: "—" },
-        ].map(({ label, value }) => (
-          <div key={label} style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "12px", display: "flex", flexDirection: "column", gap: "6px" }}>
-            <p style={{ margin: 0, fontSize: "10px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase" }}>{label}</p>
-            <p style={{ margin: 0, fontSize: "14px", fontWeight: "700", color: "#f1f5f9" }}>{value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Chart Placeholders */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "16px" }}>
-        {[
-          { title: "Histogram", icon: "📊" },
-          { title: "Box Plot", icon: "📦" },
-          { title: "Density Plot", icon: "📈" },
-        ].map(({ title, icon }) => (
-          <div key={title} style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "240px" }}>
-            <span style={{ fontSize: "32px", marginBottom: "8px" }}>{icon}</span>
-            <p style={{ margin: 0, fontSize: "13px", fontWeight: "600", color: "#f1f5f9", marginBottom: "4px" }}>{title}</p>
-            <p style={{ margin: 0, fontSize: "11px", color: "#94a3b8" }}>
-              {selectedColumn ? `${selectedColumn}` : "Select column"}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      {/* Available Columns */}
-      <div style={{ backgroundColor: "rgba(30, 41, 59, 0.6)", border: "1px solid #334155", borderRadius: "12px", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <p style={{ margin: 0, fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase" }}>Available Numeric Columns</p>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          {numericColumns.length === 0 ? (
-            <p style={{ margin: 0, fontSize: "11px", color: "#64748b", fontStyle: "italic" }}>No numeric columns detected</p>
-          ) : (
-            numericColumns.map((col) => (
-              <button
-                key={col}
-                onClick={() => setSelectedColumn(col)}
-                style={{
-                  padding: "6px 12px",
-                  backgroundColor: selectedColumn === col ? "#4f8ef7" : "#1e293b",
-                  color: selectedColumn === col ? "#f1f5f9" : "#94a3b8",
-                  border: `1px solid ${selectedColumn === col ? "#4f8ef7" : "#334155"}`,
-                  borderRadius: "6px",
-                  fontSize: "11px",
-                  fontWeight: "500",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                {col}
-              </button>
-            ))
-          )}
+      {/* Estatísticas */}
+      {stats && (
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
+          {[
+            { label: "Registros", value: fmt.int(stats.count) },
+            { label: "Média", value: fmt.number(stats.mean) },
+            { label: "Mediana", value: fmt.number(stats.median) },
+            { label: "Desvio padrão", value: fmt.number(stats.std) },
+            { label: "Mínimo", value: fmt.number(stats.min) },
+            { label: "Q1 · Q3", value: `${fmt.compact(stats.q1)} · ${fmt.compact(stats.q3)}` },
+            { label: "Máximo", value: fmt.number(stats.max) },
+          ].map(({ label, value }) => (
+            <div key={label} className="bg-card/60 border border-border rounded-xl px-4 py-3">
+              <p className="m-0 text-[10px] font-bold uppercase tracking-wide text-muted">{label}</p>
+              <p className="m-0 mt-1 text-sm font-bold text-text truncate" title={String(value)}>{value}</p>
+            </div>
+          ))}
         </div>
-      </div>
+      )}
+
+      {/* Histograma */}
+      <ChartCard title={`Histograma de ${column}`} subtitle="30 faixas" loading={loading}>
+        {error ? (
+          <div className="text-danger text-sm text-center py-8">{error}</div>
+        ) : bins.length === 0 ? (
+          <div className="text-muted text-sm text-center py-8">Sem dados numéricos nesta coluna</div>
+        ) : (
+          // @ts-ignore - Plotly type definitions issue
+          <Plot
+            data={[{
+              x: bins.map(b => (b.x0 + b.x1) / 2),
+              y: bins.map(b => b.count),
+              customdata: bins.map(b => `${fmt.compact(b.x0)} a ${fmt.compact(b.x1)}`),
+              type: "bar",
+              marker: { color: tokens.viz.singleHue },
+              hovertemplate: "%{customdata}<br><b>%{y:,d} registros</b><extra></extra>",
+            }]}
+            layout={{
+              ...tokens.plotly.layout,
+              height: 380,
+              bargap: 0.06,
+              margin: { l: 56, r: 16, t: 8, b: 48 },
+              showlegend: false,
+              xaxis: { ...tokens.plotly.layout.xaxis, tickformat: "~s", fixedrange: true },
+              yaxis: { ...tokens.plotly.layout.yaxis, title: { text: "registros", font: { size: 11, color: "#94a3b8" } }, fixedrange: true },
+            }}
+            config={{ responsive: true, displayModeBar: false }}
+            style={{ width: "100%" }}
+            useResizeHandler
+          />
+        )}
+      </ChartCard>
     </div>
   )
 }
