@@ -1,18 +1,39 @@
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-import io
-from backend.session import get_session
-from backend.services.export import to_excel_bytes, to_csv_string
+
+from backend.session import get_dataset
+from backend.services.export import to_csv_string, to_excel_bytes
+from backend.services.serialize import build_view
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
 
-@router.get("/{session_id}/excel")
-def export_excel(session_id: str):
-    df = get_session(session_id)
+def _get_view(
+    session_id: str,
+    dataset: Optional[str],
+    columns: Optional[str],
+    sort_by: Optional[str],
+    sort_dir: str,
+):
+    """Monta a 'visão atual' (dataset + colunas + ordenação) para exportar."""
+    df = get_dataset(session_id, dataset)
     if df is None:
-        raise HTTPException(404, "Sessão não encontrada.")
-    
+        raise HTTPException(404, "Sessão ou dataset não encontrado.")
+    wanted = [c.strip() for c in columns.split(",")] if columns else None
+    return build_view(df, columns=wanted, sort_by=sort_by, sort_dir=sort_dir)
+
+
+@router.get("/{session_id}/excel")
+def export_excel(
+    session_id: str,
+    dataset: Optional[str] = None,
+    columns: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+):
+    df = _get_view(session_id, dataset, columns, sort_by, sort_dir)
     try:
         excel_bytes = to_excel_bytes(df)
         return StreamingResponse(
@@ -25,14 +46,16 @@ def export_excel(session_id: str):
 
 
 @router.get("/{session_id}/csv")
-def export_csv(session_id: str):
-    df = get_session(session_id)
-    if df is None:
-        raise HTTPException(404, "Sessão não encontrada.")
-    
+def export_csv(
+    session_id: str,
+    dataset: Optional[str] = None,
+    columns: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+):
+    df = _get_view(session_id, dataset, columns, sort_by, sort_dir)
     try:
-        csv_string = to_csv_string(df)
-        csv_bytes = csv_string.encode('utf-8')
+        csv_bytes = to_csv_string(df).encode("utf-8-sig")
         return StreamingResponse(
             iter([csv_bytes]),
             media_type="text/csv",
