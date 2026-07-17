@@ -53,3 +53,10 @@ temp_clone/
 uploads/
 session_data/
 
+# Planilhas de clientes / binários grandes — nunca commitar.
+# Fixtures pequenos e anonimizados são a única exceção.
+*.xlsx
+*.xls
+!tests/fixtures/*.xlsx
+/*.csv
+

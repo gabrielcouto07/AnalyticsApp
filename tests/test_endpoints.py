@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.main import app
 
-FIXTURE = Path(__file__).parent / "test_data_full.csv"
+FIXTURE = Path(__file__).parent / "fixtures" / "test_data_full.csv"
 
 client = TestClient(app)
 

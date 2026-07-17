@@ -16,7 +16,7 @@
 
 **Opção A - Windows:**
 ```bash
-# Clique duplo em: run_streamlit.bat
+# Clique duplo em: scriptsun_streamlit.bat
 ```
 
 **Opção B - Terminal:**
@@ -42,13 +42,13 @@ streamlit run app.py
 
 **Terminal 1 - FastAPI Backend:**
 ```bash
-run_backend.bat
+scriptsun_backend.bat
 ```
 ✅ API disponível em http://localhost:8000/docs
 
 **Terminal 2 - React Frontend:**
 ```bash
-run_frontend.bat
+scriptsun_frontend.bat
 ```
 ✅ App disponível em http://localhost:5173
 

@@ -10,9 +10,23 @@ Detecção automática de tipos, filtros inteligentes, KPIs com trends, análise
 
 ### ✅ Carregamento Inteligente
 - 📁 **Multi-formato**: Excel (.xlsx, .xls), CSV, TXT, JSON
+- 📑 **Excel multi-aba**: classifica abas (dados × dashboards prontos × de-para),
+  ignora `Dashboard*`/`Painel*`/`Base Unificada`/`Leia-me` e permite escolher a aba
 - 🔍 **Auto-detecção de tipos**: data, numérico, categórico
-- 🧹 **Limpeza automática**: R$, %, separadores decimais
+- 🧹 **Limpeza automática**: R$, %, separadores decimais (pt-BR)
 - ⚡ **Caching de performance**: Sessão mantida em memória
+
+### ✅ Modelo Fiscal (NF-e) — novo
+Detecta automaticamente planilhas fiscais brasileiras (esquema de 305 colunas,
+`Dados Saída`/`Dados Entrada`) e de vendas (`Dados Venda`) e as **colapsa em uma
+tabela fato unificada** (`Fato Consolidado`), com:
+- `Mês/Ano` mantido como **texto MM/AAAA** (nunca data — repara a corrupção do Excel)
+- CNPJ/CPF/IE/Série/Serial como **texto** (zeros à esquerda preservados/restaurados)
+- `Vendedor` resolvido via nº do documento; `Linha de Negócio` via aba de-para
+  (lacunas viram `NÃO MAPEADO`); flag de CNPJ intercompany (`CNPJ Excluído`)
+- Dashboard executivo com filtro de período (Mês 1–12 + Ano numéricos),
+  comparativo anual (mesmo período do ano anterior + acumulado YTD) e
+  faturamento por linha de negócio / UF / vendedor / cliente
 
 ### ✅ Filtros Avançados
 - 📅 Intervalo de datas inteligente
@@ -55,14 +69,16 @@ AnalyticsApp/
 ├── 📦 BACKEND (FastAPI)
 │   ├── backend/
 │   │   ├── main.py              # FastAPI app + CORS
-│   │   ├── session.py           # Gerenciamento de sessões UUID
+│   │   ├── session.py           # Sessões UUID (df + metadados do upload)
 │   │   ├── routers/
-│   │   │   ├── upload.py        # POST /api/upload
-│   │   │   ├── data.py          # GET /api/data/*
-│   │   │   ├── charts.py        # POST /api/charts/*
-│   │   │   └── export.py        # GET /api/export/*
+│   │   │   ├── upload.py        # POST /api/upload (multi-aba, override de aba)
+│   │   │   ├── data.py          # /kpis /quality /stats /table /dashboard
+│   │   │   ├── charts.py        # /temporal /cross /distribution /correlation
+│   │   │   └── export.py        # Excel/CSV (visão atual: colunas + ordenação)
 │   │   └── services/
-│   │       ├── parser.py        # Parse de arquivos
+│   │       ├── parser.py        # Carregamento + classificação de abas + tipos
+│   │       ├── fact.py          # Tabela fato do modelo fiscal (NF-e)
+│   │       ├── serialize.py     # DataFrame → JSON seguro / visões
 │   │       ├── analytics.py     # Análises avançadas
 │   │       └── export.py        # Exportação de dados
 │   │
@@ -70,39 +86,34 @@ AnalyticsApp/
 │   │   ├── colors.py            # Paleta de cores
 │   │   └── analytics.py         # Funções de análise
 │   │
-│   └── requirements.txt         # Dependências Python
+│   ├── requirements.txt         # Dependências Python
+│   └── requirements-dev.txt     # + pytest/httpx (testes)
 │
-├── 🎨 FRONTEND (React + Vite)
-│   ├── frontend/
-│   │   ├── src/
-│   │   │   ├── App.tsx          # Root component
-│   │   │   ├── main.tsx         # Entry point
-│   │   │   ├── api/
-│   │   │   │   ├── client.ts    # Axios config
-│   │   │   │   └── analytics.ts # API functions
-│   │   │   ├── store/
-│   │   │   │   └── session.ts   # Zustand state
-│   │   │   ├── components/      # Componentes React
-│   │   │   ├── pages/           # Páginas
-│   │   │   ├── lib/             # Utilitários
-│   │   │   ├── App.css
-│   │   │   └── index.css
-│   │   ├── package.json         # Dependências Node
-│   │   ├── vite.config.ts
-│   │   └── tailwind.config.js
+├── 🎨 FRONTEND (React + Vite + Tailwind 4)
+│   └── frontend/
+│       ├── src/
+│       │   ├── App.tsx          # Root component
+│       │   ├── main.tsx         # Entry point
+│       │   ├── api/             # Axios + funções da API
+│       │   ├── store/           # Zustand state
+│       │   ├── components/      # Componentes (KPIs, gráficos, filtros)
+│       │   ├── pages/           # Páginas
+│       │   ├── lib/             # Tokens de design + formatadores pt-BR
+│       │   └── index.css        # Tailwind + tokens (@theme)
+│       ├── package.json
+│       └── vite.config.ts
 │
 ├── 🧪 STREAMLIT (Análise Rápida)
 │   ├── app.py                   # App principal Streamlit
-│   ├── templates/
-│   │   ├── ui.py                # Componentes UI
-│   │   └── smart_kpi.py         # KPIs inteligentes
-│   ├── theme.css                # CSS tema premium
+│   ├── templates/               # Componentes UI + KPIs inteligentes
+│   ├── theme.css                # CSS tema premium (usado pelo app.py)
 │   └── .streamlit/config.toml   # Config Streamlit
 │
-├── run_backend.bat              # Script para rodar FastAPI
-├── run_frontend.bat             # Script para rodar React
-├── run_streamlit.bat            # Script para rodar Streamlit
-├── ARQUITETURA.md               # Documentação técnica
+├── tests/                       # Suite pytest (unit + integração da API)
+│   └── fixtures/                # Fixtures pequenos e anonimizados
+├── samples/                     # Arquivos de exemplo para testar uploads
+├── scripts/                     # run_backend.bat / run_frontend.bat / run_streamlit.bat
+├── docs/                        # Documentação técnica (ARQUITETURA.md etc.)
 └── README.md                    # Este arquivo
 ```
 
@@ -115,7 +126,7 @@ Análise rápida e intuitiva com interface web em tempo real.
 
 **Windows:**
 ```bash
-run_streamlit.bat
+scripts\run_streamlit.bat
 ```
 Abrirá em [http://localhost:8501](http://localhost:8501)
 
@@ -137,16 +148,28 @@ Arquitetura profissional com separação frontend/backend.
 
 **Terminal 1 — Backend (FastAPI):**
 ```bash
-run_backend.bat
+scripts\run_backend.bat
 ```
 API disponível em [http://localhost:8000](http://localhost:8000)  
 Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
+> Porta 8000 ocupada? Rode `python -m uvicorn backend.main:app --port 8001`
+> e crie `frontend/.env` com `VITE_API_URL=http://localhost:8001`.
+
 **Terminal 2 — Frontend (React):**
 ```bash
-run_frontend.bat
+scripts\run_frontend.bat
 ```
 App disponível em [http://localhost:5173](http://localhost:5173)
+
+### 🧪 Testes
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+A suíte cobre o parser (tipagem exata do modelo fiscal, com totais conferidos
+à mão em `tests/fixtures/medical_mini.xlsx`) e a API (upload → dashboard →
+tabela → exportação) via TestClient — não precisa de servidor rodando.
 
 ---
 
