@@ -9,9 +9,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+import pandas as pd
+
 from backend.services import fact
+from backend.services.classify import classify_sheet
 from backend.services.parser import (
-    classify_sheet,
     detect_and_parse,
     get_col_types,
     load_bundle,
@@ -40,21 +42,34 @@ def test_model_detected(bundle):
 
 
 def test_sheet_roles(bundle):
+    # Vocabulário de papéis novo (content/schema-based).
     roles = {s["name"]: s["role"] for s in bundle["sheets"]}
-    assert roles["Painel Gráficos"] == "ignore"
-    assert roles["Dashboard"] == "ignore"
-    assert roles["Base Unificada"] == "ignore"
-    assert roles["Leia-me"] == "ignore"
-    assert roles["Dados Saída"] == "data"
-    assert roles["Dados Entrada"] == "data"
-    assert roles["Dados Venda"] == "data"
+    assert roles["Painel Gráficos"] == "dashboard"
+    assert roles["Dashboard"] == "dashboard"
+    assert roles["Leia-me"] == "instructions"
+    assert roles["Dados Saída"] == "raw_saida"
+    assert roles["Dados Entrada"] == "raw_entrada"
+    assert roles["Dados Venda"] == "raw_venda"
     assert roles["Dados Linha de Negócio"] == "lookup"
+    # Base Unificada é reconhecida como candidata canônica (mesmo sendo stub aqui;
+    # a validação a rejeita e o pipeline cai para a reconstrução bruta).
+    assert roles["Base Unificada"] == "canonical_base"
 
 
-def test_classify_sheet_by_name():
-    assert classify_sheet("Dashboard (Excl. Intercompany)") == "ignore"
-    assert classify_sheet("painel qualquer") == "ignore"
-    assert classify_sheet("Dados Saída") == "data"
+def test_classify_sheet_by_content():
+    # Dashboards por nome — nunca viram 'data' só por ter linhas
+    dash = pd.DataFrame([["TOTAL SAÍDA", 5000], ["TOTAL ENTRADA", 250]])
+    assert classify_sheet("Dashboard (Excl. Intercompany)", dash).role == "dashboard"
+    assert classify_sheet("Painel Gráficos", dash).role == "dashboard"
+    # de-para de 2 colunas → lookup
+    depara = pd.DataFrame([["Grupo Item", "Linha de Negócio"], ["A", "MORITA"]])
+    assert classify_sheet("Dados Linha de Negócio", depara).role == "lookup"
+
+
+def test_fallback_used_when_base_is_stub(bundle):
+    # No fixture mini a Base Unificada é um stub → deve cair no fallback bruto
+    assert bundle["source"]["fact_source"] == "raw_reconstruction"
+    assert bundle["source"]["fallback_used"] is True
 
 
 def test_sheet_model_detection(bundle):

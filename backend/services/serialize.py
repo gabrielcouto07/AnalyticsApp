@@ -3,7 +3,8 @@
 Todos os agregados são calculados sobre os dados tipados; a formatação
 (pt-BR, moeda) acontece só no frontend — nunca agregamos strings de exibição.
 """
-from typing import Optional
+import math
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,37 @@ def _clean_scalar(value):
     if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
         return None
     return value
+
+
+def json_safe(obj: Any) -> Any:
+    """Torna qualquer estrutura segura para JSON/Starlette (que rejeita NaN).
+
+    - dict/list percorridos recursivamente;
+    - escalares numpy → Python nativo;
+    - NaN/Inf/NaT/NA → None;
+    - Timestamp/datetime → ISO 'YYYY-MM-DD';
+    - objetos inesperados → str (nunca vazam objetos crus para o front).
+    """
+    if obj is None or isinstance(obj, (str, bool, int)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [json_safe(v) for v in obj]
+    if isinstance(obj, np.generic):
+        obj = obj.item()
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, (pd.Timestamp,)):
+        return None if pd.isna(obj) else obj.strftime("%Y-%m-%d")
+    try:
+        if obj is pd.NaT or pd.isna(obj):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(obj, (int, float, str, bool)):
+        return obj
+    return str(obj)
 
 
 def df_records(df: pd.DataFrame) -> list[dict]:

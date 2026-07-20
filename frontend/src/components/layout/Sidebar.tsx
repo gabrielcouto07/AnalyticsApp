@@ -18,10 +18,12 @@ export type PageId = typeof NAV[number]["id"]
 interface SidebarProps {
   active: PageId
   onChange: (page: PageId) => void
+  /** Abre a tela de upload preservando a sessão atual até o novo upload concluir. */
+  onNewUpload: () => void
 }
 
-export function Sidebar({ active, onChange }: SidebarProps) {
-  const { filename, rows, columns, clear } = useSession()
+export function Sidebar({ active, onChange, onNewUpload }: SidebarProps) {
+  const { filename, rows, columns } = useSession()
 
   return (
     <div style={{
@@ -157,29 +159,29 @@ export function Sidebar({ active, onChange }: SidebarProps) {
         </p>
         
         <button
-          onClick={clear}
+          onClick={onNewUpload}
           style={{
             width: "100%",
             padding: "8px 12px",
             fontSize: "12px",
             fontWeight: "600",
-            color: "#f87171",
-            backgroundColor: "rgba(248, 113, 113, 0.1)",
-            border: "1px solid rgba(248, 113, 113, 0.2)",
+            color: "#4f8ef7",
+            backgroundColor: "rgba(79, 142, 247, 0.1)",
+            border: "1px solid rgba(79, 142, 247, 0.2)",
             borderRadius: "8px",
             cursor: "pointer",
             transition: "all 0.2s ease"
           }}
           onMouseEnter={e => {
-            e.currentTarget.style.backgroundColor = "rgba(248, 113, 113, 0.2)"
-            e.currentTarget.style.borderColor = "rgba(248, 113, 113, 0.4)"
+            e.currentTarget.style.backgroundColor = "rgba(79, 142, 247, 0.2)"
+            e.currentTarget.style.borderColor = "rgba(79, 142, 247, 0.4)"
           }}
           onMouseLeave={e => {
-            e.currentTarget.style.backgroundColor = "rgba(248, 113, 113, 0.1)"
-            e.currentTarget.style.borderColor = "rgba(248, 113, 113, 0.2)"
+            e.currentTarget.style.backgroundColor = "rgba(79, 142, 247, 0.1)"
+            e.currentTarget.style.borderColor = "rgba(79, 142, 247, 0.2)"
           }}
         >
-          ↩ New Upload
+          + Novo upload
         </button>
       </div>
     </div>

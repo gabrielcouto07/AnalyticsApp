@@ -32,9 +32,11 @@ def session_id(upload):
 def test_upload_detects_model_and_sheets(upload):
     assert upload["model"] == "medical_fiscal"
     roles = {s["name"]: s["role"] for s in upload["sheets"]}
-    assert roles["Dashboard"] == "ignore"
-    assert roles["Dados Saída"] == "data"
+    assert roles["Dashboard"] == "dashboard"
+    assert roles["Dados Saída"] == "raw_saida"
     assert "Fato Consolidado" in upload["datasets"]
+    # metadados de fonte analítica expostos (aditivo)
+    assert upload["source"]["fact_source"] in ("base_unificada", "raw_reconstruction")
     # preview JSON-safe (sem NaN cru)
     assert isinstance(upload["preview"], list)
 

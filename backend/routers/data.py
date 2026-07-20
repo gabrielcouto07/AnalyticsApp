@@ -5,10 +5,10 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
-from backend.session import get_dataset, get_session, get_session_meta
+from backend.session import dataset_names, get_dataset, get_session, get_session_meta
 from backend.services.analytics import calculate_trend, categorize_dataset, detect_outliers_iqr
 from backend.services.parser import get_col_types
-from backend.services.serialize import build_view, df_records
+from backend.services.serialize import build_view, df_records, json_safe
 
 router = APIRouter(prefix="/api/data", tags=["data"])
 
@@ -36,7 +36,7 @@ def get_stats(session_id: str):
         return {"stats": {}}
     stats = df[num_cols].describe().round(4)
     stats = stats.astype(object).where(pd.notna(stats), None)
-    return {"stats": stats.to_dict()}
+    return json_safe({"stats": stats.to_dict()})
 
 
 def _monthly_trend_pct(df: pd.DataFrame, date_col: str, metric_col: str) -> Optional[float]:
@@ -83,7 +83,7 @@ def get_kpis(session_id: str):
         })
 
     dataset_type = categorize_dataset(df)
-    return {"kpis": kpis, "dataset_type": dataset_type, "model": meta.get("model", "generic")}
+    return json_safe({"kpis": kpis, "dataset_type": dataset_type, "model": meta.get("model", "generic")})
 
 
 @router.get("/{session_id}/quality")
@@ -157,7 +157,7 @@ def get_table(
         "page_size": page_size,
         "columns": all_columns,
         "meaningful_columns": meta.get("meaningful_columns", []),
-        "datasets": list(meta.get("datasets", {}).keys()),
+        "datasets": dataset_names(session_id),
     }
 
 
@@ -193,11 +193,10 @@ def get_dashboard(
     numéricos, nunca texto 'MM/AAAA' (evita a conversão silenciosa do Excel).
     Comparativo anual: mesmo período do ano anterior + acumulado do ano (YTD).
     """
+    fact = _get_df(session_id)  # 404 se a sessão não existir (antes do check de modelo)
     meta = _meta(session_id)
     if meta.get("model") != "medical_fiscal":
         raise HTTPException(400, "Dashboard disponível apenas para o modelo fiscal (tabela fato).")
-
-    fact = _get_df(session_id)
     if excluir_intercompany and "CNPJ Excluído" in fact.columns:
         fact = fact[fact["CNPJ Excluído"] != "Sim"]
 
@@ -255,7 +254,7 @@ def get_dashboard(
             "saida_ano_anterior": _tipo_total(ano_ant_df[_mask_eq(ano_ant_df["Mês"], m)], "Saída"),
         })
 
-    return {
+    return json_safe({
         "filtros": {"ano": ano, "mes": mes, "anos_disponiveis": anos,
                     "excluir_intercompany": excluir_intercompany},
         "kpis": {
@@ -275,4 +274,5 @@ def get_dashboard(
         "por_uf": _sum_group(saida_df, "UF", "Valor (R$)", top=15),
         "por_vendedor": _sum_group(saida_df, "Vendedor", "Valor (R$)", top=10),
         "top_clientes": _sum_group(saida_df, "Cliente/Fornecedor", "Valor (R$)", top=10),
-    }
+        "source": meta.get("source", {}),
+    })

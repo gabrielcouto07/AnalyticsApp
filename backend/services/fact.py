@@ -240,6 +240,9 @@ def apply_lookup(
     df = df.copy()
     keys = df[key_col]
     mapped = keys.astype(str).str.strip().map(mapping)
+    # Garante dtype object: se o de-para não casar nada, `mapped` viria float64
+    # (tudo NaN) e a atribuição da string 'NÃO MAPEADO' quebraria no pandas 3.
+    mapped = mapped.astype(object)
     mapped = mapped.where(keys.notna(), pd.NA)          # chave ausente → NA
     mapped = mapped.fillna(pd.NA)
     mapped[keys.notna() & mapped.isna()] = unmapped      # chave sem de-para

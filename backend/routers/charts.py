@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.session import get_session
+from backend.services.serialize import json_safe
 
 router = APIRouter(prefix="/api/charts", tags=["charts"])
 
@@ -54,7 +55,7 @@ def chart_temporal(session_id: str, body: TemporalRequest):
     # Datas precisam virar string para serialização JSON
     ts[body.date_col] = ts[body.date_col].dt.strftime("%Y-%m-%d")
 
-    return {"data": ts.to_dict(orient="records")}
+    return json_safe({"data": ts.to_dict(orient="records")})
 
 
 class CrossRequest(BaseModel):
@@ -84,7 +85,7 @@ def chart_cross(session_id: str, body: CrossRequest):
         .head(body.top_n)
     )
     grp[body.cat_col] = grp[body.cat_col].astype(str)
-    return {"data": grp.to_dict(orient="records")}
+    return json_safe({"data": grp.to_dict(orient="records")})
 
 
 class DistributionRequest(BaseModel):
@@ -120,7 +121,7 @@ def chart_distribution(session_id: str, body: DistributionRequest):
         "q1": float(values.quantile(0.25)),
         "q3": float(values.quantile(0.75)),
     }
-    return {"bins": bins, "stats": stats}
+    return json_safe({"bins": bins, "stats": stats})
 
 
 @router.get("/{session_id}/correlation")

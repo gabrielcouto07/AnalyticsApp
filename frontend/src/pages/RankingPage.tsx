@@ -36,8 +36,18 @@ export function RankingPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Normalização: reseta seleções que não existem mais nos metadados atuais
+  const catKey = categoricalColumns.join("|")
+  const numKey = numericColumns.join("|")
+  useEffect(() => {
+    if (categoricalColumns.length && !categoricalColumns.includes(catCol)) setCatCol(categoricalColumns[0])
+    if (numericColumns.length && !numericColumns.includes(numCol)) setNumCol(numericColumns[0])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catKey, numKey])
+
   useEffect(() => {
     if (!sessionId || !catCol || !numCol) return
+    if (!categoricalColumns.includes(catCol) || !numericColumns.includes(numCol)) return
     setLoading(true)
     setError(null)
     getCrossChart(sessionId, { cat_col: catCol, num_col: numCol, agg_fn: aggFn, top_n: topN })

@@ -1,6 +1,11 @@
 import { UploadZone } from "../components"
 
-export function WelcomePage() {
+interface WelcomePageProps {
+  onSuccess?: () => void
+  onCancel?: () => void
+}
+
+export function WelcomePage({ onSuccess, onCancel }: WelcomePageProps) {
   return (
     <div style={{
       minHeight: "100vh",
@@ -87,7 +92,7 @@ export function WelcomePage() {
 
         {/* Upload Zone */}
         <div style={{ marginBottom: "40px" }}>
-          <UploadZone />
+          <UploadZone onSuccess={onSuccess} onCancel={onCancel} />
         </div>
 
         {/* Features grid */}

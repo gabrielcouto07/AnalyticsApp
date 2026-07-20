@@ -52,6 +52,8 @@ temp_clone/
 *.bak
 uploads/
 session_data/
+data/sessions/
+data/
 
 # Planilhas de clientes / binários grandes — nunca commitar.
 # Fixtures pequenos e anonimizados são a única exceção.

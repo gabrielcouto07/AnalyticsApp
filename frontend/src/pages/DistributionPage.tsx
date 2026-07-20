@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import Plot from "react-plotly.js"
+import Plot from "../lib/plotly"
 import { useSession } from "../store/session"
 import { getDistribution } from "../api/analytics"
 import { ChartCard } from "../components/common"
@@ -29,8 +29,19 @@ export function DistributionPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Normalização: se a coluna selecionada não existe mais nos metadados atuais
+  // (troca de sessão/dataset), volta para a primeira válida — nunca consulta o
+  // backend com uma coluna da planilha anterior.
+  const numericKey = numericColumns.join("|")
   useEffect(() => {
-    if (!sessionId || !column) return
+    if (numericColumns.length && !numericColumns.includes(column)) {
+      setColumn(numericColumns[0])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [numericKey])
+
+  useEffect(() => {
+    if (!sessionId || !column || !numericColumns.includes(column)) return
     setLoading(true)
     setError(null)
     getDistribution(sessionId, column, 30)

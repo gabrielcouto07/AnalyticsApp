@@ -37,8 +37,18 @@ export function TemporalPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Normalização: reseta colunas selecionadas ausentes nos metadados atuais
+  const dateKey = dateColumns.join("|")
+  const numKey = numericColumns.join("|")
+  useEffect(() => {
+    if (dateColumns.length && !dateColumns.includes(dateCol)) setDateCol(dateColumns[0])
+    if (numericColumns.length && !numericColumns.includes(metricCol)) setMetricCol(numericColumns[0])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateKey, numKey])
+
   useEffect(() => {
     if (!sessionId || !dateCol || !metricCol) return
+    if (!dateColumns.includes(dateCol) || !numericColumns.includes(metricCol)) return
     setLoading(true)
     setError(null)
     getTemporalChart(sessionId, { date_col: dateCol, metric_col: metricCol, granularity })

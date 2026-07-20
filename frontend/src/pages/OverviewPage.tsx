@@ -5,6 +5,7 @@ import { PeriodFilter } from "../components/PeriodFilter"
 import { HBarChart } from "../components/charts/HBarChart"
 import { MonthlyChart, type MonthPoint } from "../components/charts/MonthlyChart"
 import { ChartCard, LoadingSkeleton } from "../components/common"
+import { SourceBanner } from "../components/SourceBanner"
 import { getDashboard } from "../api/analytics"
 import { fmt } from "../lib/format"
 
@@ -80,6 +81,10 @@ function MedicalDashboard() {
           onChange={v => setFiltro({ ano: v.ano, mes: v.mes, excluirIntercompany: v.excluirIntercompany })}
         />
       </div>
+
+      {/* Fonte analítica + avisos de negócio (Entrada incompleta aparece aqui,
+          logo acima dos KPIs de Entrada/Receita Líquida) */}
+      <SourceBanner />
 
       {/* KPIs */}
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>

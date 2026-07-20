@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSession } from "../store/session"
 import { exportUrl, getTable } from "../api/analytics"
 import { fmt } from "../lib/format"
+import { safeCell } from "../lib/display"
 
 interface ColumnMeta {
   name: string
@@ -19,15 +20,9 @@ interface TableData {
 }
 
 const isNumericDtype = (dtype: string) => /int|float|number/i.test(dtype) && !/datetime/i.test(dtype)
-const isDateDtype = (dtype: string) => /datetime/i.test(dtype)
 
-function formatCell(value: unknown, dtype: string): string {
-  if (value === null || value === undefined || value === "") return "—"
-  if (typeof value === "boolean") return value ? "Sim" : "Não"
-  if (typeof value === "number") return fmt.number(value)
-  if (isDateDtype(dtype) && typeof value === "string") return fmt.date(value)
-  return String(value)
-}
+// Nunca renderiza um dataset bruto de 305 colunas por inteiro por padrão.
+const DEFAULT_MAX_COLS = 18
 
 const btnCls =
   "px-3 py-1.5 rounded-lg border border-border bg-card text-text text-xs font-semibold " +
@@ -85,9 +80,16 @@ export function ExplorerPage() {
   const meaningful = data?.meaningful_columns ?? []
   const shownColumns = useMemo(() => {
     if (!data) return []
-    const wanted = visibleCols ?? (meaningful.length ? meaningful : allColumns.map(c => c.name))
     const byName = new Map(allColumns.map(c => [c.name, c]))
-    return wanted.filter(n => byName.has(n)).map(n => byName.get(n)!)
+    const wanted = visibleCols ?? (meaningful.length ? meaningful : allColumns.map(c => c.name))
+    let cols = wanted.filter(n => byName.has(n)).map(n => byName.get(n)!)
+    // Fallback seguro: metadados de colunas úteis não batem com este dataset
+    // (ex.: aba bruta de 305 colunas selecionada) → mostra as primeiras N e deixa
+    // o resto opcional no painel de colunas, sem despejar 305 colunas no browser.
+    if (cols.length === 0 && allColumns.length) {
+      cols = allColumns.slice(0, DEFAULT_MAX_COLS)
+    }
+    return cols
   }, [data, visibleCols, meaningful, allColumns])
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / pageSize)) : 1
@@ -220,9 +222,9 @@ export function ExplorerPage() {
                     <td
                       key={col.name}
                       className={`px-3 py-2 whitespace-nowrap max-w-[280px] truncate ${isNumericDtype(col.dtype) ? "text-right tabular-nums text-text" : "text-left text-muted"}`}
-                      title={String(row[col.name] ?? "")}
+                      title={safeCell(row[col.name], col.dtype)}
                     >
-                      {formatCell(row[col.name], col.dtype)}
+                      {safeCell(row[col.name], col.dtype)}
                     </td>
                   ))}
                 </tr>

@@ -1,4 +1,4 @@
-import Plot from "react-plotly.js"
+import Plot from "../lib/plotly"
 import { tokens } from "../lib/theme"
 
 interface Props {
